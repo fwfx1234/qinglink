@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动屏背景色 - 深青色 -->
+    <color name="splash_background">#023E8A</color>
+    <!-- 应用主色调 -->
+    <color name="primary">#0F3460</color>
+    <!-- 强调色 -->
+    <color name="accent">#E94560</color>
+</resources>

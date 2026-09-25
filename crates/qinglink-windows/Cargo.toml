@@ -1,0 +1,25 @@
+[package]
+name = "qinglink-windows"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+image.workspace = true
+qinglink-domain = { path = "../qinglink-domain" }
+qinglink-protocol = { path = "../qinglink-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+windows-core.workspace = true
+
+[lints]
+workspace = true

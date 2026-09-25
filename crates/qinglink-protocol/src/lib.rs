@@ -1,15 +1,9 @@
 pub mod health;
-pub mod ir;
 pub mod pairing;
 pub mod platform;
 pub mod service_ipc;
 
 pub use health::HealthResponse;
-pub use ir::{
-    IR_DEFAULT_STEP_DELAY_MS, IR_MAX_MACRO_STEPS, IR_MAX_PATTERN_DURATION_US, IR_MAX_PATTERN_ITEMS,
-    IR_MAX_REPEAT_COUNT, IR_MAX_STEP_DELAY_MS, IrCommand, IrMacro, IrMacroStep, IrRemoteProfile,
-    IrValidationError,
-};
 pub use pairing::{
     PairingConfirm, PairingRequest, PairingRequestResponse, PairingTokenResponse,
     WakeNetworkAdapter,

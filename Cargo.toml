@@ -1,0 +1,98 @@
+[workspace]
+resolver = "2"
+members = ["apps/desktop", "crates/*", "services/qinglink-service"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["fwfx1234"]
+description = "QingLink local-network PC remote control"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+axum = { version = "0.7", features = ["ws", "json"] }
+base64 = "0.22"
+dirs = "6.0"
+futures-util = "0.3"
+gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg"] }
+local-ip-address = "0.6"
+r2d2 = "0.8"
+r2d2_sqlite = { version = "0.31", features = ["bundled"] }
+rand = "0.9"
+raw-window-handle = "0.6"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+sysinfo = "0.31.4"
+thiserror = "2.0"
+time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tower = "0.5"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
+tray-icon = { version = "0.21", default-features = false }
+uuid = { version = "1.16", features = ["v4", "serde"] }
+
+[workspace.dependencies.windows]
+version = "0.61"
+features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Media_Audio",
+  "Win32_Media_Audio_Endpoints",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_Networking_WinSock",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Authentication_Identity",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Console",
+  "Win32_System_DataExchange",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Environment",
+  "Win32_System_IO",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_Pipes",
+  "Win32_System_Power",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_Shutdown",
+  "Win32_System_StationsAndDesktops",
+  "Win32_System_Threading",
+  "Win32_System_Variant",
+  "Win32_UI_Accessibility",
+  "Win32_UI_Controls",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_Shell_PropertiesSystem",
+  "Win32_UI_WindowsAndMessaging",
+]
+
+[workspace.dependencies.windows-core]
+version = "0.61.2"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "warn"
+unwrap_used = "deny"
+redundant_clone = "warn"
+needless_pass_by_value = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"

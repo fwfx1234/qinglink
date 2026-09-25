@@ -1,0 +1,34 @@
+[package]
+name = "qinglink-service"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "QingLink LocalSystem secure desktop service"
+license.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "QingLinkService"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+anyhow.workspace = true
+qinglink-discovery = { path = "../../crates/qinglink-discovery" }
+qinglink-protocol = { path = "../../crates/qinglink-protocol" }
+qinglink-server = { path = "../../crates/qinglink-server" }
+qinglink-storage = { path = "../../crates/qinglink-storage" }
+qinglink-windows = { path = "../../crates/qinglink-windows" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt"] }
+windows-service = "0.7"
+windows.workspace = true
+
+[lints]
+workspace = true
+
+[build-dependencies]
+embed-resource = "3.0"

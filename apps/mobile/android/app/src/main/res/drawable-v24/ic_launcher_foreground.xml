@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- QingLink light foreground: connection ring and control point -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#238F80"
+        android:strokeWidth="11"
+        android:strokeLineCap="round"
+        android:pathData="M71,64 C76,57 78,49 76,41 C73,28 62,21 50,21 C35,21 24,32 24,47 C24,62 35,73 50,73 C56,73 61,71 65,68" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#238F80"
+        android:strokeWidth="10"
+        android:strokeLineCap="round"
+        android:pathData="M64,63 L79,78" />
+    <path
+        android:fillColor="#238F80"
+        android:pathData="M65,68 a4,4 0,1 1,0,-8 a4,4 0,1 1,0,8 z" />
+    <path
+        android:fillColor="#E5F3F0"
+        android:pathData="M65,66 a2,2 0,1 1,0,-4 a2,2 0,1 1,0,4 z" />
+    <path
+        android:fillColor="#D86B37"
+        android:pathData="M50,57 a10,10 0,1 1,0,-20 a10,10 0,1 1,0,20 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,42 L48,52 L56,47 Z" />
+</vector>

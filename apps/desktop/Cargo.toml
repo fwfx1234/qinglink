@@ -1,0 +1,40 @@
+[package]
+name = "qinglink-desktop"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "QingLink"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+qinglink-server = { path = "../../crates/qinglink-server" }
+qinglink-storage = { path = "../../crates/qinglink-storage" }
+qinglink-ui = { path = "../../crates/qinglink-ui" }
+qinglink-windows = { path = "../../crates/qinglink-windows" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+raw-window-handle.workspace = true
+time.workspace = true
+tracing-appender.workspace = true
+tray-icon.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
+[build-dependencies]
+embed-resource = "3.0"
+sha2.workspace = true
+
+[lints]
+workspace = true

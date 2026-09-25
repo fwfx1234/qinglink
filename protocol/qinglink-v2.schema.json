@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qinglink.local/protocol/v2",
+  "title": "QingLink API v2 pairing contract",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/pairingRequest" },
+    { "$ref": "#/$defs/pairingConfirm" },
+    { "$ref": "#/$defs/pairingToken" },
+    { "$ref": "#/$defs/health" }
+  ],
+  "$defs": {
+    "pairingRequest": {
+      "type": "object",
+      "required": ["device_id", "device_name"],
+      "properties": {
+        "device_id": { "type": "string", "minLength": 1 },
+        "device_name": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "pairingConfirm": {
+      "type": "object",
+      "required": ["request_id", "pin", "device_id", "device_name"],
+      "properties": {
+        "request_id": { "type": "string", "format": "uuid" },
+        "pin": { "type": "string", "pattern": "^[0-9]{6}$" },
+        "device_id": { "type": "string", "minLength": 1 },
+        "device_name": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "pairingToken": {
+      "type": "object",
+      "required": ["token", "pc_id", "pc_name", "mac_address"],
+      "properties": {
+        "token": { "type": "string", "minLength": 1 },
+        "pc_id": { "type": "string", "minLength": 1 },
+        "pc_name": { "type": "string", "minLength": 1 },
+        "mac_address": { "type": ["string", "null"] },
+        "wake_networks": {
+          "type": ["array", "null"],
+          "items": { "$ref": "#/$defs/wakeNetwork" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "wakeNetwork": {
+      "type": "object",
+      "required": ["mac_address", "ipv4_address", "prefix_length", "broadcast_address"],
+      "properties": {
+        "mac_address": { "type": "string" },
+        "ipv4_address": { "type": "string" },
+        "prefix_length": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "broadcast_address": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "health": {
+      "type": "object",
+      "required": ["pc_id", "name", "version", "port"],
+      "properties": {
+        "pc_id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "const": 2 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

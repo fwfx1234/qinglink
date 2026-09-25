@@ -1,0 +1,10 @@
+# QingLink 协议 v2
+
+`qinglink-protocol` 是 Rust 线型 DTO 的唯一真相来源。本目录中的 JSON Schema
+是跨语言验证契约。对应的纯传输层 Dart DTO 位于
+`apps/mobile/lib/src/protocol/qinglink_protocol.dart`；两种实现都使用
+`apps/mobile/test` 中的相同夹具进行检查。
+
+协议共享有意仅限于传输 DTO。领域对象和 Flutter 视图模型保持平台原生，而
+HTTP/WS 载荷由 CI 中的夹具和 Schema 验证。这使得移动应用独立于 Rust
+运行时，并使 IP 变更和重连可观测。

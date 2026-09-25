@@ -1,0 +1,21 @@
+[package]
+name = "qinglink-storage"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+dirs.workspace = true
+r2d2.workspace = true
+r2d2_sqlite.workspace = true
+rusqlite.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
