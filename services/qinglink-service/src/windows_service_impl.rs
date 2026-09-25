@@ -1925,28 +1925,6 @@ fn write_response(stream: &mut std::fs::File, ok: bool, code: &str, message: &st
     Ok(())
 }
 
-fn write_status_response(stream: &mut std::fs::File, available: bool) -> Result<()> {
-    let message = if available {
-        "QingLink 安全桌面输入服务正在运行"
-    } else {
-        "QingLink 输入服务正在运行，但安全输入通道未就绪"
-    };
-    let payload = serde_json::to_vec(&Response {
-        ok: available,
-        code: if available {
-            "SERVICE_READY"
-        } else {
-            "SERVICE_READY"
-        },
-        message,
-        request_id: None,
-    })?;
-    stream.write_all(&(payload.len() as u32).to_le_bytes())?;
-    stream.write_all(&payload)?;
-    stream.flush()?;
-    Ok(())
-}
-
 fn write_agent_status_response(
     stream: &mut std::fs::File,
     status: &qinglink_windows::secure_desktop::SecureDesktopStatus,

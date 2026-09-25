@@ -3,17 +3,11 @@ use std::{
     time::Duration,
 };
 
-use gpui::{
-    AppContext, Bounds, Context, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    Render, Styled, Window, div, px, size,
-};
+use gpui::{Context, FontWeight, IntoElement, ParentElement, Render, Styled, Window, div, px};
 use qinglink_server::{AppState, server::pairing::PairingNotification};
 use qinglink_ui::theme;
 
-use crate::view::helpers::{action_button, muted};
-
-#[cfg(target_os = "windows")]
-use gpui::Context as _;
+use crate::view::helpers::action_button;
 
 pub struct PairingPopup {
     pairing: Arc<Mutex<Option<PairingNotification>>>,

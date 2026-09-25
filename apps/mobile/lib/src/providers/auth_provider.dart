@@ -64,6 +64,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     if (_disposed) return;
     final hasCachedEndpoint = _ref.read(settingsProvider).baseUrl != null;
     await _refreshDiscovery(updateEndpoint: !hasCachedEndpoint);
+    if (_disposed) return;
     _synchronizeConnectionConfig(_ref.read(settingsProvider));
     _discoveryTimer = Timer.periodic(
       const Duration(seconds: 5),
@@ -144,12 +145,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
     final token = _ref.read(settingsProvider).savedToken;
     if (token != null && token.isNotEmpty) {
       final connected = await connectOnly();
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[QingLink] select result connected=$connected');
+      }
       return connected;
     }
-    if (kDebugMode)
+    if (kDebugMode) {
       debugPrint('[QingLink] no token, starting pairing directly');
+    }
     _setState(
       state.copyWith(
         connection: AppConnectionState.connecting,
@@ -419,8 +422,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
     if (baseUrl == null) {
       throw const QingLinkPairingException('NO_PC', '请先选择 QingLink 电脑');
     }
-    if (kDebugMode)
+    if (kDebugMode) {
       debugPrint('[QingLink][Pairing] request start base=$baseUrl');
+    }
     final prefs = await _ref.read(settingsProvider.notifier).preferences;
     final deviceId =
         prefs.getString('qinglink_device_id') ??

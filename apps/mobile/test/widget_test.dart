@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:qinglink_mobile/main.dart';
 import 'package:qinglink_mobile/src/providers/ir_remote_provider.dart';
@@ -18,6 +19,8 @@ class _SupportedIrTransmitter extends IrTransmitter {
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   testWidgets('App smoke test', (WidgetTester tester) async {
     await tester.pumpWidget(const ProviderScope(child: QingLinkApp()));
     await tester.pump();
@@ -34,13 +37,20 @@ void main() {
           ),
           irRemoteProvider.overrideWith(
             (_) =>
-                const IrRemoteNotifier(transmitter: _SupportedIrTransmitter()),
+                IrRemoteNotifier(transmitter: _SupportedIrTransmitter()),
           ),
         ],
         child: MaterialApp(home: HomeTab(onGoToMore: () {})),
       ),
     );
     await tester.pumpAndSettle();
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(HomeTab)),
+    );
+    await container.read(irRemoteProvider.notifier).loaded;
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
 
     expect(find.text('连接电脑'), findsOneWidget);
     expect(find.text('快捷操作'), findsOneWidget);
@@ -56,6 +66,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('雷鸟/TCL 电视'), findsOneWidget);
     expect(find.text('遥控器'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('offline home offers wake when a MAC address is available', (
@@ -76,10 +87,12 @@ void main() {
         child: MaterialApp(home: HomeTab(onGoToMore: () {})),
       ),
     );
+    await tester.pump(const Duration(seconds: 3));
     await tester.pump();
 
     expect(find.text('唤醒电脑'), findsOneWidget);
     expect(find.text('快捷操作'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('mouse controls stay fixed and usable across phone layouts', (

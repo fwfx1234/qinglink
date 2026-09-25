@@ -1,14 +1,9 @@
 use gpui::prelude::FluentBuilder;
-use gpui::{
-    AnyElement, AppContext, Context, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled, div, px,
-};
-use qinglink_server::server::pairing::PairingNotification;
+use gpui::{AnyElement, Context, FontWeight, IntoElement, ParentElement, Styled, div, px};
 use qinglink_ui::theme;
 
 use crate::{
     input_install::{InputOperation, start_elevated},
-    service_runtime::DesiredServiceState,
     view::helpers::{action_button, disabled_button, muted, section, setting_row, status_row},
 };
 

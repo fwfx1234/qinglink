@@ -1,6 +1,6 @@
 use gpui::{
-    ElementId, FontWeight, InteractiveElement, IntoElement, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    ElementId, FontWeight, InteractiveElement, ParentElement, Stateful, StatefulInteractiveElement,
+    Styled, Window, div, px,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
