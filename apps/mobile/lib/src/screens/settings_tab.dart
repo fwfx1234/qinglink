@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/auth.dart';
 import '../providers/auth_provider.dart';
-import '../providers/remote_control_provider.dart';
+import '../providers/power_controller.dart';
 import '../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_dialogs.dart';
@@ -90,8 +90,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     }
     setState(() => _isWakingUp = true);
     try {
-      final prefix =
-          ref.read(remoteControlProvider.notifier).subnetPrefix ?? 24;
+      const prefix = 24;
       final targetAddress = getSubnetBroadcast(config.pcIpAddress, prefix);
       await WakeOnLan.wake(
         macAddress: config.macAddress!,
@@ -128,7 +127,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final settings = ref.watch(settingsProvider);
-    final authState = ref.watch(authProvider);
+    final authState = ref.watch(connectionProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -167,7 +166,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                         icon: Icons.lock_rounded,
                         label: '锁屏',
                         onPressed: () => _runRemoteAction(
-                          () => ref.read(remoteControlProvider.notifier).lock(),
+                          () => ref.read(powerControllerProvider).lock(),
                           '锁屏指令已执行',
                         ),
                       ),
@@ -225,13 +224,13 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                 _DiscoveryList(
                   onSelect: (device) async {
                     final connected = await ref
-                        .read(authProvider.notifier)
+                        .read(connectionProvider.notifier)
                         .selectDevice(device);
                     if (!context.mounted) return;
                     if (!connected &&
-                        ref.read(authProvider).errorMessage != null) {
+                        ref.read(connectionProvider).errorMessage != null) {
                       context.showErrorSnackBar(
-                        ref.read(authProvider).errorMessage!,
+                        ref.read(connectionProvider).errorMessage!,
                       );
                     } else if (connected) {
                       context.showSuccessSnackBar('已选择 ${device.name}');
@@ -291,7 +290,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                 label: '断开连接',
                 expand: true,
                 onPressed: () {
-                  ref.read(authProvider.notifier).logout();
+                  ref.read(connectionProvider.notifier).logout();
                   context.showInfoSnackBar('已断开连接');
                 },
               ),
@@ -363,7 +362,7 @@ class _DiscoveryList extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = context.palette;
     final devices = ref.watch(
-      authProvider.select((state) => state.discoveredDevices),
+      connectionProvider.select((state) => state.discoveredDevices),
     );
     if (devices.isEmpty) {
       return Row(

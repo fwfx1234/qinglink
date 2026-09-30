@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/secure_token_store.dart';
 import '../utils/wake_on_lan.dart';
+import '../core/storage/preferences_repository.dart';
 
 /// 「我的库」条目：从「全部」添加进常用，或从文件树手动添加。
 class QuickApp {
@@ -176,9 +177,6 @@ class ConnectionConfig {
   /// 上次启动的启动器条目标识。
   final String? lastUsedLauncherId;
 
-  /// 打开App时自动唤醒PC
-  final bool autoWakeOnLaunch;
-
   /// 鼠标触控板移动倍率
   final double mouseSensitivity;
 
@@ -210,7 +208,6 @@ class ConnectionConfig {
     this.shortcutPresets = defaultShortcutPresets,
     this.activeShortcutPresetId = 'common',
     this.lastUsedLauncherId,
-    this.autoWakeOnLaunch = false,
     this.mouseSensitivity = defaultMouseSensitivity,
     this.reversePhoneScrollBar = false,
     this.autoUnlockOnWake = false,
@@ -238,7 +235,6 @@ class ConnectionConfig {
     List<ShortcutPreset>? shortcutPresets,
     String? activeShortcutPresetId,
     Object? lastUsedLauncherId = _unset,
-    bool? autoWakeOnLaunch,
     double? mouseSensitivity,
     bool? reversePhoneScrollBar,
     bool? autoUnlockOnWake,
@@ -264,7 +260,6 @@ class ConnectionConfig {
       lastUsedLauncherId: identical(lastUsedLauncherId, _unset)
           ? this.lastUsedLauncherId
           : lastUsedLauncherId as String?,
-      autoWakeOnLaunch: autoWakeOnLaunch ?? this.autoWakeOnLaunch,
       mouseSensitivity: mouseSensitivity ?? this.mouseSensitivity,
       reversePhoneScrollBar:
           reversePhoneScrollBar ?? this.reversePhoneScrollBar,
@@ -311,7 +306,6 @@ class ConnectionConfig {
         .toList(),
     'activeShortcutPresetId': activeShortcutPresetId,
     'lastUsedLauncherId': lastUsedLauncherId,
-    'autoWakeOnLaunch': autoWakeOnLaunch,
     'mouseSensitivity': mouseSensitivity,
     'reversePhoneScrollBar': reversePhoneScrollBar,
     'autoUnlockOnWake': autoUnlockOnWake,
@@ -342,7 +336,6 @@ class ConnectionConfig {
       activeShortcutPresetId:
           json['activeShortcutPresetId'] as String? ?? 'common',
       lastUsedLauncherId: json['lastUsedLauncherId'] as String?,
-      autoWakeOnLaunch: json['autoWakeOnLaunch'] as bool? ?? false,
       mouseSensitivity: normalizeMouseSensitivity(
         (json['mouseSensitivity'] as num?)?.toDouble(),
       ),
@@ -382,9 +375,9 @@ List<WakeNetwork> _parseWakeNetworks(String? raw) {
 /// 设置管理 Provider
 class SettingsNotifier extends StateNotifier<ConnectionConfig> {
   bool _disposed = false;
-  SharedPreferences? _prefs;
   final SecureTokenStore _tokenStore;
   final LockPasswordStore _lockPasswordStore;
+  final PreferencesRepository? _preferencesRepository;
   final Completer<void> _loadCompleter = Completer<void>();
 
   SettingsNotifier({
@@ -392,7 +385,8 @@ class SettingsNotifier extends StateNotifier<ConnectionConfig> {
     bool loadPersisted = true,
     this._tokenStore = const PlatformSecureTokenStore(),
     this._lockPasswordStore = const PlatformLockPasswordStore(),
-  }) : super(initialState) {
+    PreferencesRepository? preferences,
+  }) : _preferencesRepository = preferences, super(initialState) {
     if (loadPersisted) {
       _loadSettings();
     } else {
@@ -404,8 +398,15 @@ class SettingsNotifier extends StateNotifier<ConnectionConfig> {
   Future<void> get loaded => _loadCompleter.future;
 
   /// 缓存的 SharedPreferences 实例（插件内部已是单例，这里避免每次重复 await）。
-  Future<SharedPreferences> _getPrefs() async {
-    return _prefs ??= await SharedPreferences.getInstance();
+  Future<SharedPreferences> _getPrefs() async => SharedPreferences.getInstance();
+
+  Future<void> _writeString(String key, String value) async {
+    final repository = _preferencesRepository;
+    if (repository != null) {
+      await repository.writeString(key, value);
+      return;
+    }
+    await (await _getPrefs()).setString(key, value);
   }
 
   /// Exposes the cached preferences for stable device identity and secure
@@ -427,7 +428,6 @@ class SettingsNotifier extends StateNotifier<ConnectionConfig> {
   static const String _keyWakeNetworks = 'wake_networks';
   static const String _keyIsPaired = 'is_paired';
   static const String _keyQuickApps = 'quick_apps';
-  static const String _keyAutoWakeOnLaunch = 'auto_wake_on_launch';
   static const String _keyMouseSensitivity = 'mouse_sensitivity';
   static const String _keyReversePhoneScrollBar = 'reverse_phone_scroll_bar';
   static const String _keyAutoUnlockOnWake = 'auto_unlock_on_wake';
@@ -466,7 +466,6 @@ class SettingsNotifier extends StateNotifier<ConnectionConfig> {
         activeShortcutPresetId:
             prefs.getString(_keyActiveShortcutPreset) ?? 'common',
         lastUsedLauncherId: prefs.getString(_keyLastUsedLauncher),
-        autoWakeOnLaunch: prefs.getBool(_keyAutoWakeOnLaunch) ?? false,
         mouseSensitivity: ConnectionConfig.normalizeMouseSensitivity(
           prefs.getDouble(_keyMouseSensitivity),
         ),
@@ -508,8 +507,7 @@ class SettingsNotifier extends StateNotifier<ConnectionConfig> {
     final normalized = presets
         .where((preset) => preset.shortcuts.isNotEmpty)
         .toList(growable: false);
-    final prefs = await _getPrefs();
-    await prefs.setString(
+    await _writeString(
       _keyShortcutPresets,
       jsonEncode(normalized.map((preset) => preset.toJson()).toList()),
     );
@@ -518,20 +516,17 @@ class SettingsNotifier extends StateNotifier<ConnectionConfig> {
 
   Future<void> setActiveShortcutPreset(String id) async {
     if (!state.shortcutPresets.any((preset) => preset.id == id)) return;
-    final prefs = await _getPrefs();
-    await prefs.setString(_keyActiveShortcutPreset, id);
+    await _writeString(_keyActiveShortcutPreset, id);
     _setState(state.copyWith(activeShortcutPresetId: id));
   }
 
   Future<void> setLastUsedLauncher(String id) async {
-    final prefs = await _getPrefs();
-    await prefs.setString(_keyLastUsedLauncher, id);
+    await _writeString(_keyLastUsedLauncher, id);
     _setState(state.copyWith(lastUsedLauncherId: id));
   }
 
   Future<void> _persistLibrary(List<QuickApp> apps) async {
-    final prefs = await _getPrefs();
-    await prefs.setString(
+    await _writeString(
       _keyQuickApps,
       jsonEncode(apps.map((a) => a.toJson()).toList()),
     );
@@ -665,12 +660,6 @@ class SettingsNotifier extends StateNotifier<ConnectionConfig> {
     _setState(
       state.copyWith(wakeNetworks: List<WakeNetwork>.unmodifiable(networks)),
     );
-  }
-
-  Future<void> setAutoWakeOnLaunch(bool enabled) async {
-    final prefs = await _getPrefs();
-    await prefs.setBool(_keyAutoWakeOnLaunch, enabled);
-    _setState(state.copyWith(autoWakeOnLaunch: enabled));
   }
 
   Future<void> saveMouseSensitivity(double value) async {

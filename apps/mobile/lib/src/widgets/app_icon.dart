@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../providers/remote_control_provider.dart';
+import '../providers/launcher_controller.dart';
 import '../theme/app_theme.dart';
 
 /// 从 PC 按需读取程序图标（base64），失败时回退到图标底衬。
@@ -12,6 +12,7 @@ class AppIcon extends ConsumerStatefulWidget {
   const AppIcon({
     super.key,
     required this.id,
+    this.initialBase64,
     this.size = 40,
     this.radius = 10,
     this.fallback = Icons.apps_rounded,
@@ -20,6 +21,7 @@ class AppIcon extends ConsumerStatefulWidget {
   });
 
   final String? id;
+  final String? initialBase64;
   final double size;
   final double radius;
   final IconData fallback;
@@ -39,15 +41,29 @@ class _AppIconState extends ConsumerState<AppIcon> {
   @override
   void initState() {
     super.initState();
+    _decodeInitialIcon();
     _load();
   }
 
   @override
   void didUpdateWidget(covariant AppIcon oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.id != widget.id || oldWidget.revision != widget.revision) {
+    if (oldWidget.id != widget.id ||
+        oldWidget.revision != widget.revision ||
+        oldWidget.initialBase64 != widget.initialBase64) {
       _bytes = null;
+      _decodeInitialIcon();
       _load();
+    }
+  }
+
+  void _decodeInitialIcon() {
+    final encoded = widget.initialBase64;
+    if (encoded == null || encoded.isEmpty) return;
+    try {
+      _bytes = base64Decode(encoded);
+    } catch (_) {
+      _bytes = null;
     }
   }
 
@@ -56,8 +72,8 @@ class _AppIconState extends ConsumerState<AppIcon> {
     if (id == null || id.isEmpty || _loading) return;
     _loading = true;
     final base64Icon = await ref
-        .read(remoteControlProvider.notifier)
-        .getLauncherIcon(id);
+        .read(launcherControllerProvider)
+        .icon(id);
     _loading = false;
     if (!mounted || base64Icon == null || base64Icon.isEmpty) return;
     try {
@@ -71,6 +87,8 @@ class _AppIconState extends ConsumerState<AppIcon> {
   @override
   Widget build(BuildContext context) {
     final bytes = _bytes;
+    final cacheWidth = (widget.size * MediaQuery.devicePixelRatioOf(context))
+        .round();
     return Container(
       width: widget.size,
       height: widget.size,
@@ -84,9 +102,15 @@ class _AppIconState extends ConsumerState<AppIcon> {
           : Image.memory(
               bytes,
               fit: BoxFit.contain,
+              cacheWidth: cacheWidth,
               filterQuality: FilterQuality.high,
               isAntiAlias: true,
               gaplessPlayback: true,
+              errorBuilder: (_, _, _) => Icon(
+                widget.fallback,
+                size: widget.size * 0.5,
+                color: widget.tone,
+              ),
             ),
     );
   }

@@ -2,18 +2,20 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../models/app_info.dart';
 import '../providers/auth_provider.dart';
-import '../providers/remote_control_provider.dart';
+import '../providers/launcher_controller.dart';
+import '../providers/library_controller.dart';
 import '../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/snackbar_extension.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/app_ui.dart';
 import '../widgets/file_picker_sheet.dart';
+import '../app/routes.dart';
 import '../widgets/unconnected_state.dart';
-import 'scan_folder_screen.dart';
 
 enum LibraryFilter { common, recent, steam, software, other }
 
@@ -88,15 +90,14 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     final kind = _filter.serverKind;
     if (kind == null || !_scrollController.hasClients) return;
     if (_scrollController.position.extentAfter > 300) return;
-    final state = ref.read(remoteControlProvider);
-    if (state.isLoadingMoreLibrary || state.isLoadingLibrary) return;
-    if (!state.libraryHasMore) return;
+    final state = ref.read(libraryControllerProvider);
+    if (state.loadingMore || state.loading) return;
+    if (!state.hasMore) return;
     ref
-        .read(remoteControlProvider.notifier)
-        .loadUnifiedLibrary(
+        .read(libraryControllerProvider.notifier)
+        .refresh(
           kind: kind,
           append: true,
-          page: state.libraryPage + 1,
         );
   }
 
@@ -116,18 +117,15 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     });
     final kind = filter.serverKind;
     if (kind != null) {
-      ref
-          .read(remoteControlProvider.notifier)
-          .loadUnifiedLibrary(kind: kind, force: true);
+      ref.read(libraryControllerProvider.notifier).refresh(kind: kind);
     }
   }
 
   Future<void> _load() async {
-    final remote = ref.read(remoteControlProvider.notifier);
     final kind = _filter.serverKind;
     await Future.wait([
-      if (kind != null) remote.loadUnifiedLibrary(kind: kind, force: true),
-      remote.loadRecentUnifiedLibrary(),
+      if (kind != null) ref.read(libraryControllerProvider.notifier).refresh(kind: kind),
+      ref.read(libraryControllerProvider.notifier).refreshRecent(),
     ]);
   }
 
@@ -137,11 +135,10 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     _searchDebounce?.cancel();
     _searchDebounce = Timer(const Duration(milliseconds: 300), () {
       ref
-          .read(remoteControlProvider.notifier)
-          .loadUnifiedLibrary(
+          .read(libraryControllerProvider.notifier)
+          .refresh(
             kind: kind,
             query: value.trim().isEmpty ? null : value.trim(),
-            force: true,
           );
     });
   }
@@ -152,7 +149,7 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     if (_launching.contains(item.id)) return;
     setState(() => _launching.add(item.id));
     try {
-      await ref.read(remoteControlProvider.notifier).launchScannerApp(item.id);
+      await ref.read(launcherControllerProvider).launch(item.id);
       await ref.read(settingsProvider.notifier).setLastUsedLauncher(item.id);
       if (mounted) context.showSuccessSnackBar('正在启动 ${item.name}');
     } catch (error) {
@@ -166,12 +163,11 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     if (_launching.contains(app.id)) return;
     setState(() => _launching.add(app.id));
     try {
-      final remote = ref.read(remoteControlProvider.notifier);
       final scannerId = app.scannerId;
       if (scannerId != null && scannerId.isNotEmpty) {
-        await remote.launchScannerApp(scannerId);
+        await ref.read(launcherControllerProvider).launch(scannerId);
       } else {
-        await remote.launchApp(app.path, args: app.args);
+        await ref.read(launcherControllerProvider).launchPath(app.path, args: app.args);
       }
       await ref.read(settingsProvider.notifier).setLastUsedLauncher(app.id);
       if (mounted) context.showSuccessSnackBar('正在启动 ${app.name}');
@@ -222,9 +218,7 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
       ),
     );
     if (confirmed != true || !mounted) return;
-    final ok = await ref
-        .read(remoteControlProvider.notifier)
-        .deleteScannerApp(item.id);
+    final ok = await ref.read(launcherControllerProvider).delete(item.id);
     await ref.read(settingsProvider.notifier).removeFromLibrary(item.id);
     if (!mounted) return;
     if (ok) {
@@ -315,9 +309,11 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     final scannerId = app.scannerId;
     if (scannerId != null && scannerId.isNotEmpty) {
       try {
-        await ref
-            .read(remoteControlProvider.notifier)
-            .renameScannerApp(scannerId, app.originalName ?? app.name, newName);
+        await ref.read(launcherControllerProvider).rename(
+              scannerId,
+              app.originalName ?? app.name,
+              newName,
+            );
         debugPrint(
           '[QingLink][rename] PC 端完成 +${DateTime.now().difference(startedAt).inMilliseconds}ms',
         );
@@ -336,9 +332,11 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     final newName = await _promptRename(item.name);
     if (newName == null) return;
     try {
-      await ref
-          .read(remoteControlProvider.notifier)
-          .renameScannerApp(item.id, item.originalName, newName);
+      await ref.read(launcherControllerProvider).rename(
+            item.id,
+            item.originalName,
+            newName,
+          );
     } catch (error) {
       if (mounted) context.showErrorSnackBar('重命名失败: $error');
       return;
@@ -356,9 +354,7 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
   /// Ask the PC to re-extract and persist an entry's icon, then reload it.
   Future<void> _refreshCatalogIcon(LauncherItem item) async {
     try {
-      await ref
-          .read(remoteControlProvider.notifier)
-          .refreshScannerAppIcon(item.id);
+      await ref.read(launcherControllerProvider).refreshIcon(item.id);
     } catch (error) {
       if (mounted) context.showErrorSnackBar('刷新图标失败: $error');
       return;
@@ -370,13 +366,19 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     context.showSuccessSnackBar('已重新扫描图标');
   }
 
-  static List<String> _parseArgs(String raw) {
+  static List<String>? _parseArgs(String raw) {
     final tokens = <String>[];
     final buffer = StringBuffer();
     var inQuotes = false;
+    var escaped = false;
     for (var i = 0; i < raw.length; i++) {
       final ch = raw[i];
-      if (ch == '"') {
+      if (escaped) {
+        buffer.write(ch);
+        escaped = false;
+      } else if (ch == '\\' && i + 1 < raw.length && raw[i + 1] == '"') {
+        escaped = true;
+      } else if (ch == '"') {
         inQuotes = !inQuotes;
       } else if (!inQuotes && ch.trim().isEmpty) {
         if (buffer.isNotEmpty) {
@@ -387,12 +389,19 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
         buffer.write(ch);
       }
     }
+    if (inQuotes || escaped) return null;
     if (buffer.isNotEmpty) tokens.add(buffer.toString());
     return tokens;
   }
 
   static String _formatArgs(List<String> args) =>
-      args.map((arg) => arg.contains(' ') ? '"$arg"' : arg).join(' ');
+      args
+          .map(
+            (arg) => arg.contains(RegExp(r'[\s"]'))
+                ? '"${arg.replaceAll('"', '\\"')}"'
+                : arg,
+          )
+          .join(' ');
 
   /// Edit the extra launch arguments for a scanner entry, e.g.
   /// `-start steam://open/bigpicture`.
@@ -427,9 +436,11 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     controller.dispose();
     if (value == null || !mounted) return;
     final args = _parseArgs(value);
-    final ok = await ref
-        .read(remoteControlProvider.notifier)
-        .updateScannerApp(
+    if (args == null) {
+      context.showErrorSnackBar('启动参数引号不完整');
+      return;
+    }
+    final ok = await ref.read(launcherControllerProvider).update(
           id: item.id,
           name: item.name,
           exePath: item.executablePath,
@@ -511,6 +522,16 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
               onTap: () => Navigator.pop(ctx, 'rename'),
             ),
             ListTile(
+              leading: const Icon(Icons.tune_rounded),
+              title: const Text('启动参数'),
+              subtitle: Text(
+                app.args.isEmpty ? '未设置' : _formatArgs(app.args),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              onTap: () => Navigator.pop(ctx, 'args'),
+            ),
+            ListTile(
               leading: const Icon(Icons.delete_outline, color: AppColors.red),
               title: const Text('从库中移除'),
               onTap: () => Navigator.pop(ctx, 'remove'),
@@ -522,7 +543,61 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     if (!mounted || action == null) return;
     if (action == 'home') return _toggleHome(app);
     if (action == 'rename') return _renameLibraryApp(app);
+    if (action == 'args') return _editLibraryArgs(app);
     if (action == 'remove') return _removeFromLibrary(app);
+  }
+
+  Future<void> _editLibraryArgs(QuickApp app) async {
+    final controller = TextEditingController(text: _formatArgs(app.args));
+    final value = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('启动参数'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          minLines: 1,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            labelText: '参数（空格分隔，可用引号）',
+            hintText: '例如 -start steam://open/bigpicture',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value == null || !mounted) return;
+    final args = _parseArgs(value);
+    if (args == null) {
+      context.showErrorSnackBar('启动参数引号不完整');
+      return;
+    }
+    if (app.scannerId != null && app.scannerId!.isNotEmpty) {
+      final ok = await ref.read(launcherControllerProvider).update(
+        id: app.scannerId!,
+        name: app.name,
+        exePath: app.path,
+        args: args,
+      );
+      if (!ok) {
+        if (mounted) context.showErrorSnackBar('保存启动参数失败');
+        return;
+      }
+    }
+    await ref.read(settingsProvider.notifier).setLibraryArgs(app.id, args);
+    if (mounted) {
+      context.showSuccessSnackBar(args.isEmpty ? '已清除启动参数' : '已保存启动参数');
+    }
   }
 
   // ========== 添加 / 扫描 ==========
@@ -561,9 +636,10 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     final finalName = name?.trim();
     if (finalName == null || finalName.isEmpty || !mounted) return;
 
-    final id = await ref
-        .read(remoteControlProvider.notifier)
-        .addScannerApp(name: finalName, exePath: path);
+    final id = await ref.read(launcherControllerProvider).add(
+      name: finalName,
+      exePath: path,
+    );
     if (!mounted) return;
     if (id == null) {
       context.showErrorSnackBar('添加失败');
@@ -588,9 +664,9 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     if (_scanning) return;
     setState(() => _scanning = true);
     try {
-      final remote = ref.read(remoteControlProvider.notifier);
-      await remote.refreshLauncherCatalog('app');
-      await remote.refreshLauncherCatalog('game');
+      final launcher = ref.read(launcherControllerProvider);
+      await launcher.refreshCatalog('app');
+      await launcher.refreshCatalog('game');
       if (mounted) {
         context.showSuccessSnackBar('已开始扫描：开始菜单 + Steam');
       }
@@ -602,9 +678,7 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
   }
 
   Future<void> _scanFolder() async {
-    await Navigator.of(
-      context,
-    ).push<bool>(MaterialPageRoute(builder: (_) => const ScanFolderScreen()));
+    await context.push<bool>(AppRoutes.scanFolder);
     if (!mounted) return;
     await _load();
   }
@@ -647,10 +721,13 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    if (!ref.watch(authProvider.select((state) => state.isAuthenticated))) {
+    if (!ref.watch(connectionProvider.select((state) => state.isAuthenticated))) {
       return const UnconnectedState();
     }
-    final state = ref.watch(remoteControlProvider);
+    // Keep the library isolated from high-frequency connection/foreground
+    // updates. Watching the whole remote state rebuilds every visible row on
+    // each heartbeat even when the catalog has not changed.
+    final libraryState = ref.watch(libraryControllerProvider);
     final settings = ref.watch(settingsProvider);
 
     return Column(
@@ -686,12 +763,10 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
                     hint: '搜索程序',
                     onChanged: (v) {
                       _search(v);
-                      setState(() {});
                     },
                     onClear: () {
                       _searchController.clear();
                       _search('');
-                      setState(() {});
                     },
                   ),
                 ),
@@ -704,7 +779,7 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
               ],
             ),
           ),
-          if (_scanning || state.isLoadingLibrary)
+          if (_scanning || libraryState.loading)
             const Padding(
               padding: EdgeInsets.only(top: 12),
               child: LinearProgressIndicator(
@@ -714,21 +789,21 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
             ),
         ],
         const SizedBox(height: 12),
-        Expanded(child: _buildContent(state, settings)),
+        Expanded(child: _buildContent(libraryState, settings)),
       ],
     );
   }
 
-  Widget _buildContent(RemoteControlState state, ConnectionConfig settings) {
+  Widget _buildContent(LibraryState libraryState, ConnectionConfig settings) {
     switch (_filter) {
       case LibraryFilter.common:
         return _buildCommon(settings);
       case LibraryFilter.recent:
-        return _buildRecent(state, settings);
+        return _buildRecent(libraryState, settings);
       case LibraryFilter.steam:
       case LibraryFilter.software:
       case LibraryFilter.other:
-        return _buildCatalog(state, settings);
+        return _buildCatalog(libraryState, settings);
     }
   }
 
@@ -750,20 +825,22 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
         separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
           final app = apps[index];
-          return _LibraryAppTile(
-            app: app,
-            launching: _launching.contains(app.id),
-            onLaunch: () => _launchLibraryApp(app),
-            onToggleHome: () => _toggleHome(app),
-            onMenu: () => _showLibraryMenu(app),
+          return RepaintBoundary(
+            child: _LibraryAppTile(
+              app: app,
+              launching: _launching.contains(app.id),
+              onLaunch: () => _launchLibraryApp(app),
+              onToggleHome: () => _toggleHome(app),
+              onMenu: () => _showLibraryMenu(app),
+            ),
           );
         },
       ),
     );
   }
 
-  Widget _buildRecent(RemoteControlState state, ConnectionConfig settings) {
-    final items = state.recentLauncherItems;
+  Widget _buildRecent(LibraryState libraryState, ConnectionConfig settings) {
+    final items = libraryState.recent;
     if (items.isEmpty) {
       return const EmptyState(
         icon: Icons.history_rounded,
@@ -780,32 +857,34 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
         separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
           final item = items[index];
-          return _CatalogTile(
-            item: item,
-            added: settings.isInLibrary(item.id),
-            launching: _launching.contains(item.id),
-            iconRevision: _iconRevisions[item.id] ?? 0,
-            onMenu: () => _showCatalogMenu(item),
-            onLaunch: () => _launchCatalogItem(item),
-            onAdd: () => _addToLibrary(item),
-            onRemove: () => _removeAddedCatalogItem(item),
-            onDelete: _isUserAdded(item.source)
-                ? () => _deleteCatalogItem(item)
-                : null,
+          return RepaintBoundary(
+            child: _CatalogTile(
+              item: item,
+              added: settings.isInLibrary(item.id),
+              launching: _launching.contains(item.id),
+              iconRevision: _iconRevisions[item.id] ?? 0,
+              onMenu: () => _showCatalogMenu(item),
+              onLaunch: () => _launchCatalogItem(item),
+              onAdd: () => _addToLibrary(item),
+              onRemove: () => _removeAddedCatalogItem(item),
+              onDelete: _isUserAdded(item.source)
+                  ? () => _deleteCatalogItem(item)
+                  : null,
+            ),
           );
         },
       ),
     );
   }
 
-  Widget _buildCatalog(RemoteControlState state, ConnectionConfig settings) {
-    final items = state.launcherItems;
+  Widget _buildCatalog(LibraryState libraryState, ConnectionConfig settings) {
+    final items = libraryState.items;
     if (items.isEmpty) {
       return EmptyState(
         icon: _filter == LibraryFilter.steam
             ? Icons.sports_esports_outlined
             : Icons.search_off_rounded,
-        title: state.isLoadingLibrary ? '正在读取…' : '没有找到程序',
+        title: libraryState.loading ? '正在读取…' : '没有找到程序',
         message: switch (_filter) {
           LibraryFilter.steam => '未检测到 Steam 游戏，可点击右上角「＋」重新扫描。',
           LibraryFilter.software => '试试搜索，或用右上角「＋」扫描开始菜单。',
@@ -820,7 +899,7 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
       child: ListView.separated(
         controller: _scrollController,
         padding: const EdgeInsets.fromLTRB(18, 0, 18, 96),
-        itemCount: items.length + (state.libraryHasMore ? 1 : 0),
+        itemCount: items.length + (libraryState.hasMore ? 1 : 0),
         separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
           if (index >= items.length) {
@@ -836,18 +915,20 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
             );
           }
           final item = items[index];
-          return _CatalogTile(
-            item: item,
-            added: settings.isInLibrary(item.id),
-            launching: _launching.contains(item.id),
-            iconRevision: _iconRevisions[item.id] ?? 0,
-            onMenu: () => _showCatalogMenu(item),
-            onLaunch: () => _launchCatalogItem(item),
-            onAdd: () => _addToLibrary(item),
-            onRemove: () => _removeAddedCatalogItem(item),
-            onDelete: _isUserAdded(item.source)
-                ? () => _deleteCatalogItem(item)
-                : null,
+          return RepaintBoundary(
+            child: _CatalogTile(
+              item: item,
+              added: settings.isInLibrary(item.id),
+              launching: _launching.contains(item.id),
+              iconRevision: _iconRevisions[item.id] ?? 0,
+              onMenu: () => _showCatalogMenu(item),
+              onLaunch: () => _launchCatalogItem(item),
+              onAdd: () => _addToLibrary(item),
+              onRemove: () => _removeAddedCatalogItem(item),
+              onDelete: _isUserAdded(item.source)
+                  ? () => _deleteCatalogItem(item)
+                  : null,
+            ),
           );
         },
       ),
@@ -986,6 +1067,7 @@ class _CatalogTile extends StatelessWidget {
         children: [
           AppIcon(
             id: item.id,
+            initialBase64: item.iconBase64,
             size: 40,
             radius: 10,
             revision: iconRevision,

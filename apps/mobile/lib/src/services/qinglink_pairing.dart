@@ -1,25 +1,21 @@
-import 'dart:convert';
-import 'dart:io';
-
+import '../core/errors/failure.dart';
+import '../core/network/http_transport.dart';
 import '../protocol/qinglink_protocol.dart';
 
 class QingLinkPairing {
+  QingLinkPairing({HttpTransport? transport})
+    : _transport = transport ?? DartHttpTransport();
+
+  final HttpTransport _transport;
   Map<String, dynamic>? lastAutoConfirm;
 
   Future<void> cancelAt(String baseUrl, String requestId) async {
-    final client = HttpClient();
     try {
-      final request = await client.deleteUrl(
+      await _transport.delete(
         Uri.parse('$baseUrl/api/v2/pairing/requests/$requestId'),
       );
-      final response = await request.close();
-      await response.drain<void>();
-      if (response.statusCode != HttpStatus.ok &&
-          response.statusCode != HttpStatus.notFound) {
-        throw const QingLinkPairingException('PAIRING_CANCEL_FAILED', '无法取消配对');
-      }
-    } finally {
-      client.close(force: true);
+    } on NetworkFailure catch (error) {
+      throw QingLinkPairingException('PAIRING_CANCEL_FAILED', error.message);
     }
   }
 
@@ -66,27 +62,21 @@ class QingLinkPairing {
     String url,
     Map<String, dynamic> body,
   ) async {
-    final client = HttpClient();
     try {
-      final request = await client.postUrl(Uri.parse(url));
-      request.headers.contentType = ContentType.json;
-      request.write(jsonEncode(body));
-      final response = await request.close();
-      final decoded =
-          jsonDecode(await response.transform(utf8.decoder).join())
-              as Map<String, dynamic>;
-      if (response.statusCode < 200 ||
-          response.statusCode >= 300 ||
-          decoded['ok'] == false) {
-        final error = decoded['error'] as Map<String, dynamic>?;
+      final decoded = await _transport.postJson(Uri.parse(url), body);
+      if (decoded['ok'] == false) {
+        final error = decoded['error'];
+        final map = error is Map ? Map<String, dynamic>.from(error) : const {};
         throw QingLinkPairingException(
-          error?['code'] as String? ?? 'PAIRING_FAILED',
-          error?['message'] as String? ?? '配对失败',
+          map['code'] as String? ?? 'PAIRING_FAILED',
+          map['message'] as String? ?? '配对失败',
         );
       }
       return (decoded['data'] as Map<String, dynamic>?) ?? decoded;
-    } finally {
-      client.close(force: true);
+    } on QingLinkPairingException {
+      rethrow;
+    } on QingLinkFailure catch (error) {
+      throw QingLinkPairingException('PAIRING_NETWORK_ERROR', error.message);
     }
   }
 }

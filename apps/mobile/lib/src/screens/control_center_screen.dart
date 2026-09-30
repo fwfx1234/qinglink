@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/display_info.dart';
-import '../providers/remote_control_provider.dart';
+import '../providers/system_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_dialogs.dart';
 import '../utils/snackbar_extension.dart';
@@ -23,33 +23,24 @@ class _ControlCenterScreenState extends ConsumerState<ControlCenterScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final remote = ref.read(remoteControlProvider.notifier);
-      remote.getDisplays();
-      remote.getVolume();
-      remote.getAudioOutputs();
-      remote.refreshForeground();
+      final system = ref.read(systemControllerProvider.notifier);
+      system.refreshDisplays();
+      system.refreshVolume();
+      system.refreshAudioOutputs();
+      system.refreshForeground();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(
-      remoteControlProvider.select(
-        (s) => (
-          displays: s.displays,
-          volumeStatus: s.volumeStatus,
-          audioOutputs: s.audioOutputs,
-        ),
-      ),
-    );
-    final remote = ref.read(remoteControlProvider.notifier);
+    final system = ref.watch(systemControllerProvider);
     final palette = context.palette;
-    final volumePercent = state.volumeStatus?.percent ?? 0;
-    final muted = state.volumeStatus?.muted ?? false;
-    final selectedOutput = state.audioOutputs
+    final volumePercent = system.volume?.percent ?? 0;
+    final muted = system.volume?.muted ?? false;
+    final selectedOutput = system.audioOutputs
         .where((d) => d.isDefault)
         .firstOrNull;
-    final display = state.displays.isNotEmpty ? state.displays.first : null;
+    final display = system.displays.isNotEmpty ? system.displays.first : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -83,9 +74,9 @@ class _ControlCenterScreenState extends ConsumerState<ControlCenterScreen> {
                       height: 40,
                       child: IconButton(
                         tooltip: '静音',
-                        onPressed: state.volumeStatus == null
+                        onPressed: system.volume == null
                             ? null
-                            : () => remote.setMuted(!muted),
+                              : () => ref.read(systemControllerProvider.notifier).setMuted(!muted),
                         icon: Icon(
                           muted
                               ? Icons.volume_off_rounded
@@ -117,9 +108,9 @@ class _ControlCenterScreenState extends ConsumerState<ControlCenterScreen> {
                         child: Slider(
                           value: volumePercent.toDouble(),
                           max: 100,
-                          onChanged: state.volumeStatus == null
+                            onChanged: system.volume == null
                               ? null
-                              : (value) => remote.setVolume(value.round()),
+                              : (value) => ref.read(systemControllerProvider.notifier).setVolume(value.round()),
                         ),
                       ),
                     ),
@@ -232,12 +223,12 @@ class _ControlCenterScreenState extends ConsumerState<ControlCenterScreen> {
   }
 
   Future<void> _pickAudioOutput() async {
-    final remote = ref.read(remoteControlProvider.notifier);
-    if (ref.read(remoteControlProvider).audioOutputs.isEmpty) {
-      await remote.getAudioOutputs();
+    final system = ref.read(systemControllerProvider.notifier);
+    if (ref.read(systemControllerProvider).audioOutputs.isEmpty) {
+      await system.refreshAudioOutputs();
       if (!mounted) return;
     }
-    final current = ref.read(remoteControlProvider).audioOutputs;
+    final current = ref.read(systemControllerProvider).audioOutputs;
     if (!mounted || current.isEmpty) return;
     final selectedId = await showModalBottomSheet<String>(
       context: context,
@@ -265,7 +256,7 @@ class _ControlCenterScreenState extends ConsumerState<ControlCenterScreen> {
     if (selectedId == null || !mounted || _switchingAudioOutput) return;
     setState(() => _switchingAudioOutput = true);
     try {
-      await remote.setAudioOutput(selectedId);
+      await ref.read(systemControllerProvider.notifier).setAudioOutput(selectedId);
       if (mounted) context.showSuccessSnackBar('音频输出已切换');
     } catch (error) {
       if (mounted) context.showErrorSnackBar('切换声音输出失败: $error');
@@ -311,9 +302,7 @@ class _ControlCenterScreenState extends ConsumerState<ControlCenterScreen> {
     );
     if (mode == null || !mounted) return;
     try {
-      await ref
-          .read(remoteControlProvider.notifier)
-          .setDisplayMode(display.id, mode);
+      await ref.read(systemControllerProvider.notifier).setDisplayMode(display.id, mode);
       if (mounted) {
         setState(() {});
         context.showSuccessSnackBar('显示模式已切换');

@@ -5,9 +5,7 @@ import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
 
 class PairingDialog extends ConsumerStatefulWidget {
-  final BuildContext dialogContext;
-
-  const PairingDialog({super.key, required this.dialogContext});
+  const PairingDialog({super.key});
 
   @override
   ConsumerState<PairingDialog> createState() => _PairingDialogState();
@@ -27,16 +25,16 @@ class _PairingDialogState extends ConsumerState<PairingDialog> {
     if (_popScheduled) return;
     _popScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && Navigator.canPop(widget.dialogContext)) {
+      if (mounted && Navigator.canPop(context)) {
         FocusManager.instance.primaryFocus?.unfocus();
-        Navigator.pop(widget.dialogContext, result);
+        Navigator.pop(context, result);
       }
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final authState = ref.watch(authProvider);
+    final authState = ref.watch(connectionProvider);
     final theme = Theme.of(context);
 
     // 配对成功自动关闭
@@ -127,7 +125,7 @@ class _PairingDialogState extends ConsumerState<PairingDialog> {
           onPressed: isPairing
               ? null
               : () {
-                  ref.read(authProvider.notifier).cancelPairing();
+                  ref.read(connectionProvider.notifier).cancelPairing();
                   _safePop(false);
                 },
           child: const Text('取消'),
@@ -137,7 +135,7 @@ class _PairingDialogState extends ConsumerState<PairingDialog> {
               ? null
               : () {
                   ref
-                      .read(authProvider.notifier)
+                      .read(connectionProvider.notifier)
                       .pair(_pinController.text.trim());
                 },
           style: FilledButton.styleFrom(backgroundColor: AppColors.primary),

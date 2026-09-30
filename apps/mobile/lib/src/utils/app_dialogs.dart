@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../providers/remote_control_provider.dart';
+import '../providers/feature_facades.dart';
+import '../providers/process_controller.dart';
+import '../providers/power_controller.dart';
 import '../theme/app_theme.dart';
 import 'snackbar_extension.dart';
 import 'tv_power_follow.dart';
@@ -65,7 +67,7 @@ Future<void> confirmPowerAction(
   if (entry == null) return;
   final (title, message, label) = entry;
 
-  if (!ref.read(remoteControlProvider).isConnected) {
+  if (!ref.read(connectionReadyProvider)) {
     context.showWarningSnackBar('电脑未连接，无法执行电源操作');
     return;
   }
@@ -80,14 +82,14 @@ Future<void> confirmPowerAction(
   if (!confirmed || !context.mounted) return;
 
   try {
-    final remote = ref.read(remoteControlProvider.notifier);
+    final power = ref.read(powerControllerProvider);
     if (mode == 'sleep') {
-      await remote.sleep();
+      await power.sleep();
       await followPcWithTvPower(ref, TvFollowAction.powerOff);
     } else if (mode == 'restart') {
-      await remote.restart();
+      await power.restart();
     } else {
-      await remote.shutdown();
+      await power.shutdown();
       await followPcWithTvPower(ref, TvFollowAction.powerOff);
     }
   } catch (error) {
@@ -112,7 +114,7 @@ Future<void> confirmKillProcess(
   if (!confirmed || !context.mounted) return;
 
   try {
-    await ref.read(remoteControlProvider.notifier).killProcess(pid);
+    await ref.read(processControllerProvider.notifier).kill(pid);
     if (context.mounted) context.showSuccessSnackBar('已结束: $name');
   } catch (error) {
     if (context.mounted) context.showErrorSnackBar('结束失败: $error');

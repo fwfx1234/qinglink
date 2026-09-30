@@ -2,10 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/storage/preferences_repository.dart';
 import '../models/ir_remote.dart';
 import '../services/ir_transmitter.dart';
+import 'dependencies.dart';
 
 /// 生成 RCA-38 时序：`{38.7k,460,msb}<1,-2|1,-4>(8,-8,D:4,F:8,~D:4,~F:8,1,-16)`。
 ///
@@ -141,8 +142,9 @@ class IrRemoteState {
 }
 
 class IrRemoteNotifier extends StateNotifier<IrRemoteState> {
-  IrRemoteNotifier({IrTransmitter? transmitter})
+  IrRemoteNotifier({IrTransmitter? transmitter, PreferencesRepository? preferences})
     : _transmitter = transmitter ?? const IrTransmitter(),
+      _preferences = preferences ?? SharedPreferencesRepository(),
       super(const IrRemoteState()) {
     unawaited(_load());
   }
@@ -152,21 +154,17 @@ class IrRemoteNotifier extends StateNotifier<IrRemoteState> {
   static const _activeProfileKey = 'ir_active_profile_v1';
   final IrTransmitter _transmitter;
   final Completer<void> _loadCompleter = Completer<void>();
-  SharedPreferences? _prefs;
+  final PreferencesRepository _preferences;
   bool _disposed = false;
   int _macroGeneration = 0;
 
   /// 首次加载（内置遥控器 + 持久化配置 + 手机红外能力）完成的信号。
   Future<void> get loaded => _loadCompleter.future;
 
-  Future<SharedPreferences> _preferences() async =>
-      _prefs ??= await SharedPreferences.getInstance();
-
   Future<void> _load() async {
     try {
-      final prefs = await _preferences();
-      final profiles = _decodeProfiles(prefs.getString(_profilesKey));
-      final macros = _decodeMacros(prefs.getString(_macrosKey));
+      final profiles = _decodeProfiles(await _preferences.readString(_profilesKey));
+      final macros = _decodeMacros(await _preferences.readString(_macrosKey));
       IrCapability capability;
       try {
         capability = await _transmitter.capabilities();
@@ -174,7 +172,7 @@ class IrRemoteNotifier extends StateNotifier<IrRemoteState> {
         capability = const IrCapability(supported: false);
       }
       final allProfiles = [_defaultProfile, ...profiles];
-      final savedActive = prefs.getString(_activeProfileKey);
+      final savedActive = await _preferences.readString(_activeProfileKey);
       final activeId = allProfiles.any((profile) => profile.id == savedActive)
           ? savedActive
           : allProfiles.first.id;
@@ -221,12 +219,11 @@ class IrRemoteNotifier extends StateNotifier<IrRemoteState> {
   }
 
   Future<void> _persist() async {
-    final prefs = await _preferences();
-    await prefs.setString(
+    await _preferences.writeString(
       _profilesKey,
       encodeIrProfiles(state.profiles.where((p) => !p.builtin).toList()),
     );
-    await prefs.setString(_macrosKey, encodeIrMacros(state.macros));
+    await _preferences.writeString(_macrosKey, encodeIrMacros(state.macros));
   }
 
   Future<void> saveProfiles(List<IrRemoteProfile> profiles) async {
@@ -245,8 +242,7 @@ class IrRemoteNotifier extends StateNotifier<IrRemoteState> {
   Future<void> selectProfile(String id) async {
     if (!state.profiles.any((profile) => profile.id == id)) return;
     state = state.copyWith(activeProfileId: id);
-    final prefs = await _preferences();
-    await prefs.setString(_activeProfileKey, id);
+    await _preferences.writeString(_activeProfileKey, id);
   }
 
   String? validateCommand(IrCommand command) {
@@ -362,5 +358,7 @@ class IrRemoteNotifier extends StateNotifier<IrRemoteState> {
 }
 
 final irRemoteProvider = StateNotifierProvider<IrRemoteNotifier, IrRemoteState>(
-  (ref) => IrRemoteNotifier(),
+  (ref) => IrRemoteNotifier(
+    preferences: ref.read(preferencesRepositoryProvider),
+  ),
 );

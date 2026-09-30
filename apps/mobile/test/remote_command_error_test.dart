@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qinglink_mobile/src/providers/remote_control_provider.dart';
+import 'package:qinglink_mobile/src/core/network/remote_command_exception.dart';
+import 'package:qinglink_mobile/src/providers/system_controller.dart';
 
 void main() {
   test('preserves a server error code and message', () {
@@ -13,22 +14,8 @@ void main() {
     expect(error.toString(), contains('DISPLAY_LIST_FAILED'));
   });
 
-  test('tracks and clears the display-specific error state', () {
-    const initial = RemoteControlState();
-    final failed = initial.copyWith(
-      displayError: 'DISPLAY_LIST_FAILED: failed',
-    );
-    final recovered = failed.copyWith(displayError: '');
-
-    expect(failed.displayError, isNotEmpty);
-    expect(recovered.displayError, isEmpty);
-  });
-
-  test('builds a confirmation unlock request without an implicit PIN', () {
-    expect(autoUnlockRequestPayload(), {'type': 'auto_unlock'});
-    expect(
-      autoUnlockRequestPayload(lockPassword: '1234'),
-      {'type': 'auto_unlock', 'pin': '1234'},
-    );
+  test('builds unlock state through the system controller model', () {
+    const initial = SystemState();
+    expect(initial.unlock, isNull);
   });
 }

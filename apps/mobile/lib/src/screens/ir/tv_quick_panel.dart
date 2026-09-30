@@ -3,10 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/ir_remote_provider.dart';
 import '../../theme/app_theme.dart';
+import '../../app/routes.dart';
 import '../../utils/tv_power_follow.dart';
 import '../../widgets/app_ui.dart';
 import 'ir_widgets.dart';
-import 'tv_remote_screen.dart';
 
 /// 首页快捷面板：常用电视按键 + 完整遥控器入口。
 Future<void> showTvQuickPanel(BuildContext context) {
@@ -44,10 +44,16 @@ class TvQuickPanel extends ConsumerWidget {
   }
 
   void _openRemote(BuildContext context) {
-    Navigator.of(context).pop();
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const TvRemoteScreen()),
-    );
+    final navigator = Navigator.of(context);
+    navigator.pop();
+    // Wait until the bottom-sheet route has finished removing its overlay
+    // before pushing the full remote page. Pushing synchronously here can
+    // leave a deactivated sheet context in the navigator stack on some
+    // mobile Flutter versions.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!navigator.mounted) return;
+      navigator.pushNamed(AppRoutes.tvRemote);
+    });
   }
 
   @override

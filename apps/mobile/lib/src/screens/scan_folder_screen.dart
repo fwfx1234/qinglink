@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/app_info.dart';
-import '../providers/remote_control_provider.dart';
+import '../providers/file_controller.dart';
 import '../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/snackbar_extension.dart';
@@ -52,12 +52,11 @@ class _ScanFolderScreenState extends ConsumerState<ScanFolderScreen> {
   }
 
   Future<void> _scan(String folder) async {
+    if (!mounted) return;
     setState(() => _loading = true);
     GameScanCandidatesResponse? result;
     try {
-      result = await ref
-          .read(remoteControlProvider.notifier)
-          .scanGameDirectory(folder);
+      result = await ref.read(fileControllerProvider).scanGameDirectory(folder);
     } catch (error) {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -101,33 +100,44 @@ class _ScanFolderScreenState extends ConsumerState<ScanFolderScreen> {
         .where((item) => _selected.contains(item.executablePath))
         .toList();
     if (folder == null || selected.isEmpty) return;
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() => _saving = true);
+    final files = ref.read(fileControllerProvider);
+    final paths = selected.map((item) => item.executablePath).toList();
+    final names = selected
+        .map((item) => _names[item.executablePath]?.text.trim() ?? item.name)
+        .toList(growable: false);
     var added = 0;
-    for (final item in selected) {
-      final name = _names[item.executablePath]?.text.trim();
-      if (name == null || name.isEmpty) continue;
-      final id = await ref
-          .read(remoteControlProvider.notifier)
-          .addScannerApp(
-            name: name,
-            exePath: item.executablePath,
-            category: 'Game',
-            iconBase64: item.iconBase64,
-          );
-      if (id == null) continue;
-      await ref
-          .read(settingsProvider.notifier)
-          .addToLibrary(
-            QuickApp(
-              name: name,
-              path: item.executablePath,
-              scannerId: id,
-              isGame: true,
-              originalName: item.originalName,
-              pinnedToHome: false,
-            ),
-          );
-      added++;
+    try {
+      // Batch the operation: scanning and database writes happen once on the
+      // PC, avoiding one icon extraction/WebSocket round trip per game.
+      final addedItems = await files.addScannedGames(
+        folder,
+        paths,
+        names: names,
+      );
+      if (addedItems.length != selected.length) {
+        throw StateError('电脑未能添加所选游戏');
+      }
+      for (final catalogItem in addedItems) {
+        final name = catalogItem.name;
+        await ref.read(settingsProvider.notifier).addToLibrary(
+              QuickApp(
+                name: name,
+                path: catalogItem.executablePath,
+                scannerId: catalogItem.id,
+                isGame: true,
+                originalName: catalogItem.originalName,
+                pinnedToHome: false,
+                args: catalogItem.args,
+              ),
+            );
+        added++;
+      }
+    } catch (error) {
+      if (mounted) context.showErrorSnackBar('添加失败: $error');
+      if (mounted) setState(() => _saving = false);
+      return;
     }
     if (!mounted) return;
     setState(() => _saving = false);
@@ -145,6 +155,7 @@ class _ScanFolderScreenState extends ConsumerState<ScanFolderScreen> {
     final allSelected =
         _candidates.isNotEmpty && _selected.length == _candidates.length;
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(title: const Text('扫描文件夹')),
       body: Column(
         children: [
@@ -313,6 +324,11 @@ class _CandidateIcon extends StatelessWidget {
               bytes,
               fit: BoxFit.contain,
               filterQuality: FilterQuality.high,
+              cacheWidth: (40 * MediaQuery.devicePixelRatioOf(context)).round(),
+              errorBuilder: (_, _, _) => const Icon(
+                Icons.desktop_windows_outlined,
+                color: AppColors.cyan,
+              ),
             ),
     );
   }

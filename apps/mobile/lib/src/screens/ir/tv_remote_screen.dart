@@ -1,21 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../models/ir_remote.dart';
 import '../../providers/ir_remote_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_ui.dart';
-import 'ir_command_screen.dart';
-import 'ir_macro_screen.dart';
-import 'ir_remote_manage_screen.dart';
+import '../../app/routes.dart';
 import 'ir_widgets.dart';
 
 /// 电视遥控主页面：只负责发送按键，配置入口统一放到子页面。
 class TvRemoteScreen extends ConsumerWidget {
   const TvRemoteScreen({super.key});
 
-  void _push(BuildContext context, Widget page) =>
-      Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+  void _openCommand(BuildContext context, String profileId) => context.push(
+    '${AppRoutes.irCommand}?profile=${Uri.encodeComponent(profileId)}',
+  );
+
+  void _openMacro(BuildContext context, String profileId) => context.push(
+    '${AppRoutes.irMacro}?profile=${Uri.encodeComponent(profileId)}',
+  );
+
+  void _openManage(BuildContext context) => context.push(AppRoutes.irManage);
 
   Future<void> _send(
     BuildContext context,
@@ -45,18 +51,18 @@ class TvRemoteScreen extends ConsumerWidget {
         actions: [
           IconButton(
             onPressed: () =>
-                _push(context, IrCommandScreen(profileId: profile.id)),
+                _openCommand(context, profile.id),
             icon: const Icon(Icons.keyboard_alt_outlined),
             tooltip: '按键与信号',
           ),
           IconButton(
             onPressed: () =>
-                _push(context, IrMacroScreen(profileId: profile.id)),
+                _openMacro(context, profile.id),
             icon: const Icon(Icons.playlist_play_rounded),
             tooltip: '控制流程',
           ),
           IconButton(
-            onPressed: () => _push(context, const IrRemoteManageScreen()),
+            onPressed: () => _openManage(context),
             icon: const Icon(Icons.tune_rounded),
             tooltip: '遥控器管理',
           ),

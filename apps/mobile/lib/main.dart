@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'src/providers/theme_provider.dart';
-import 'src/screens/home_screen.dart';
+import 'src/app/app_router.dart';
 import 'src/theme/app_theme.dart';
 
 void main() {
@@ -168,13 +169,19 @@ class QingLinkApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeModeProvider);
-    return MaterialApp(
+    return MaterialApp.router(
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
       title: '轻联 QingLink',
       debugShowCheckedModeBanner: false,
       theme: _theme(AppPalette.light, Brightness.light),
       darkTheme: _theme(AppPalette.dark, Brightness.dark),
       themeMode: themeMode,
-      home: const HomeScreen(),
+      routerConfig: ref.watch(appRouterProvider),
     );
   }
 }

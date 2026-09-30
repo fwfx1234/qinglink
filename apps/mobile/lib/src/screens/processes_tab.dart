@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/process_info.dart';
 import '../providers/auth_provider.dart';
-import '../providers/remote_control_provider.dart';
+import '../providers/process_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_dialogs.dart';
 import '../widgets/app_ui.dart';
@@ -35,14 +35,12 @@ class _ProcessesTabState extends ConsumerState<ProcessesTab>
     _scrollController.addListener(() {
       if (_scrollController.hasClients &&
           _scrollController.position.extentAfter < 240) {
-        ref.read(remoteControlProvider.notifier).loadMoreProcesses();
+        ref.read(processControllerProvider.notifier).loadMore();
       }
     });
     Future.delayed(const Duration(milliseconds: 150), () {
       if (mounted) {
-        ref
-            .read(remoteControlProvider.notifier)
-            .refreshProcesses(filter: _filter);
+        ref.read(processControllerProvider.notifier).refresh(filter: _filter);
       }
     });
   }
@@ -57,8 +55,8 @@ class _ProcessesTabState extends ConsumerState<ProcessesTab>
 
   void _reload() {
     ref
-        .read(remoteControlProvider.notifier)
-        .refreshProcesses(
+        .read(processControllerProvider.notifier)
+        .refresh(
           search: _query.isEmpty ? null : _query,
           filter: _filter,
         );
@@ -74,17 +72,12 @@ class _ProcessesTabState extends ConsumerState<ProcessesTab>
   Widget build(BuildContext context) {
     super.build(context);
     final isAuthenticated = ref.watch(
-      authProvider.select((state) => state.isAuthenticated),
+      connectionProvider.select((state) => state.isAuthenticated),
     );
-    final processes = ref.watch(
-      remoteControlProvider.select((state) => state.processes),
-    );
-    final isLoading = ref.watch(
-      remoteControlProvider.select((state) => state.isLoading),
-    );
-    final processHasMore = ref.watch(
-      remoteControlProvider.select((state) => state.processHasMore),
-    );
+    final processState = ref.watch(processControllerProvider);
+    final processes = processState.items;
+    final isLoading = processState.loading;
+    final processHasMore = processState.hasMore;
 
     if (!isAuthenticated) {
       return const UnconnectedState();
@@ -128,8 +121,8 @@ class _ProcessesTabState extends ConsumerState<ProcessesTab>
               _searchDebounce?.cancel();
               _searchDebounce = Timer(const Duration(milliseconds: 300), () {
                 ref
-                    .read(remoteControlProvider.notifier)
-                    .refreshProcesses(
+                    .read(processControllerProvider.notifier)
+                    .refresh(
                       search: _query.isEmpty ? null : _query,
                       filter: _filter,
                     );

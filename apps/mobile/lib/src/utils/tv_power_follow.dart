@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/ir_remote.dart';
 import '../providers/auth_provider.dart';
 import '../providers/ir_remote_provider.dart';
-import '../providers/remote_control_provider.dart';
+import '../providers/feature_facades.dart';
 import '../providers/settings_provider.dart';
 
 /// 电视跟随电脑的动作类型。
@@ -56,10 +56,8 @@ Future<void> followPcWithTvPower(WidgetRef ref, TvFollowAction action) async {
 
 /// 电脑是否已可达（已连接、心跳在线或已认证）。
 bool isPcReachable(WidgetRef ref) {
-  final remote = ref.read(remoteControlProvider);
-  return remote.isConnected ||
-      remote.pcOnline ||
-      ref.read(authProvider).isAuthenticated;
+  return ref.read(connectionReadyProvider) ||
+      ref.read(connectionProvider).isAuthenticated;
 }
 
 /// 发送唤醒后等待 [delay]，只有电脑仍未在线时才切换电视电源，避免电脑/

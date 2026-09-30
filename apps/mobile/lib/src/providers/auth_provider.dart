@@ -5,13 +5,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/auth.dart';
+import '../data/repositories/device_discovery_repository.dart';
+import '../data/repositories/pairing_repository.dart';
 import '../services/remote_session.dart';
 import '../services/qinglink_pairing.dart';
-import '../services/qinglink_discovery.dart';
 import '../services/ws_client.dart';
 import '../utils/wake_on_lan.dart';
-import 'remote_control_provider.dart';
 import 'settings_provider.dart';
+import 'dependencies.dart';
 
 enum VerifyResult { success, tokenExpired, networkError }
 
@@ -33,25 +34,43 @@ AuthState restoreAuthenticatedStateAfterReconnect(
   );
 }
 
-class AuthNotifier extends StateNotifier<AuthState> {
+/// Coordinates discovery, pairing and authenticated session transitions.
+class ConnectionController extends StateNotifier<AuthState> {
   final Ref _ref;
+  final DeviceDiscoveryRepository _discovery;
+  final PairingRepository _pairing;
   bool _disposed = false;
   Future<bool>? _connecting;
   StreamSubscription? _sessionFailureSubscription;
+  StreamSubscription? _sessionStateSubscription;
   Timer? _discoveryTimer;
   String? _pairingRequestId;
   String? _pairingDeviceId;
   bool _recoveringAuthentication = false;
 
-  AuthNotifier(this._ref) : super(const AuthState()) {
+  ConnectionController(
+    this._ref, {
+    DeviceDiscoveryRepository? discovery,
+    PairingRepository? pairing,
+  }) : _discovery = discovery ?? _ref.read(deviceDiscoveryRepositoryProvider),
+       _pairing = pairing ?? _ref.read(pairingRepositoryProvider),
+       super(const AuthState()) {
     _ref.listen<ConnectionConfig>(settingsProvider, _onConnectionConfigChanged);
-    _ref.listen<RemoteControlState>(remoteControlProvider, (_, next) {
-      _onSessionState(next.wsState, next.isConnected);
-    });
-    final remote = _ref.read(remoteControlProvider.notifier);
-    _sessionFailureSubscription = remote.authenticationFailures.listen(
+    final sessionRepository = _ref.read(remoteSessionRepositoryProvider);
+    _sessionFailureSubscription = sessionRepository.authenticationFailures.listen(
       _onAuthenticationFailure,
     );
+    _sessionStateSubscription = sessionRepository.states.listen((sessionState) {
+      _onSessionState(
+        switch (sessionState) {
+          RemoteSessionState.ready => WsConnectionState.connected,
+          RemoteSessionState.connecting || RemoteSessionState.authenticating =>
+            WsConnectionState.connecting,
+          _ => WsConnectionState.disconnected,
+        },
+        sessionState == RemoteSessionState.ready,
+      );
+    });
     unawaited(_initialize());
   }
 
@@ -75,25 +94,14 @@ class AuthNotifier extends StateNotifier<AuthState> {
   Future<void> _refreshDiscovery({bool updateEndpoint = true}) async {
     if (_disposed) return;
     try {
-      final devices = await QingLinkDiscovery().scan(
+      final devices = await _discovery.scan(
         timeout: const Duration(seconds: 2),
       );
       if (_disposed) return;
-      final discovered = devices
-          .map(
-            (device) => DiscoveredPc(
-              id: device.id,
-              name: device.name,
-              host: device.host,
-              port: device.port,
-              version: device.version,
-            ),
-          )
-          .toList(growable: false);
-      _setState(state.copyWith(discoveredDevices: discovered));
+      _setState(state.copyWith(discoveredDevices: devices));
       if (devices.isEmpty) return;
       final config = _ref.read(settingsProvider);
-      QingLinkDevice? selected;
+      DiscoveredPc? selected;
       if (config.pcId != null) {
         for (final device in devices) {
           if (device.id == config.pcId) selected = device;
@@ -106,7 +114,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
       // Keep a healthy direct-IP session stable. The discovered address is
       // applied after a disconnect or during initial setup, when it is needed
       // to recover from a DHCP change.
-      if (_ref.read(remoteControlProvider).isConnected &&
+      if (_ref.read(remoteSessionRepositoryProvider).isReady &&
           state.isAuthenticated) {
         return;
       }
@@ -195,7 +203,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
         previous.savedToken == null &&
         next.savedToken != null;
     if (!pairingInProgress) {
-      _ref.read(remoteControlProvider.notifier).stopWebSocket();
+      _ref.read(remoteSessionRepositoryProvider).disconnect();
       _synchronizeConnectionConfig(next);
     }
   }
@@ -290,6 +298,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  Future<bool> waitUntilReady({Duration timeout = const Duration(seconds: 12)}) {
+    return _ref.read(remoteSessionRepositoryProvider).waitUntilReady(timeout: timeout);
+  }
+
   Future<bool> _connectOnly({bool allowDiscoveryFallback = true}) async {
     await _ref.read(settingsProvider.notifier).loaded;
     var config = _ref.read(settingsProvider);
@@ -304,7 +316,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     // still actually authenticated and ready.
     if (state.isAuthenticated &&
         state.token == token &&
-        _ref.read(remoteControlProvider).isConnected) {
+        _ref.read(remoteSessionRepositoryProvider).isReady) {
       return true;
     }
 
@@ -319,11 +331,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
     );
 
     try {
-      final connected = await _ref
-          .read(remoteControlProvider.notifier)
-          .connectForAuthentication(config.baseUrl!, token);
+      final session = _ref.read(remoteSessionRepositoryProvider);
+      session.configure(config.baseUrl!, token);
+      final connected = await session.connect();
       if (!connected && allowDiscoveryFallback) {
-        _ref.read(remoteControlProvider.notifier).stopWebSocket();
+        session.disconnect();
         await _refreshDiscovery();
         final discoveredConfig = _ref.read(settingsProvider);
         if (discoveredConfig.baseUrl != null &&
@@ -365,9 +377,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
       try {
         if (canPair) {
           try {
-            final guestConnected = await _ref
-                .read(remoteControlProvider.notifier)
-                .connectForAuthentication(config.baseUrl!, null);
+            final session = _ref.read(remoteSessionRepositoryProvider);
+            session.configure(config.baseUrl!, null);
+            final guestConnected = await session.connect();
             if (guestConnected) {
               _setState(
                 const AuthState(
@@ -377,7 +389,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
               );
               return true;
             }
-          } catch (_) {}
+          } catch (error, stackTrace) {
+            if (kDebugMode) {
+              debugPrint('[QingLink] guest reconnect failed: $error\n$stackTrace');
+            }
+          }
         }
         return false;
       } finally {
@@ -386,7 +402,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
     } catch (error) {
       if (kDebugMode) debugPrint('[QingLink] connect failed: $error');
       if (allowDiscoveryFallback) {
-        _ref.read(remoteControlProvider.notifier).stopWebSocket();
+        _ref.read(remoteSessionRepositoryProvider).disconnect();
         await _refreshDiscovery();
         final discoveredConfig = _ref.read(settingsProvider);
         if (discoveredConfig.baseUrl != null &&
@@ -431,25 +447,24 @@ class AuthNotifier extends StateNotifier<AuthState> {
         'mobile-${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(1 << 32)}';
     await prefs.setString('qinglink_device_id', deviceId);
     _pairingDeviceId = deviceId;
-    final pairing = QingLinkPairing();
-    _pairingRequestId = await pairing.requestAt(
-      baseUrl,
+    _pairingRequestId = await _pairing.request(
+      baseUrl: baseUrl,
       deviceId: deviceId,
       deviceName: '轻联手机',
     );
     if ((_pairingRequestId?.isEmpty ?? true) &&
-        pairing.lastAutoConfirm != null) {
-      final token = pairing.lastAutoConfirm!['token'] as String?;
+        _pairing.lastAutoConfirm != null) {
+      final token = _pairing.lastAutoConfirm!['token'] as String?;
       if (token != null && token.isNotEmpty) {
         if (kDebugMode) debugPrint('[QingLink][Pairing] auto-confirmed');
         await _ref.read(settingsProvider.notifier).saveToken(token);
-        final pcId = pairing.lastAutoConfirm!['pc_id'] as String?;
+        final pcId = _pairing.lastAutoConfirm!['pc_id'] as String?;
         if (pcId != null && pcId.isNotEmpty) {
           await _ref.read(settingsProvider.notifier).savePcIdentity(pcId);
         }
-        final mac = pairing.lastAutoConfirm!['mac_address'] as String?;
+        final mac = _pairing.lastAutoConfirm!['mac_address'] as String?;
         final wakeNetworks =
-            (pairing.lastAutoConfirm!['wake_networks'] as List<dynamic>? ??
+            (_pairing.lastAutoConfirm!['wake_networks'] as List<dynamic>? ??
                     const [])
                 .whereType<Map>()
                 .map((e) => WakeNetwork.fromJson(Map<String, dynamic>.from(e)))
@@ -507,8 +522,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
       state.copyWith(status: AuthStatus.authenticating, clearError: true),
     );
     try {
-      final response = await QingLinkPairing().confirmAt(
-        config.baseUrl!,
+      final response = await _pairing.confirm(
+        baseUrl: config.baseUrl!,
         requestId: requestId,
         pin: pin,
         deviceId: deviceId,
@@ -555,9 +570,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
             .read(settingsProvider.notifier)
             .updateWakeNetworks(wakeNetworks);
       }
-      final connected = await _ref
-          .read(remoteControlProvider.notifier)
-          .startWebSocket(config.baseUrl!, token);
+      final session = _ref.read(remoteSessionRepositoryProvider);
+      session.configure(config.baseUrl!, token);
+      final connected = await session.connect();
       if (!connected) {
         throw const RemoteSessionAuthFailure('AUTH_FAILED', '配对成功，但无法建立控制连接');
       }
@@ -609,8 +624,12 @@ class AuthNotifier extends StateNotifier<AuthState> {
     _pairingRequestId = null;
     if (requestId != null && baseUrl != null) {
       try {
-        await QingLinkPairing().cancelAt(baseUrl, requestId);
-      } catch (_) {}
+        await _pairing.cancel(baseUrl: baseUrl, requestId: requestId);
+      } catch (error, stackTrace) {
+        if (kDebugMode) {
+          debugPrint('[QingLink] cancel pairing failed: $error\n$stackTrace');
+        }
+      }
     }
     if (!state.isAuthenticated) {
       _setState(state.copyWith(status: AuthStatus.unauthenticated));
@@ -619,9 +638,13 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   Future<void> logout() async {
     try {
-      await _ref.read(remoteControlProvider.notifier).revokeCurrentToken();
-    } catch (_) {}
-    _ref.read(remoteControlProvider.notifier).stopWebSocket();
+      await _ref.read(remoteSessionRepositoryProvider).revokeCurrentToken();
+    } catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('[QingLink] revoke token failed: $error\n$stackTrace');
+      }
+    }
+    _ref.read(remoteSessionRepositoryProvider).disconnect();
     _setState(const AuthState());
     await _ref.read(settingsProvider.notifier).clearToken();
   }
@@ -631,10 +654,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
     _disposed = true;
     _discoveryTimer?.cancel();
     _sessionFailureSubscription?.cancel();
+    _sessionStateSubscription?.cancel();
     super.dispose();
   }
 }
 
-final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier(ref);
-});
+final connectionProvider = StateNotifierProvider<ConnectionController, AuthState>(
+  (ref) => ConnectionController(ref),
+);

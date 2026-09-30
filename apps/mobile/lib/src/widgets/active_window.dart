@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/process_info.dart';
-import '../providers/remote_control_provider.dart';
+import '../providers/feature_facades.dart';
+import '../providers/system_controller.dart';
 import '../utils/remote_actions.dart';
 import 'app_ui.dart';
 
@@ -18,12 +19,8 @@ class ActiveWindowSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final foreground = ref.watch(
-      remoteControlProvider.select((s) => s.foregroundApp),
-    );
-    final connected = ref.watch(
-      remoteControlProvider.select((s) => s.isConnected),
-    );
+    final foreground = ref.watch(systemControllerProvider.select((s) => s.foreground));
+    final connected = ref.watch(connectionReadyProvider);
 
     final card = ActiveWindowCard(
       title: _resolveTitle(foreground),

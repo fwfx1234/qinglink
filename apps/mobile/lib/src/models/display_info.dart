@@ -20,6 +20,12 @@ class DisplayModeInfo {
   String get refreshText => refreshMillihz == 0
       ? ''
       : '${(refreshMillihz / 1000).toStringAsFixed(0)} Hz';
+
+  Map<String, dynamic> toJson() => {
+    'width': width,
+    'height': height,
+    'refresh_millihz': refreshMillihz,
+  };
 }
 
 class DisplayInfo {

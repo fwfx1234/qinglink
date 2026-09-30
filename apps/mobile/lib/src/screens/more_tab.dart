@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../providers/auth_provider.dart';
 import '../providers/settings_provider.dart';
@@ -10,6 +11,7 @@ import 'processes_tab.dart';
 import 'settings_tab.dart';
 import 'shortcuts_screen.dart';
 import 'ir/tv_remote_screen.dart';
+import '../app/routes.dart';
 
 class MoreTab extends ConsumerWidget {
   const MoreTab({super.key});
@@ -18,7 +20,7 @@ class MoreTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = context.palette;
     final settings = ref.watch(settingsProvider);
-    final connected = ref.watch(authProvider.select((s) => s.isAuthenticated));
+    final connected = ref.watch(connectionProvider.select((s) => s.isAuthenticated));
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 14, 18, 96),
       children: [
@@ -91,13 +93,6 @@ class MoreTab extends ConsumerWidget {
           child: Column(
             children: [
               _ToggleRow(
-                title: '打开 App 时自动唤醒',
-                value: settings.autoWakeOnLaunch,
-                onChanged: (value) => ref
-                    .read(settingsProvider.notifier)
-                    .setAutoWakeOnLaunch(value),
-              ),
-              _ToggleRow(
                 title: '唤醒后自动解锁',
                 value: settings.autoUnlockOnWake,
                 onChanged: (value) => ref
@@ -128,8 +123,16 @@ class MoreTab extends ConsumerWidget {
     );
   }
 
-  void _push(BuildContext context, Widget page) =>
-      Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+  void _push(BuildContext context, Widget page) {
+    final route = switch (page.runtimeType) {
+      const (ProcessesTab) => AppRoutes.processes,
+      const (SettingsTab) => AppRoutes.settings,
+      const (ShortcutsScreen) => AppRoutes.shortcuts,
+      const (TvRemoteScreen) => AppRoutes.tvRemote,
+      _ => AppRoutes.home,
+    };
+    context.push(route);
+  }
 }
 
 class _DeviceSummary extends StatelessWidget {

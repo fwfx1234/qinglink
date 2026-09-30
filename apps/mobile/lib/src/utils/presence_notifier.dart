@@ -1,4 +1,4 @@
-// PC 在线/离线提醒与自动唤醒决策（纯函数/轻量簿记，便于单测）。
+// PC 在线/离线提醒簿记。
 
 /// 在线/离线提醒簿记：记录“本轮离线是否已提示过”，恢复上线时补一条提示。
 ///
@@ -44,28 +44,4 @@ class PresenceNotificationTracker {
   void resetEpisode() {
     offlineEpisodeActive = false;
   }
-}
-
-/// 自动唤醒流程动作。
-enum AutoWakeAction { normalConnect, hintMissingMac, wakeAndWait }
-
-/// 决定自动唤醒流程的动作。
-///
-/// - 未配对：一律走普通连接（触发配对弹窗）。
-/// - 未开启自动唤醒：普通连接。
-/// - 开启但未完成配对：提示需要先完成配对并普通连接。
-/// - 冷启动：直接发 WOL（保证“打开即发唤醒包”）。
-/// - 回前台：已知在线则普通重连；已知离线则 WOL。
-AutoWakeAction decideAutoWakeAction({
-  required bool enabled,
-  required bool paired,
-  required bool macConfigured,
-  required bool coldStart,
-  required bool pcOnline,
-}) {
-  if (!paired) return AutoWakeAction.normalConnect;
-  if (!enabled) return AutoWakeAction.normalConnect;
-  if (!macConfigured) return AutoWakeAction.hintMissingMac;
-  if (coldStart) return AutoWakeAction.wakeAndWait;
-  return pcOnline ? AutoWakeAction.normalConnect : AutoWakeAction.wakeAndWait;
 }

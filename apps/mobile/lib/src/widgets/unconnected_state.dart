@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/auth_provider.dart';
-import '../providers/remote_control_provider.dart';
 import '../providers/settings_provider.dart';
 import '../utils/snackbar_extension.dart';
 import '../utils/tv_power_follow.dart';
@@ -35,8 +34,7 @@ class _UnconnectedStateState extends ConsumerState<UnconnectedState> {
     }
     setState(() => _busy = true);
     try {
-      final prefix =
-          ref.read(remoteControlProvider.notifier).subnetPrefix ?? 24;
+      const prefix = 24;
       final target = getSubnetBroadcast(config.pcIpAddress, prefix);
       await WakeOnLan.wake(
         macAddress: mac,
@@ -47,8 +45,8 @@ class _UnconnectedStateState extends ConsumerState<UnconnectedState> {
       if (mounted) context.showInfoSnackBar('已发送唤醒信号，正在连接…');
       final stopwatch = Stopwatch()..start();
       while (mounted && stopwatch.elapsed < const Duration(seconds: 90)) {
-        await ref.read(authProvider.notifier).connectOnly();
-        if (ref.read(authProvider).isAuthenticated) break;
+        await ref.read(connectionProvider.notifier).connectOnly();
+        if (ref.read(connectionProvider).isAuthenticated) break;
         await Future<void>.delayed(const Duration(seconds: 3));
       }
     } catch (error) {
@@ -62,7 +60,7 @@ class _UnconnectedStateState extends ConsumerState<UnconnectedState> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await ref.read(authProvider.notifier).connectOnly();
+      await ref.read(connectionProvider.notifier).connectOnly();
     } catch (error) {
       if (mounted) context.showErrorSnackBar('连接失败: $error');
     } finally {

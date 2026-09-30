@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/app_info.dart';
-import '../providers/remote_control_provider.dart';
+import '../providers/file_controller.dart';
 import '../theme/app_theme.dart';
 import 'app_ui.dart';
 
@@ -51,13 +51,12 @@ class _FilePickerSheetState extends ConsumerState<_FilePickerSheet> {
   }
 
   Future<void> _load(String? path) async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
     });
-    final listing = await ref
-        .read(remoteControlProvider.notifier)
-        .browseFiles(path);
+    final listing = await ref.read(fileControllerProvider).browse(path);
     if (!mounted) return;
     setState(() {
       _loading = false;

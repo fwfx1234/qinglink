@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/process_info.dart';
-import '../providers/remote_control_provider.dart';
+import '../providers/feature_facades.dart';
+import '../providers/system_controller.dart';
+import '../providers/window_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'app_dialogs.dart';
@@ -14,20 +16,20 @@ Future<void> runWindowAction(
   WidgetRef ref,
   String action,
 ) async {
-  if (!ref.read(remoteControlProvider).isConnected) {
+  if (!ref.read(connectionReadyProvider)) {
     context.showWarningSnackBar('电脑未连接，无法操作窗口');
     return;
   }
-  final remote = ref.read(remoteControlProvider.notifier);
-  var hwnd = ref.read(remoteControlProvider).foregroundApp?.hwnd ?? 0;
+  final system = ref.read(systemControllerProvider.notifier);
+  var hwnd = ref.read(systemControllerProvider).foreground?.hwnd ?? 0;
   if (hwnd == 0) {
     // Foreground metadata can be missing before the PC pushes an update.
     // Refresh it, then fall back to the window catalog's foreground entry.
     try {
-      await remote.refreshForeground();
-      hwnd = ref.read(remoteControlProvider).foregroundApp?.hwnd ?? 0;
+      await system.refreshForeground();
+      hwnd = ref.read(systemControllerProvider).foreground?.hwnd ?? 0;
       if (hwnd == 0) {
-        final windows = await remote.listWindows();
+        final windows = await ref.read(windowControllerProvider).list();
         final foreground = windows.where((window) => window.isForeground);
         if (foreground.isNotEmpty) hwnd = foreground.first.hwnd;
       }
@@ -40,10 +42,10 @@ Future<void> runWindowAction(
   }
   try {
     if (action == 'minimize') {
-      await remote.minimizeWindow(hwnd);
+      await ref.read(windowControllerProvider).minimize(hwnd);
       if (context.mounted) context.showSuccessSnackBar('当前窗口已最小化');
     } else if (action == 'maximize') {
-      await remote.maximizeWindow(hwnd);
+      await ref.read(windowControllerProvider).maximize(hwnd);
       if (context.mounted) context.showSuccessSnackBar('当前窗口已最大化');
     } else if (action == 'close') {
       if (!context.mounted) return;
@@ -55,10 +57,10 @@ Future<void> runWindowAction(
         danger: true,
       );
       if (!ok || !context.mounted) return;
-      await remote.closeWindow(hwnd);
+      await ref.read(windowControllerProvider).close(hwnd);
       if (context.mounted) context.showSuccessSnackBar('已关闭当前窗口');
     }
-    await remote.refreshForeground();
+    await system.refreshForeground();
   } catch (error) {
     if (context.mounted) context.showErrorSnackBar('窗口操作失败: $error');
   }
@@ -66,14 +68,12 @@ Future<void> runWindowAction(
 
 /// 打开窗口列表底部弹层，可选择切到前台或关闭窗口。
 Future<void> showWindowListSheet(BuildContext context, WidgetRef ref) async {
-  if (!ref.read(remoteControlProvider).isConnected) {
+  if (!ref.read(connectionReadyProvider)) {
     context.showWarningSnackBar('电脑未连接，无法读取窗口');
     return;
   }
   try {
-    final windows = await ref
-        .read(remoteControlProvider.notifier)
-        .listWindows(forceRefresh: true);
+    final windows = await ref.read(windowControllerProvider).list(forceRefresh: true);
     if (!context.mounted) return;
     if (windows.isEmpty) {
       context.showInfoSnackBar('没有可切换的窗口');
@@ -103,8 +103,8 @@ Future<void> showWindowListSheet(BuildContext context, WidgetRef ref) async {
                   onTap: () async {
                     try {
                       await ref
-                          .read(remoteControlProvider.notifier)
-                          .focusWindow(window.hwnd);
+                          .read(windowControllerProvider)
+                          .focus(window.hwnd);
                       if (sheet.mounted) Navigator.pop(sheet);
                     } catch (error) {
                       if (sheet.mounted) {
@@ -116,12 +116,8 @@ Future<void> showWindowListSheet(BuildContext context, WidgetRef ref) async {
                     tooltip: '关闭',
                     icon: const Icon(Icons.close_rounded),
                     onPressed: () async {
-                      await ref
-                          .read(remoteControlProvider.notifier)
-                          .closeWindow(window.hwnd);
-                      await ref
-                          .read(remoteControlProvider.notifier)
-                          .refreshForeground();
+                      await ref.read(windowControllerProvider).close(window.hwnd);
+                      await ref.read(systemControllerProvider.notifier).refreshForeground();
                       if (sheet.mounted) Navigator.pop(sheet);
                     },
                   ),
@@ -147,8 +143,8 @@ String _windowLabel(WindowInfo window) {
 
 /// 打开音量调节弹层，支持静音、音量滑动与输出设备选择。
 Future<void> showVolumeSheet(BuildContext context, WidgetRef ref) async {
-  final remote = ref.read(remoteControlProvider.notifier);
-  await Future.wait([remote.getVolume(), remote.getAudioOutputs()]);
+  final system = ref.read(systemControllerProvider.notifier);
+  await Future.wait([system.refreshVolume(), system.refreshAudioOutputs()]);
   if (!context.mounted) return;
   await showModalBottomSheet<void>(
     context: context,
@@ -157,12 +153,9 @@ Future<void> showVolumeSheet(BuildContext context, WidgetRef ref) async {
     builder: (_) => Consumer(
       builder: (context, ref, _) {
         final palette = context.palette;
-        final volume = ref.watch(
-          remoteControlProvider.select((s) => s.volumeStatus),
-        );
-        final outputs = ref.watch(
-          remoteControlProvider.select((s) => s.audioOutputs),
-        );
+        final system = ref.watch(systemControllerProvider);
+        final volume = system.volume;
+        final outputs = system.audioOutputs;
         final muted = volume?.muted ?? false;
         final percent = volume?.percent ?? 0;
         return SafeArea(
@@ -197,7 +190,7 @@ Future<void> showVolumeSheet(BuildContext context, WidgetRef ref) async {
                         tooltip: '静音',
                         onPressed: volume == null
                             ? null
-                            : () => remote.setMuted(!muted).catchError((
+                            : () => ref.read(systemControllerProvider.notifier).setMuted(!muted).catchError((
                                 Object e,
                               ) {
                                 if (context.mounted) {
@@ -224,7 +217,7 @@ Future<void> showVolumeSheet(BuildContext context, WidgetRef ref) async {
                         max: 100,
                         onChanged: volume == null
                             ? null
-                            : (v) => remote.setVolume(v.round()).catchError((
+                            : (v) => ref.read(systemControllerProvider.notifier).setVolume(v.round()).catchError((
                                 Object e,
                               ) {
                                 if (context.mounted) {
@@ -269,7 +262,7 @@ Future<void> showVolumeSheet(BuildContext context, WidgetRef ref) async {
                       trailing: device.isDefault ? const StatusTag('默认') : null,
                       onTap: () async {
                         try {
-                          await remote.setAudioOutput(device.id);
+                          await ref.read(systemControllerProvider.notifier).setAudioOutput(device.id);
                           if (context.mounted) {
                             context.showSuccessSnackBar('输出设备已切换');
                           }

@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../providers/remote_control_provider.dart';
+import '../providers/input_controller.dart';
+import '../providers/feature_facades.dart';
+import '../providers/system_controller.dart';
+import '../providers/auth_provider.dart';
 import '../providers/settings_provider.dart';
 import '../services/touchpad_input_controller.dart';
-import '../services/ws_client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/active_window.dart';
 import '../widgets/app_ui.dart';
@@ -56,8 +58,6 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
   Future<void> _imeQueue = Future<void>.value();
   late final TouchpadInputController _touchpad;
   ProviderSubscription<ConnectionConfig>? _settingsSubscription;
-  ProviderSubscription<RemoteControlState>? _connectionSubscription;
-  WsConnectionState? _lastWsState;
   Future<void> _mouseCommandTail = Future<void>.value();
   final Set<String> _pressedMouseButtons = <String>{};
   bool _mouseCommandsDisposed = false;
@@ -97,24 +97,15 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
         if (mounted) setState(() {});
       },
     );
-    _lastWsState = ref.read(remoteControlProvider).wsState;
-    _connectionSubscription = ref.listenManual<RemoteControlState>(
-      remoteControlProvider,
-      (_, next) {
-        final previous = _lastWsState;
-        _lastWsState = next.wsState;
-        if (previous == WsConnectionState.connected &&
-            next.wsState != WsConnectionState.connected) {
-          _queueMouseRelease();
-        }
-      },
-    );
+    ref.listenManual<bool>(connectionReadyProvider, (_, next) {
+      if (next != true) _queueMouseRelease();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _connect();
       if (mounted) {
-        await ref.read(remoteControlProvider.notifier).refreshForeground();
-        await ref.read(remoteControlProvider.notifier).getUnlockStatus();
-        await ref.read(remoteControlProvider.notifier).getLockInputStatus();
+        await ref.read(systemControllerProvider.notifier).refreshForeground();
+        await ref.read(systemControllerProvider.notifier).refreshUnlock();
+        await ref.read(systemControllerProvider.notifier).refreshLockInput();
       }
     });
   }
@@ -123,7 +114,6 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _settingsSubscription?.close();
-    _connectionSubscription?.close();
     _queueMouseRelease();
     _mouseCommandsDisposed = true;
     _touchpad.dispose();
@@ -161,9 +151,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
         _error = null;
       });
     }
-    final connected = await ref
-        .read(remoteControlProvider.notifier)
-        .waitForWebSocket();
+    final connected = await ref.read(connectionProvider.notifier).waitUntilReady();
     if (!mounted) return;
     setState(() {
       _connecting = false;
@@ -171,8 +159,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
     });
   }
 
-  bool get _isReady =>
-      ref.read(remoteControlProvider).wsState == WsConnectionState.connected;
+  bool get _isReady => ref.read(connectionReadyProvider);
 
   Future<bool> _runCommand(Future<void> Function() command) async {
     if (!_isReady) return false;
@@ -198,9 +185,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
   void _sendMouseMove(int dx, int dy) {
     _enqueueMouseCommand(
       () => _runCommand(
-        () => ref
-            .read(remoteControlProvider.notifier)
-            .sendMouseMoveOrdered(dx, dy),
+        () => ref.read(inputControllerProvider).sendMouseMoveOrdered(dx, dy),
       ),
     );
   }
@@ -208,7 +193,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
   void _sendMouseWheel(int delta) {
     _enqueueMouseCommand(
       () => _runCommand(
-        () => ref.read(remoteControlProvider.notifier).mouseWheel(delta),
+        () => ref.read(inputControllerProvider).mouseWheel(delta),
       ),
     );
   }
@@ -216,7 +201,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
   void _sendLeftClick() {
     _enqueueMouseCommand(
       () => _clickWithFeedback(
-        () => ref.read(remoteControlProvider.notifier).mouseButton('left'),
+        () => ref.read(inputControllerProvider).mouseButton('left'),
       ),
     );
   }
@@ -224,7 +209,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
   void _sendRightClick() {
     _enqueueMouseCommand(
       () => _clickWithFeedback(
-        () => ref.read(remoteControlProvider.notifier).mouseButton('right'),
+        () => ref.read(inputControllerProvider).mouseButton('right'),
       ),
     );
   }
@@ -237,9 +222,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
   void _sendLeftDown() {
     _enqueueMouseCommand(() async {
       final sent = await _runCommand(
-        () => ref
-            .read(remoteControlProvider.notifier)
-            .mouseButtonState('left', pressed: true),
+        () => ref.read(inputControllerProvider).mouseButtonState('left', pressed: true),
       );
       if (sent) {
         _pressedMouseButtons.add('left');
@@ -250,9 +233,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
 
   Future<void> _releaseMouseButton(String button) async {
     final sent = await _runCommand(
-      () => ref
-          .read(remoteControlProvider.notifier)
-          .mouseButtonState(button, pressed: false),
+      () => ref.read(inputControllerProvider).mouseButtonState(button, pressed: false),
     );
     if (sent) _pressedMouseButtons.remove(button);
   }
@@ -266,7 +247,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
     _enqueueMouseCommand(() async {
       await _releaseMouseButton('left');
       await _clickWithFeedback(
-        () => ref.read(remoteControlProvider.notifier).mouseButton('right'),
+        () => ref.read(inputControllerProvider).mouseButton('right'),
       );
     });
   }
@@ -283,7 +264,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
   Future<void> _sendText(String text) async {
     if (text.isEmpty) return;
     await _runCommand(
-      () => ref.read(remoteControlProvider.notifier).sendText(text),
+      () => ref.read(inputControllerProvider).sendText(text),
     );
   }
 
@@ -316,12 +297,12 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
     _imeQueue = _imeQueue.then((_) async {
       if (forwardEmptyBackspace) {
         await _runCommand(
-          () => ref.read(remoteControlProvider.notifier).pressKey('backspace'),
+          () => ref.read(inputControllerProvider).pressKey('backspace'),
         );
       }
       for (var i = 0; i < removed; i++) {
         await _runCommand(
-          () => ref.read(remoteControlProvider.notifier).pressKey('backspace'),
+          () => ref.read(inputControllerProvider).pressKey('backspace'),
         );
       }
       if (added.isNotEmpty) await _sendText(added);
@@ -366,7 +347,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
   Future<void> _sendEnterAndClear() async {
     await _imeQueue;
     final sent = await _runCommand(
-      () => ref.read(remoteControlProvider.notifier).pressKey('enter'),
+      () => ref.read(inputControllerProvider).pressKey('enter'),
     );
     if (sent) {
       _clearKeyboardDraft();
@@ -425,7 +406,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
                             ? () => unawaited(
                                 _runCommand(
                                   () => ref
-                                      .read(remoteControlProvider.notifier)
+                                      .read(inputControllerProvider)
                                       .sendShortcut(label),
                                 ),
                               )
@@ -472,9 +453,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
                         label: '退格',
                         enabled: _isReady,
                         onPressed: () => _runCommand(
-                          () => ref
-                              .read(remoteControlProvider.notifier)
-                              .pressKey('backspace'),
+                          () => ref.read(inputControllerProvider).pressKey('backspace'),
                         ),
                       ),
                     ),
@@ -485,9 +464,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
                         label: '删除',
                         enabled: _isReady,
                         onPressed: () => _runCommand(
-                          () => ref
-                              .read(remoteControlProvider.notifier)
-                              .pressKey('delete'),
+                          () => ref.read(inputControllerProvider).pressKey('delete'),
                         ),
                       ),
                     ),
@@ -582,16 +559,11 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    final connectionState = ref.watch(
-      remoteControlProvider.select((state) => state.wsState),
-    );
-    final isReady = connectionState == WsConnectionState.connected;
+    final isReady = ref.watch(connectionReadyProvider);
     final statusText = isReady
         ? '已连接'
-        : _connecting || connectionState == WsConnectionState.connecting
+        : _connecting
         ? '正在连接'
-        : connectionState == WsConnectionState.reconnecting
-        ? '正在重连'
         : '未连接';
     final statusColor = isReady ? AppColors.success : AppColors.warning;
 

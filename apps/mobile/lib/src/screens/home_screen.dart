@@ -8,7 +8,9 @@ import '../models/auth.dart';
 import '../models/system_status.dart';
 import '../models/wake_state.dart';
 import '../providers/auth_provider.dart';
-import '../providers/remote_control_provider.dart';
+import '../providers/feature_facades.dart';
+import '../providers/system_controller.dart';
+import '../providers/library_controller.dart';
 import '../providers/settings_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/ws_client.dart';
@@ -37,36 +39,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   bool _pairingDialogShown = false;
   DateTime? _lastPairingTime;
   bool _lastPcOnline = false;
-  bool _autoWakePending = false;
-  bool _autoWakeInFlight = false;
   bool _wakeFlowInFlight = false;
   bool _appForegrounded = true;
-  DateTime? _lastWolSentAt;
-  DateTime? _lastResumeAt;
   bool _pendingUnlockNotification = false;
   DateTime? _lastUnlockNotificationAt;
   final PresenceNotificationTracker _presenceTracker =
       PresenceNotificationTracker();
-  StreamSubscription<void>? _offlineSubscription;
   Timer? _unlockStatusTimer;
 
-  static const _wolCooldown = Duration(seconds: 60);
 
-  /// 回前台后的重连宽限窗口：期间判定的离线不弹窗（自动唤醒仍正常触发）。
-  static const _resumeNotificationSuppression = Duration(seconds: 30);
-
-  List<Widget> _buildTabs() => [
-    RepaintBoundary(
-      child: HomeTab(
-        wakeState: _wakeState,
-        onGoToLibrary: () => _onTabTap(1),
-        onGoToMore: () => _onTabTap(2),
-        onWake: _sendWakeAndWait,
-      ),
-    ),
-    const RepaintBoundary(child: LibraryTab()),
-    const RepaintBoundary(child: MoreTab()),
-  ];
+  Widget _buildTab(int index) {
+    return RepaintBoundary(
+      child: switch (index) {
+        0 => HomeTab(
+          wakeState: _wakeState,
+          onGoToLibrary: () => _onTabTap(1),
+          onGoToMore: () => _onTabTap(2),
+          onWake: _sendWakeAndWait,
+        ),
+        1 => const LibraryTab(),
+        _ => const MoreTab(),
+      },
+    );
+  }
 
   @override
   void initState() {
@@ -75,29 +70,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     WidgetsBinding.instance.addObserver(this);
 
     // 配对弹窗监听认证状态；上线/离线通知监听心跳活性在线状态与真实离线事件。
-    ref.listenManual<AuthState>(authProvider, (previous, next) {
+    ref.listenManual<AuthState>(connectionProvider, (previous, next) {
       _maybeShowPairingDialog(next);
     });
     ref.listenManual<bool>(
-      remoteControlProvider.select((s) => s.pcOnline),
+      connectionReadyProvider,
       (_, next) => _onPcOnlineChanged(next),
     );
-    ref.listenManual<bool>(remoteControlProvider.select((s) => s.isConnected), (
+    ref.listenManual<bool>(connectionReadyProvider, (
       _,
       next,
     ) {
-      // 会话恢复（ready）说明自动唤醒意图已达成，撤防待命中的 WOL，
-      // 同时结束“回前台重连过渡期”，之后的真实离线恢复弹窗判定。
+      // 连接成功后结束回前台重连过渡期。
       if (next) {
-        _autoWakePending = false;
-        _lastResumeAt = null;
         // 连接成功后补齐 MAC（WoL 需要）并刷新锁屏状态，避免用旧状态判断解锁。
         unawaited(_fetchWakeNetworks());
-        unawaited(ref.read(remoteControlProvider.notifier).getUnlockStatus());
+        unawaited(ref.read(systemControllerProvider.notifier).refreshUnlock());
       }
     });
     ref.listenManual<UnlockStatus?>(
-      remoteControlProvider.select((s) => s.unlockStatus),
+      systemControllerProvider.select((s) => s.unlock),
       (previous, next) {
         // Only report an actual locked -> unlocked transition. The initial
         // status query after connecting must stay silent.
@@ -109,19 +101,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         _notifyUnlockSuccess();
       },
     );
-    _offlineSubscription = ref
-        .read(remoteControlProvider.notifier)
-        .offlineEvents
-        .listen((_) => _onGenuineOffline());
     _unlockStatusTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (!mounted || !ref.read(remoteControlProvider).isConnected) return;
-      unawaited(ref.read(remoteControlProvider.notifier).getUnlockStatus());
+      if (!mounted || !ref.read(connectionReadyProvider)) return;
+      unawaited(ref.read(systemControllerProvider.notifier).refreshUnlock());
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await ref.read(settingsProvider.notifier).loaded;
       if (mounted) {
-        unawaited(_checkAutoWake());
+        // App 启动只尝试连接，不再发送 Wake-on-LAN。唤醒电脑必须由用户
+        // 点击首页状态卡或设置页的 Wake-on-LAN 操作显式触发。
+        _fallbackNormalConnect();
       }
     });
   }
@@ -133,13 +123,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       // 后台→前台：清除未结算的离线/上线回合，回前台后的重连结果不再弹窗。
       // 若会话在后台未被挂起（仍连接中），则无需过渡期，直接按真实状态判定。
       _presenceTracker.resetEpisode();
-      _lastResumeAt = ref.read(remoteControlProvider).isConnected
-          ? null
-          : DateTime.now();
-      if (ref.read(remoteControlProvider).isConnected) {
-        unawaited(ref.read(remoteControlProvider.notifier).refreshForeground());
+      if (ref.read(connectionReadyProvider)) {
+        unawaited(ref.read(systemControllerProvider.notifier).refreshForeground());
       }
-      unawaited(_checkAutoWake(fromResume: true));
+      _fallbackNormalConnect();
       if (_pendingUnlockNotification) {
         _pendingUnlockNotification = false;
         _notifyUnlockSuccess();
@@ -147,17 +134,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
   }
 
-  /// 是否处于回前台后的宽限窗口（后台恢复过渡期）。
-  bool _recentlyResumed() {
-    final resumedAt = _lastResumeAt;
-    if (resumedAt == null) return false;
-    return DateTime.now().difference(resumedAt) <
-        _resumeNotificationSuppression;
-  }
-
   Future<void> _showPairingDialog() async {
     try {
-      await ref.read(authProvider.notifier).beginPairing();
+      await ref.read(connectionProvider.notifier).beginPairing();
     } catch (error) {
       _pairingDialogShown = false;
       if (mounted) context.showErrorSnackBar(error.toString());
@@ -167,7 +146,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => PairingDialog(dialogContext: dialogContext),
+      builder: (_) => const PairingDialog(),
     );
     _pairingDialogShown = false;
     if (result == true && mounted) {
@@ -177,7 +156,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   void dispose() {
-    _offlineSubscription?.cancel();
     _unlockStatusTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
@@ -200,32 +178,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     });
   }
 
-  /// 真实离线事件（宽限期到期）→ 提示一次离线；回前台仍带自动唤醒意图则补发 WOL。
-  void _onGenuineOffline() {
-    if (!mounted) return;
-
-    final autoWakeWanted =
-        _autoWakePending &&
-        _appForegrounded &&
-        ref.read(settingsProvider).autoWakeOnLaunch &&
-        (ref.read(settingsProvider).macAddress?.isNotEmpty ?? false);
-    _autoWakePending = false;
-
-    // 回前台后的重连若超过宽限期才判定离线，属于后台恢复过渡期，不弹窗；
-    // 仅持续前台期间发生的真实在线→离线切换才提示。
-    if (!_recentlyResumed() &&
-        _presenceTracker.onOffline(
-          foregrounded: _appForegrounded,
-          authenticated: ref.read(authProvider).isAuthenticated,
-        )) {
-      _showNotification('PC已离线', AppColors.error);
-    }
-
-    if (autoWakeWanted) {
-      unawaited(_maybeWakeAndWait());
-    }
-  }
-
   /// 心跳活性在线状态恢复 → 仅当本轮离线已提示过才补一条上线提示。
   void _onPcOnlineChanged(bool pcOnline) {
     if (!mounted) return;
@@ -233,65 +185,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     _lastPcOnline = pcOnline;
     if (previous == pcOnline) return;
     if (pcOnline) {
-      _autoWakePending = false;
       if (_presenceTracker.onOnline(foregrounded: _appForegrounded)) {
         _showNotification('PC已上线', AppColors.success);
       }
     }
   }
 
-  Future<void> _checkAutoWake({bool fromResume = false}) async {
-    if (_autoWakeInFlight) return;
-
-    final config = ref.read(settingsProvider);
-    final action = decideAutoWakeAction(
-      enabled: config.autoWakeOnLaunch,
-      paired: config.savedToken != null && config.savedToken!.isNotEmpty,
-      macConfigured: config.macAddress != null && config.macAddress!.isNotEmpty,
-      coldStart: !fromResume,
-      pcOnline: ref.read(remoteControlProvider).pcOnline,
-    );
-
-    switch (action) {
-      case AutoWakeAction.normalConnect:
-        // 在线回前台：先静默重连；宽限期后仍未恢复则自动发 WOL。
-        if (fromResume &&
-            config.autoWakeOnLaunch &&
-            (config.macAddress?.isNotEmpty ?? false)) {
-          _autoWakePending = true;
-        }
-        _fallbackNormalConnect();
-        return;
-      case AutoWakeAction.hintMissingMac:
-        if (!fromResume && mounted) {
-          context.showWarningSnackBar('自动唤醒已开启，但需要先完成 PC 配对');
-        }
-        _fallbackNormalConnect();
-        return;
-      case AutoWakeAction.wakeAndWait:
-        _autoWakeInFlight = true;
-        try {
-          if (fromResume) {
-            // 已知离线回前台：立即重连并发送 WOL（60s 冷却）。
-            _fallbackNormalConnect();
-            await _maybeWakeAndWait();
-          } else {
-            // 冷启动：立即发唤醒包并与连接并行等待。
-            if (mounted) setState(() => _wakeState = WakeState.waking);
-            await _sendWakeAndWait();
-          }
-        } finally {
-          _autoWakeInFlight = false;
-        }
-        return;
-    }
-  }
-
   void _fallbackNormalConnect() {
     final config = ref.read(settingsProvider);
     if (config.baseUrl != null) {
-      ref.read(authProvider.notifier).connectOnly().then((_) {
-        if (mounted && ref.read(authProvider).isAuthenticated) {
+      ref.read(connectionProvider.notifier).connectOnly().then((_) {
+        if (mounted && ref.read(connectionProvider).isAuthenticated) {
           _handleAuthenticatedConnection();
         }
       });
@@ -334,21 +238,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     return success;
   }
 
-  /// 自动唤醒：60s 冷却内不重发 WOL，只继续等待连接。
-  Future<void> _maybeWakeAndWait() async {
-    final now = DateTime.now();
-    if (_lastWolSentAt != null &&
-        now.difference(_lastWolSentAt!) < _wolCooldown) {
-      final success = await _waitForConnection(const Duration(seconds: 30));
-      if (success) await _handleAuthenticatedConnection();
-      return;
-    }
-    _lastWolSentAt = now;
-    await _sendWakeAndWait();
-  }
-
   Future<void> _doWakeOnLan() async {
-    final remote = ref.read(remoteControlProvider.notifier);
+    final system = ref.read(systemControllerProvider.notifier);
     var config = ref.read(settingsProvider);
     var macAddress = config.macAddress;
     if ((macAddress == null || macAddress.isEmpty) &&
@@ -360,7 +251,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     if (macAddress == null || macAddress.isEmpty) {
       // Older pairings may not have persisted the MAC/network snapshot. If a
       // session is available, refresh it before giving up on the wake action.
-      final fetched = await remote.getMacAddress();
+      final fetched = await system.getMacAddress();
       if (fetched != null && fetched.isNotEmpty) {
         await ref.read(settingsProvider.notifier).updateMacAddress(fetched);
         config = ref.read(settingsProvider);
@@ -370,7 +261,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     if (macAddress == null || macAddress.isEmpty) {
       throw StateError('MAC address is not configured');
     }
-    final prefix = remote.subnetPrefix ?? 24;
+    final prefix = 24;
     final targetAddress = getSubnetBroadcast(config.pcIpAddress, prefix);
     await WakeOnLan.wake(
       macAddress: macAddress,
@@ -384,8 +275,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     while (stopwatch.elapsed < timeout) {
       if (!mounted) return false;
       setState(() => _wakeState = WakeState.connecting);
-      await ref.read(authProvider.notifier).connectOnly();
-      if (ref.read(authProvider).isAuthenticated) {
+      await ref.read(connectionProvider.notifier).connectOnly();
+      if (ref.read(connectionProvider).isAuthenticated) {
         return true;
       }
       await Future.delayed(const Duration(seconds: 3));
@@ -394,10 +285,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   Future<void> _handleAuthenticatedConnection() async {
-    final remote = ref.read(remoteControlProvider.notifier);
-    await remote.waitForWebSocket();
-    var unlockStatus = await remote.getUnlockStatus();
-    await remote.getLockInputStatus();
+    await ref.read(connectionProvider.notifier).waitUntilReady();
+    var unlockStatus = await ref.read(systemControllerProvider.notifier).refreshUnlock();
 
     // A saved PIN selects credentialed unlock; without one the server runs the
     // confirmation flow. Keep the client side single-shot so a transitional
@@ -408,11 +297,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         final password = await ref
             .read(settingsProvider.notifier)
             .readLockPassword();
-        unlockStatus =
-            await remote.unlockWithMode(lockPassword: password) ?? unlockStatus;
+        unlockStatus = await ref
+            .read(systemControllerProvider.notifier)
+            .unlockWithMode(lockPassword: password) ?? unlockStatus;
       } catch (error) {
         debugPrint('Automatic unlock failed: $error');
-        unlockStatus = await remote.getUnlockStatus() ?? unlockStatus;
+        unlockStatus = await ref.read(systemControllerProvider.notifier).refreshUnlock() ?? unlockStatus;
       }
     }
 
@@ -433,16 +323,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final config = ref.read(settingsProvider);
     if (config.macAddress != null && config.macAddress!.isNotEmpty) return;
 
-    final mac = await ref.read(remoteControlProvider.notifier).getMacAddress();
+    final mac = await ref.read(systemControllerProvider.notifier).getMacAddress();
     if (mac != null && mac.isNotEmpty && mounted) {
       await ref.read(settingsProvider.notifier).updateMacAddress(mac);
     }
   }
 
   Future<void> _fetchWakeNetworks() async {
-    final networks = await ref
-        .read(remoteControlProvider.notifier)
-        .getWakeNetworks();
+    final networks = await ref.read(systemControllerProvider.notifier).getWakeNetworks();
     if (networks.isNotEmpty && mounted) {
       await ref.read(settingsProvider.notifier).updateWakeNetworks(networks);
       final first = networks.first;
@@ -459,20 +347,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   Future<void> _refreshAllData() async {
     if (!mounted) return;
-    final remoteNotifier = ref.read(remoteControlProvider.notifier);
     await Future.wait([
-      remoteNotifier.refreshSystemStatus(),
-      remoteNotifier.refreshForeground(),
-      remoteNotifier.refreshSubnetPrefix(),
-      remoteNotifier.loadUnifiedLibrary(force: true),
-      remoteNotifier.loadRecentUnifiedLibrary(),
+      ref.read(systemControllerProvider.notifier).refreshStatus(),
+      ref.read(systemControllerProvider.notifier).refreshForeground(),
+      ref.read(libraryControllerProvider.notifier).refresh(),
+      ref.read(libraryControllerProvider.notifier).refreshRecent(),
     ]);
   }
 
   void _onTabTap(int index) {
     if (index != _currentIndex && index == 0) {
       // 切到首页时刷新前台窗口，避免显示过期的活动窗口。
-      unawaited(ref.read(remoteControlProvider.notifier).refreshForeground());
+      unawaited(ref.read(systemControllerProvider.notifier).refreshForeground());
     }
     if (index == _currentIndex) return;
     _pageController.animateToPage(
@@ -484,13 +370,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    final authState = ref.watch(authProvider);
+    final authState = ref.watch(connectionProvider);
     final pcName = ref.watch(settingsProvider.select((s) => s.pcName));
-    final remoteWsState = ref.watch(
-      remoteControlProvider.select((s) => s.wsState),
-    );
-    final tabs = _buildTabs();
-
+    final remoteWsState = ref.watch(connectionReadyProvider)
+        ? WsConnectionState.connected
+        : WsConnectionState.disconnected;
     return Scaffold(
       body: DecoratedBox(
         decoration: BoxDecoration(
@@ -516,11 +400,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 controller: _pageController,
                 // 支持左右滑动手势切换 Tab。
                 physics: const PageScrollPhysics(),
-                itemCount: tabs.length,
+                itemCount: 3,
                 onPageChanged: (index) {
                   setState(() => _currentIndex = index);
                 },
-                itemBuilder: (context, index) => tabs[index],
+                itemBuilder: (context, index) => _buildTab(index),
               ),
             ),
           ],

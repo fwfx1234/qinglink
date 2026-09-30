@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 
+import '../protocol/remote_protocol.dart';
 import 'ws_client.dart';
 
 enum RemoteSessionState {
@@ -174,13 +175,9 @@ class RemoteSession {
   Future<Map<String, dynamic>> pair(String pin, {String? deviceName}) async {
     final transport = _requireTransport();
     _setState(RemoteSessionState.authenticating);
-    final response = await transport.request({
-      'type': 'authenticate',
-      'method': 'pair',
-      'pin': pin,
-      if (deviceName != null && deviceName.isNotEmpty)
-        'device_name': deviceName,
-    });
+    final response = await transport.request(
+      AuthenticatePairingRequest(pin, deviceName: deviceName).toJson(),
+    );
     _ensureAuthResponse(response);
     final token =
         (response['data'] as Map<String, dynamic>?)?['token'] as String?;
@@ -198,11 +195,9 @@ class RemoteSession {
   }
 
   Future<void> _authenticateToken(String token, WsClient transport) async {
-    final response = await transport.request({
-      'type': 'authenticate',
-      'method': 'token',
-      'token': token,
-    });
+    final response = await transport.request(
+      AuthenticateTokenRequest(token).toJson(),
+    );
     _ensureAuthResponse(response);
     _authenticatedToken = token;
   }
@@ -225,12 +220,28 @@ class RemoteSession {
     return _requireTransport().request(payload, timeout: timeout);
   }
 
+  /// Typed protocol entry point. Legacy map-based calls remain available
+  /// while feature controllers migrate to [RemoteRequest].
+  Future<RemoteResponse> requestTyped(
+    RemoteRequest request, {
+    Duration? timeout,
+  }) async {
+    final response = RemoteResponse.fromJson(
+      await this.request(request.toJson(), timeout: timeout),
+    );
+    if (response.isError) throw failureFromResponse(response);
+    return response;
+  }
+
   void send(Map<String, dynamic> payload) {
     if (!isReady) {
       throw StateError('Remote session is not ready (state: $_state)');
     }
     _requireTransport().send(payload);
   }
+
+  /// Typed fire-and-forget entry point for input events.
+  void sendTyped(RemoteRequest request) => send(request.toJson());
 
   Future<Map<String, dynamic>> revokeToken() async {
     final response = await request({'type': 'revoke_token'});

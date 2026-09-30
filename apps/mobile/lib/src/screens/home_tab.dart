@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../models/wake_state.dart';
 import '../models/system_status.dart';
 import '../providers/auth_provider.dart';
 import '../providers/ir_remote_provider.dart';
-import '../providers/remote_control_provider.dart';
+import '../providers/launcher_controller.dart';
+import '../providers/feature_facades.dart';
+import '../providers/system_controller.dart';
+import '../providers/library_controller.dart';
 import '../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_dialogs.dart';
@@ -13,11 +17,10 @@ import '../utils/remote_actions.dart';
 import '../utils/snackbar_extension.dart';
 import '../utils/tv_power_follow.dart';
 import '../widgets/active_window.dart';
+import '../app/routes.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/app_ui.dart';
 import 'ir/tv_quick_panel.dart';
-import 'mouse_keyboard_screen.dart';
-import 'processes_tab.dart';
 
 class HomeTab extends ConsumerStatefulWidget {
   final WakeState wakeState;
@@ -43,16 +46,15 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   @override
   Widget build(BuildContext context) {
     final authenticated = ref.watch(
-      authProvider.select((s) => s.isAuthenticated),
+      connectionProvider.select((s) => s.isAuthenticated),
     );
-    final remote = ref.watch(remoteControlProvider);
+    final online = ref.watch(connectionReadyProvider) && authenticated;
+    final system = ref.watch(systemControllerProvider);
     final settings = ref.watch(settingsProvider);
-    final online = authenticated && remote.isConnected;
     final uac =
         online &&
-        (remote.unlockStatus?.uacDetected == true ||
-            remote.secureDesktopStatus?.uacDetected == true);
-    final locked = online && remote.unlockStatus?.locked == true;
+        system.unlock?.uacDetected == true;
+    final locked = online && system.unlock?.locked == true;
     final ready = online && !locked;
     final irState = ref.watch(irRemoteProvider);
     final irReady =
@@ -81,11 +83,9 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         // status card remains the explicit wake/connect entry point.
         if (!online) return;
         await Future.wait([
-          ref.read(remoteControlProvider.notifier).refreshSystemStatus(),
-          ref.read(remoteControlProvider.notifier).refreshForeground(),
-          ref
-              .read(remoteControlProvider.notifier)
-              .loadUnifiedLibrary(force: true),
+          ref.read(systemControllerProvider.notifier).refreshStatus(),
+          ref.read(systemControllerProvider.notifier).refreshForeground(),
+          ref.read(libraryControllerProvider.notifier).refresh(),
         ]);
       },
       child: Stack(
@@ -125,9 +125,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                     label: '进程',
                     tone: AppColors.violet,
                     enabled: ready,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const ProcessesTab()),
-                    ),
+                    onTap: () => context.push(AppRoutes.processes),
                   ),
                   _QuickTile(
                     icon: Icons.bedtime_rounded,
@@ -171,11 +169,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                     label: '控制',
                     tone: AppColors.cyan,
                     enabled: ready,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const MouseKeyboardScreen(),
-                      ),
-                    ),
+                    onTap: () => context.push(AppRoutes.mouse),
                   ),
                 ],
               ),
@@ -202,12 +196,12 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     QuickApp app,
   ) async {
     try {
-      final remote = ref.read(remoteControlProvider.notifier);
+      final launcher = ref.read(launcherControllerProvider);
       final scannerId = app.scannerId;
       if (scannerId != null && scannerId.isNotEmpty) {
-        await remote.launchScannerApp(scannerId);
+        await launcher.launch(scannerId);
       } else {
-        await remote.launchApp(app.path);
+        await launcher.launchPath(app.path, args: app.args);
       }
       await ref.read(settingsProvider.notifier).setLastUsedLauncher(app.id);
       if (context.mounted) context.showSuccessSnackBar('正在启动 ${app.name}');
@@ -222,12 +216,13 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   Future<void> _unlock(BuildContext context, WidgetRef ref) async {
     if (_unlockBusy) return;
     setState(() => _unlockBusy = true);
-    final remote = ref.read(remoteControlProvider.notifier);
     try {
       final password = await ref
           .read(settingsProvider.notifier)
           .readLockPassword();
-      final result = await remote.unlockWithMode(lockPassword: password);
+      final result = await ref
+          .read(systemControllerProvider.notifier)
+          .unlockWithMode(lockPassword: password);
       if (context.mounted) _reportUnlockResult(context, result);
     } catch (error) {
       if (context.mounted) context.showErrorSnackBar('解锁失败: $error');
