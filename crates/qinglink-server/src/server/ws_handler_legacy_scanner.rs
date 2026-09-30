@@ -175,7 +175,11 @@ pub(super) fn handle(
                 }
             }
         }
-        WsClientRequest::AddScannedGames { path, exe_paths } => {
+        WsClientRequest::AddScannedGames {
+            path,
+            exe_paths,
+            names,
+        } => {
             let scanned = match state.app_scanner.scan_game_directory(path) {
                 Ok(entries) => entries,
                 Err(error) => {
@@ -189,7 +193,7 @@ pub(super) fn handle(
                 .iter()
                 .map(|path| path.trim().replace('/', "\\").to_ascii_lowercase())
                 .collect();
-            let entries: Vec<_> = scanned
+            let mut entries: Vec<_> = scanned
                 .into_iter()
                 .filter(|entry| {
                     selected.contains(&entry.exe_path.replace('/', "\\").to_ascii_lowercase())
@@ -200,6 +204,20 @@ pub(super) fn handle(
                     entry
                 })
                 .collect();
+            let display_names: std::collections::HashMap<_, _> = exe_paths
+                .iter()
+                .zip(names.iter())
+                .map(|(path, name)| (path.replace('/', "\\").to_ascii_lowercase(), name))
+                .collect();
+            for entry in &mut entries {
+                if let Some(name) = display_names
+                    .get(&entry.exe_path.replace('/', "\\").to_ascii_lowercase())
+                    .map(|name| name.trim())
+                    .filter(|name| !name.is_empty())
+                {
+                    entry.name = name.to_string();
+                }
+            }
             if entries.is_empty() {
                 return WsServerMessage::Response(WsServerResponse::error(
                     "NO_GAMES_SELECTED",
@@ -212,7 +230,11 @@ pub(super) fn handle(
             match result {
                 Ok(()) => {
                     reload_visible_catalog(state);
-                    WsServerMessage::Response(WsServerResponse::success())
+                    let response = entries
+                        .into_iter()
+                        .map(Into::into)
+                        .collect();
+                    WsServerMessage::Response(WsServerResponse::ScannerApps(response))
                 }
                 Err(error) => {
                     WsServerMessage::Response(WsServerResponse::error("ADD_GAMES_FAILED", &error))

@@ -33,6 +33,9 @@ pub struct ScannerAppEntryResponse {
     pub icon_base64: Option<String>,
     pub category: String,
     pub source: String,
+    /// Extra command-line arguments saved for this scanner entry.
+    #[serde(default)]
+    pub args: Vec<String>,
     pub pinned: bool,
     pub quick: bool,
 }
@@ -47,6 +50,7 @@ impl From<AppEntry> for ScannerAppEntryResponse {
             icon_base64: entry.icon_base64,
             category: entry.category,
             source: entry.source,
+            args: entry.args,
             pinned: false,
             quick: false,
         }
@@ -238,7 +242,10 @@ impl AppScanner {
     }
 
     pub fn icon_base64(&self, id: &str) -> Option<String> {
-        let app = self.get_or_scan().into_iter().find(|app| app.id == id)?;
+        let normalized_id = id.replace('/', "\\").to_ascii_lowercase();
+        let app = self.get_or_scan().into_iter().find(|app| {
+            app.id == id || app.exe_path.replace('/', "\\").to_ascii_lowercase() == normalized_id
+        })?;
         let icon = app
             .icon_base64
             .or_else(|| crate::platform::extract_icon_base64(&app.exe_path))?;

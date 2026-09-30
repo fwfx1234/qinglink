@@ -557,7 +557,7 @@ impl AppDatabase {
             .as_secs() as i64;
         let encoded_args = args.map(encode_args);
         conn.execute(
-            "UPDATE scanner_apps SET display_name = ?1, exe_path = ?2, icon_base64 = ?3, args = COALESCE(?4, args), updated_at = ?5 WHERE id = ?6",
+            "UPDATE scanner_apps SET display_name = ?1, exe_path = ?2, icon_base64 = COALESCE(?3, icon_base64), args = COALESCE(?4, args), updated_at = ?5 WHERE id = ?6",
             rusqlite::params![name, exe_path, icon_base64, encoded_args, now, id],
         )
         .map_err(|e| e.to_string())?;

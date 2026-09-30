@@ -168,6 +168,9 @@ pub enum WsClientRequest {
     AddScannedGames {
         path: String,
         exe_paths: Vec<String>,
+        /// Optional display names parallel to `exe_paths` (mobile clients).
+        #[serde(default)]
+        names: Vec<String>,
     },
 
     // === Steam ===
