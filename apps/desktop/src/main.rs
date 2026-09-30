@@ -78,8 +78,10 @@ fn main() -> Result<()> {
     // from racing for the same listener during startup.
     let pairing_events = pairing::subscribe(&state);
     let pairing_snapshot = Arc::new(Mutex::new(None));
+    tracing::info!("开始初始化桌面端服务运行时");
     let runtime =
         ServiceRuntime::start(state.clone(), pairing_events, Arc::clone(&pairing_snapshot));
+    tracing::info!("桌面端服务运行时已初始化");
     let persisted_paused = state
         .app_db
         .lock()
@@ -93,14 +95,35 @@ fn main() -> Result<()> {
     }
 
     let autostart = qinglink_windows::autostart::is_enabled().unwrap_or(false);
-    let show_on_start = !(silent || startup);
+    let silent_launch = silent || startup;
+    tracing::info!("开始初始化 GPUI 应用");
     let app = gpui::Application::new();
+    tracing::info!("GPUI 应用已初始化，即将进入 Windows 消息循环");
     let startup_error = Arc::new(Mutex::new(None::<String>));
     let error_slot = Arc::clone(&startup_error);
     let dashboard_state = state;
     let dashboard_status = Arc::clone(&runtime.status);
     let desired_service = runtime.desired.clone();
+    let tray_paused = persisted_paused;
+    let tray_autostart = autostart;
     app.run(move |cx: &mut App| {
+        tracing::info!("GPUI 启动回调已运行");
+        let show_on_start = !silent_launch;
+        let tray = match TrayController::new(tray_paused, tray_autostart) {
+            Ok(tray) => {
+                // `TrayIconBuilder::build()` 不会上报 `NIM_ADD` 失败，必须显式探测
+                // Shell 是否真的登记了这个图标，否则"创建成功"只是假阳性。
+                tracing::info!(
+                    registration = %tray::describe_registration(tray.registration()),
+                    "托盘控制器已在 Windows 消息循环中创建"
+                );
+                Some(tray)
+            }
+            Err(error) => {
+                tracing::warn!(%error, "托盘控制器初始化失败，桌面端将继续运行");
+                None
+            }
+        };
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
@@ -118,13 +141,6 @@ fn main() -> Result<()> {
             kind: WindowKind::Normal,
             ..Default::default()
         };
-        let tray = match TrayController::new(false, autostart) {
-            Ok(tray) => Some(tray),
-            Err(error) => {
-                tracing::warn!(error = %error, "托盘图标创建失败，程序将继续运行（无托盘功能）");
-                None
-            }
-        };
         match cx.open_window(options, move |window, cx| {
             cx.new(|cx| {
                 RemoteDashboard::new(
@@ -132,16 +148,16 @@ fn main() -> Result<()> {
                     pairing_snapshot,
                     dashboard_status,
                     desired_service,
-                    tray,
                     autostart,
                     show_on_start,
+                    tray,
                     log_switch,
                     window,
                     cx,
                 )
             })
         }) {
-            Ok(_) => {}
+            Ok(_) => tracing::info!("GPUI 主窗口已创建"),
             Err(error) => {
                 if let Ok(mut slot) = error_slot.lock() {
                     *slot = Some(error.to_string());
@@ -151,6 +167,11 @@ fn main() -> Result<()> {
         }
     });
 
+    tracing::info!("GPUI Windows 消息循环已退出");
+
+    // The keep-awake toggle is intentionally session-scoped. Release the
+    // execution request before the desktop process finishes shutting down.
+    let _ = qinglink_windows::power::set_keep_awake(false);
     runtime.shutdown()?;
     let _ = lifecycle_manager.shutdown();
     database.shutdown();

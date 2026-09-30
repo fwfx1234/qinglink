@@ -9,6 +9,12 @@ authors = ["fwfx1234"]
 description = "QingLink local-network PC remote control"
 license = "MIT"
 
+# MSVC 14.44 fails with D8050 when dependency C sources receive debug info
+# during a debug build. Keep debug symbols for workspace crates while
+# compiling dependencies without C/C++ debug information.
+[profile.dev.package."*"]
+debug = 0
+
 [workspace.dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
@@ -16,13 +22,17 @@ axum = { version = "0.7", features = ["ws", "json"] }
 base64 = "0.22"
 dirs = "6.0"
 futures-util = "0.3"
-gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+# `windows-manifest` 被刻意关闭：它给 gpui 链接的库注入 RT_MANIFEST/1，
+# 与本 crate 自己的 RT_MANIFEST 冲突（CVTRES CVT1100 资源重复）。桌面端在
+# `apps/desktop/qinglink.exe.manifest` 里提供了等价（并额外声明执行级别）的清单。
+gpui = { version = "=0.2.2", default-features = false, features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
 image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg"] }
 local-ip-address = "0.6"
 r2d2 = "0.8"
 r2d2_sqlite = { version = "0.31", features = ["bundled"] }
 rand = "0.9"
 raw-window-handle = "0.6"
+resvg = "0.45"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -35,7 +45,9 @@ tower = "0.5"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
-tray-icon = { version = "0.21", default-features = false }
+tray-icon = { version = "=0.25.1", default-features = false }
+tiny-skia = "0.11"
+usvg = "0.45"
 uuid = { version = "1.16", features = ["v4", "serde"] }
 
 [workspace.dependencies.windows]

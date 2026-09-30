@@ -48,8 +48,27 @@ pub fn initialize(paths: &AppPaths) -> Result<(WorkerGuard, LogLevelSwitch)> {
     let directory = log_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("invalid QingLink log path"))?;
-    let appender = tracing_appender::rolling::daily(directory, "qinglink.log");
-    let (writer, guard) = tracing_appender::non_blocking(appender);
+    // `rolling::daily` panics when the current user cannot open the log file.
+    // Logging must never prevent the desktop UI and tray window from starting.
+    let (writer, guard, file_logging) =
+        match tracing_appender::rolling::RollingFileAppender::builder()
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .filename_prefix("qinglink.log")
+            .build(directory)
+        {
+            Ok(appender) => {
+                let (writer, guard) = tracing_appender::non_blocking(appender);
+                (writer, guard, true)
+            }
+            Err(error) => {
+                eprintln!(
+                    "QingLink cannot initialize file logging at {}: {error}; using stderr",
+                    log_path.display()
+                );
+                let (writer, guard) = tracing_appender::non_blocking(std::io::stderr());
+                (writer, guard, false)
+            }
+        };
 
     let (filter, initial_debug) = initial_filter();
     let (filter_layer, filter_handle) = reload::Layer::new(filter);
@@ -69,6 +88,7 @@ pub fn initialize(paths: &AppPaths) -> Result<(WorkerGuard, LogLevelSwitch)> {
 
     tracing::info!(
         log_path = %log_path.display(),
+        file_logging,
         debug = initial_debug,
         "桌面端日志系统已初始化"
     );
@@ -91,12 +111,7 @@ fn initial_filter() -> (EnvFilter, bool) {
         .or_else(|| std::env::var("RUST_LOG").ok());
     if let Some(value) = env_value.as_deref() {
         let trimmed = value.trim();
-        // 只给了级别名（如 `debug`）时，限定为 qinglink 依赖树。
-        let directive = if trimmed.contains('=') {
-            trimmed.to_string()
-        } else {
-            format!("qinglink={trimmed}")
-        };
+        let directive = env_directive(trimmed);
         if let Ok(filter) = EnvFilter::try_new(&directive) {
             let debug = trimmed.to_ascii_lowercase().contains("debug")
                 || trimmed.to_ascii_lowercase().contains("trace");
@@ -106,10 +121,94 @@ fn initial_filter() -> (EnvFilter, bool) {
     (EnvFilter::new(level_directive(false)), false)
 }
 
+/// 把 `QINGLINK_LOG_LEVEL` / `RUST_LOG` 的取值转换成 EnvFilter 指令。
+///
+/// 只给了级别名（如 `debug`）时，展开为 `QingLink=debug,qinglink=debug`：
+/// 桌面端 bin target 是大小写敏感的 `QingLink`，必须显式列出，否则本程序
+/// 自身的日志（含托盘注册失败告警）会被 `EnvFilter` 全部丢弃。
+/// 已经带 `=` 的完整指令原样透传，由调用方决定规则。
+fn env_directive(trimmed: &str) -> String {
+    if trimmed.contains('=') {
+        trimmed.to_string()
+    } else {
+        format!("QingLink={trimmed},qinglink={trimmed}")
+    }
+}
+
+/// 默认指令：同时放行桌面端 bin target（`QingLink`）与 `qinglink*` 依赖 crate。
+///
+/// `EnvFilter` 的目标匹配是大小写敏感的模块路径前缀匹配，而本程序的 tracing
+/// target 是 `QingLink` / `QingLink::tray` 等。只写小写 `qinglink=info` 会让
+/// 桌面端自身的日志（含托盘失败告警）被全部丢弃，因此两个前缀都要保留。
 fn level_directive(debug: bool) -> &'static str {
     if debug {
-        "qinglink=debug"
+        "QingLink=debug,qinglink=debug"
     } else {
-        "qinglink=info"
+        "QingLink=info,qinglink=info"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 用真实的分层 subscriber 验证各 target 是否放行。
+    ///
+    /// `tracing::enabled!` 的 target 必须是编译期常量，因此断言都写在内层闭包里。
+    fn assert_enabled(directive: &str, check: impl FnOnce()) {
+        let subscriber = tracing_subscriber::registry().with(EnvFilter::new(directive));
+        tracing::subscriber::with_default(subscriber, check);
+    }
+
+    #[test]
+    fn default_directive_enables_desktop_binary_targets() {
+        assert_enabled(level_directive(false), || {
+            assert!(
+                tracing::enabled!(target: "QingLink", tracing::Level::INFO),
+                "桌面端 bin target 必须被日志过滤器放行"
+            );
+            assert!(
+                tracing::enabled!(target: "QingLink::tray", tracing::Level::INFO),
+                "托盘模块日志必须被放行，否则注册失败无法排查"
+            );
+            // 依赖 crate（连字符会转成下划线）同样保留原有行为。
+            assert!(tracing::enabled!(
+                target: "qinglink_server::server",
+                tracing::Level::INFO
+            ));
+        });
+    }
+
+    #[test]
+    fn default_directive_keeps_debug_level_gated() {
+        assert_enabled(level_directive(false), || {
+            assert!(!tracing::enabled!(
+                target: "QingLink::tray",
+                tracing::Level::DEBUG
+            ));
+        });
+        assert_enabled(level_directive(true), || {
+            assert!(tracing::enabled!(
+                target: "QingLink::tray",
+                tracing::Level::DEBUG
+            ));
+        });
+    }
+
+    #[test]
+    fn bare_env_level_keeps_desktop_targets() {
+        // 模拟 `QINGLINK_LOG_LEVEL=debug`：不能只生成小写 `qinglink=debug`。
+        let directive = env_directive("debug");
+        assert_enabled(&directive, || {
+            assert!(tracing::enabled!(
+                target: "QingLink::tray",
+                tracing::Level::DEBUG
+            ));
+        });
+    }
+
+    #[test]
+    fn explicit_env_directive_is_passed_through() {
+        assert_eq!(env_directive("QingLink=debug"), "QingLink=debug");
     }
 }

@@ -33,11 +33,16 @@ fn main() {
     println!("cargo:rerun-if-env-changed=QINGLINK_REQUIRE_INPUT_ASSETS");
     println!("cargo:rerun-if-env-changed=QINGLINK_INPUT_SERVICE_PATH");
     println!("cargo:rerun-if-changed=assets/input");
+    println!("cargo:rerun-if-changed=assets/tray-icon.svg");
     println!("cargo:rerun-if-changed=qinglink.rc");
+    println!("cargo:rerun-if-changed=qinglink.exe.manifest");
     #[cfg(windows)]
+    // .rc 里嵌入了 `RT_MANIFEST`（见 qinglink.rc / qinglink.exe.manifest）：
+    // gpui 的 `windows-manifest` 已被关闭，所以应用清单只能由这里提供，嵌入失败
+    // 会丢掉 PerMonitorV2 DPI 感知、Common-Controls 依赖和执行级别声明。
     embed_resource::compile("qinglink.rc", embed_resource::NONE)
         .manifest_optional()
-        .unwrap();
+        .unwrap_or_else(|error| panic!("cannot embed qinglink.rc: {error}"));
 
     let missing: Vec<_> = REQUIRED_FILES
         .iter()

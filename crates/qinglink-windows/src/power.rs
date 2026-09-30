@@ -1,7 +1,10 @@
 #[cfg(target_os = "windows")]
 mod imp {
     use anyhow::Context;
-    use windows::Win32::System::Power::SetSuspendState;
+    use windows::Win32::System::Power::{
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED, EXECUTION_STATE, SetSuspendState,
+        SetThreadExecutionState,
+    };
     use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSLogoffSession};
     use windows::Win32::System::Shutdown::{
         EWX_LOGOFF, ExitWindowsEx, InitiateSystemShutdownExW, LockWorkStation, SHUTDOWN_REASON,
@@ -80,6 +83,26 @@ mod imp {
         Ok(())
     }
 
+    /// Prevent or allow automatic system sleep for the current process.
+    ///
+    /// The display is intentionally not kept on: only the system-required
+    /// execution state is requested. Windows automatically clears this state
+    /// when the process exits, while the explicit false path releases it
+    /// immediately when the tray toggle is switched off.
+    pub fn set_keep_awake(enabled: bool) -> anyhow::Result<()> {
+        let flags = if enabled {
+            ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+        } else {
+            ES_CONTINUOUS
+        };
+        let previous = unsafe { SetThreadExecutionState(flags) };
+        anyhow::ensure!(
+            previous != EXECUTION_STATE(0),
+            "SetThreadExecutionState failed"
+        );
+        Ok(())
+    }
+
     pub fn restart(force: bool, delay_secs: u64) -> anyhow::Result<()> {
         initiate_shutdown(force, delay_secs, true)
     }
@@ -124,6 +147,10 @@ pub fn shutdown(_force: bool, _delay_secs: u64) -> anyhow::Result<()> {
 }
 #[cfg(not(target_os = "windows"))]
 pub fn sleep(_hibernate: bool) -> anyhow::Result<()> {
+    Err(unsupported())
+}
+#[cfg(not(target_os = "windows"))]
+pub fn set_keep_awake(_enabled: bool) -> anyhow::Result<()> {
     Err(unsupported())
 }
 #[cfg(not(target_os = "windows"))]

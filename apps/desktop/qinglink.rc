@@ -1,5 +1,11 @@
 #include <windows.h>
 
+// Application manifest: PerMonitorV2 DPI awareness, the Common-Controls 6.0
+// dependency and an explicit execution level (see qinglink.exe.manifest).
+// gpui's own manifest is disabled via the `windows-manifest` feature because a
+// second RT_MANIFEST/1 resource cannot be linked (CVTRES CVT1100).
+1 RT_MANIFEST "qinglink.exe.manifest"
+
 1 VERSIONINFO
 FILEVERSION 0,1,0,0
 PRODUCTVERSION 0,1,0,0

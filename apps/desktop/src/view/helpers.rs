@@ -6,8 +6,6 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use qinglink_ui::theme;
 
-use crate::tray::set_main_window_handle;
-
 pub fn section(title: impl Into<String>, subtitle: impl Into<String>) -> gpui::Div {
     div()
         .flex()
@@ -105,10 +103,4 @@ pub fn setting_row(
         .border_color(gpui::rgb(0xe5e7eb))
         .child(label)
         .child(action_button(action, id, handler))
-}
-
-pub fn store_main_window_handle(window: &Window) {
-    if let Some(handle) = native_window_handle(window) {
-        set_main_window_handle(handle);
-    }
 }

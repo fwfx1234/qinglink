@@ -40,6 +40,7 @@ pub struct RemoteDashboard {
     pub(crate) input_install: crate::input_install::SharedInputInstallState,
     pub(crate) paused: bool,
     pub(crate) autostart: bool,
+    pub(crate) keep_awake: bool,
     pub(crate) debug_logging: bool,
     log_switch: LogLevelSwitch,
     page: Page,
@@ -57,14 +58,13 @@ impl RemoteDashboard {
         pairing: Arc<Mutex<Option<PairingNotification>>>,
         service_status: Arc<Mutex<ServiceStatus>>,
         desired_service: watch::Sender<DesiredServiceState>,
-        tray: Option<TrayController>,
         autostart: bool,
         show_on_start: bool,
+        tray: Option<TrayController>,
         log_switch: LogLevelSwitch,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        super::helpers::store_main_window_handle(window);
         let exiting = Arc::new(AtomicBool::new(false));
         let exiting_close = Arc::clone(&exiting);
         if show_on_start {
@@ -103,13 +103,37 @@ impl RemoteDashboard {
             }
         })
         .detach();
+        // 托盘注册是一次性的 shell 调用，`TrayIconBuilder::build()` 不会上报
+        // `NIM_ADD` 失败；explorer/任务栏也可能比桌面端晚就绪。这里延迟复检一次，
+        // 避免出现"日志说创建成功、通知区域却没有图标"这种无法诊断的状态。
+        cx.spawn(async move |view, async_cx| {
+            async_cx
+                .background_executor()
+                .timer(Duration::from_secs(2))
+                .await;
+            let _ = view.update(async_cx, |view, _cx| {
+                let report = view.tray.as_ref().and_then(TrayController::registration);
+                if report.is_some() {
+                    tracing::info!(
+                        registration = %crate::tray::describe_registration(report),
+                        "托盘图标注册复检通过"
+                    );
+                } else {
+                    tracing::warn!(
+                        registration = %crate::tray::describe_registration(report),
+                        "托盘图标注册复检失败"
+                    );
+                }
+            });
+        })
+        .detach();
         let paused = app_state
             .app_db
             .lock()
             .ok()
             .and_then(|database| database.get_setting("service.paused").ok().flatten())
             .is_some_and(|value| value == "true");
-        Self {
+        let dashboard = Self {
             app_state,
             pairing,
             service_status,
@@ -120,13 +144,15 @@ impl RemoteDashboard {
             page: Page::Overview,
             paused,
             autostart,
+            keep_awake: false,
             last_activated_request: None,
             pending_pairing_request: None,
             message: None,
             message_timeout: 0,
             input_install: input_install_state(),
             exiting,
-        }
+        };
+        dashboard
     }
 
     pub(crate) fn show_message(&mut self, message: String) {
@@ -154,6 +180,7 @@ impl RemoteDashboard {
                 }
                 TrayAction::TogglePause => self.toggle_service(cx),
                 TrayAction::ToggleAutostart => self.toggle_autostart(cx),
+                TrayAction::ToggleKeepAwake => self.toggle_keep_awake(cx),
                 TrayAction::Restart => self.restart_desktop(cx),
                 TrayAction::Exit => {
                     self.exiting.store(true, Ordering::Release);
@@ -261,6 +288,30 @@ impl RemoteDashboard {
         }
         if let Some(tray) = &self.tray {
             tray.set_paused(self.paused);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_keep_awake(&mut self, cx: &mut Context<Self>) {
+        let next = !self.keep_awake;
+        match qinglink_windows::power::set_keep_awake(next) {
+            Ok(()) => {
+                self.keep_awake = next;
+                if let Some(tray) = &self.tray {
+                    tray.set_keep_awake(next);
+                }
+                self.show_message(if next {
+                    "已启用保持唤醒（不阻止显示器息屏）".into()
+                } else {
+                    "已关闭保持唤醒".into()
+                });
+            }
+            Err(error) => {
+                if let Some(tray) = &self.tray {
+                    tray.set_keep_awake(self.keep_awake);
+                }
+                self.show_message(format!("修改保持唤醒失败: {error}"));
+            }
         }
         cx.notify();
     }
