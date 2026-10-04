@@ -59,7 +59,8 @@ import 'package:qinglink/services/ws_client.dart';
 - 每组之间用空行分隔
 - 每组内按字母序排序
 - **禁止** `part` / `part of` 指令 — 使用直接导入
-- **禁止** `export`（除了桶文件 `lib/qinglink.dart`）
+- **禁止** `export`（除了桶文件：只做 `export`、不声明任何符号的库，如移动端
+  `lib/src/widgets/app_ui.dart`；既有文件按职责拆分后保留它为桶文件，调用方导入路径不变）
 - 使用 `show`/`hide` 选择性导入：`import 'dart:async' show Future, Stream;`
 
 ---
@@ -596,7 +597,7 @@ Future<void> connect() async {
 
 ### 8.2 规则
 
-- 代码级注释使用英文
+- 代码级注释使用中文（项目中文优先，与 `rust-coding.md` §8.3 一致）
 - UI 显示字符串使用中文（集中在 `l10n/` 管理）
 - 所有公开 API 必须有 `///` 文档注释
 - `//` 用于实现注释
@@ -607,6 +608,9 @@ Future<void> connect() async {
 ---
 
 ## 9. 测试
+
+> **前置声明：本仓库当前不新增测试代码，也不运行测试套件**（见 [`AGENTS.md`](../../AGENTS.md) §4）。
+> 本节仅在人类明确要求编写测试时适用；不要据此主动创建 `test/` 下的新文件。
 
 遵循 [Flutter 测试指南](https://flutter.dev/docs/testing)。
 
@@ -738,3 +742,41 @@ linter:
     public_member_api_docs: true
     lines_longer_than_80_chars: false  // 宽屏使用 100
 ```
+
+---
+
+## 11. 文件规模（硬约束）
+
+完整规则见仓库根目录 [`AGENTS.md`](../../AGENTS.md) §2；本节是 Dart/Flutter 侧的落地要求。
+
+| 对象 | 建议值 | 硬上限 |
+|------|--------|--------|
+| 单个 `.dart` 文件 | 400 行 | **500 行** |
+| 单个 `build()` 方法 | 80 行 | 120 行 |
+| 单个 Widget 类 | 300 行 | 400 行 |
+
+**拆分原则：**
+
+- Screen 文件只负责页面骨架与状态接线；`build()` 里的每个区块抽成独立 `Widget` 子类或
+  独立文件，而不是堆成一棵超长 `Column`。
+- 按职责把 screen 拆成 `screens/<feature>/` 目录：页面、组件、控制器各自成文件。
+- 可复用 UI 组件下沉到 `lib/src/widgets/`；纯逻辑（协议解析、帧编码、状态计算）下沉到
+  `lib/src/services/` 或 `lib/src/protocol/`，不要留在 Widget 文件里。
+- Provider 文件只放 provider 与 Notifier 逻辑；UI 相关的类型放模型文件。
+- 禁止用 `part` / `part of` 把代码拆成表面文件——`dart-coding.md` §2 已禁止该指令，
+  拆文件是唯一合法的拆分方式。
+- 拆分已被广泛导入的文件（如 `lib/src/widgets/app_ui.dart`）时，把原文件改成只做 `export`
+  的桶文件，保证既有 `import` 调用方零改动。
+
+**棘轮：** 现存超限文件列在仓库根目录 [`AGENTS.md`](../../AGENTS.md) §2.3 的表格里，
+只许减少、不许增加；降到所属类型上限以内即移出该表。新增文件没有豁免。
+
+**校验：** 本仓库没有行数校验脚本（[`AGENTS.md`](../../AGENTS.md) §7），用 §2.4 的原生命令自查：
+
+```powershell
+(Get-Content <file>).Count
+```
+
+**禁止：** 用压缩语句、超长行、删除必要空行、把代码塞进注释或字符串等方式规避行数统计——
+一经发现按未完成处理。
+

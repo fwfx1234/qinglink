@@ -14,8 +14,8 @@
       "type": "object",
       "required": ["device_id", "device_name"],
       "properties": {
-        "device_id": { "type": "string", "minLength": 1 },
-        "device_name": { "type": "string", "minLength": 1 }
+        "device_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "device_name": { "type": "string", "minLength": 1, "maxLength": 128 }
       },
       "additionalProperties": false
     },
@@ -25,8 +25,8 @@
       "properties": {
         "request_id": { "type": "string", "format": "uuid" },
         "pin": { "type": "string", "pattern": "^[0-9]{6}$" },
-        "device_id": { "type": "string", "minLength": 1 },
-        "device_name": { "type": "string", "minLength": 1 }
+        "device_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "device_name": { "type": "string", "minLength": 1, "maxLength": 128 }
       },
       "additionalProperties": false
     },

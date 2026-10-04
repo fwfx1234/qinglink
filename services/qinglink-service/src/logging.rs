@@ -4,7 +4,7 @@
 pub fn init_service_logging() {
     let log_dir = std::env::var_os("PROGRAMDATA")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir())
+        .unwrap_or_else(std::env::temp_dir)
         .join("QingLink\\logs");
     if std::fs::create_dir_all(&log_dir).is_ok() {
         let file_appender = tracing_appender::rolling::daily(log_dir, "QingLinkService.log");

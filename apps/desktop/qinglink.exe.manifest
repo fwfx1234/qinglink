@@ -12,12 +12,11 @@
     unmanifested legacy application (no UAC virtualization, launcher token
     instead of legacy heuristics).
 
-    Note for the tray icon: declaring asInvoker does *not* change the token when
-    the launcher itself hands out a filtered token.  The notification-area
-    registration (`Shell_NotifyIcon`) only works when this process runs at an
-    integrity level equal to or higher than the one owning the taskbar - see the
-    diagnostics in `src/tray.rs` and `src/main.rs`, which log the result of
-    `Shell_NotifyIconGetRect` at startup.
+    Keep this at `asInvoker`: QingLink does not require administrator rights.
+    A process started by a low-integrity host remains low integrity and Windows
+    will reject its notification-area registration; it must instead be started
+    from the normal interactive desktop. The diagnostics in `src/tray` report
+    both integrity levels.
   -->
   <asmv3:application>
     <asmv3:windowsSettings>

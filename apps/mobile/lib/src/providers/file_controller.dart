@@ -15,14 +15,35 @@ class FileController {
     return RemoteDirectoryListing.fromJson(response['data'] as Map<String, dynamic>);
   }
 
-  Future<GameScanCandidatesResponse?> scanGameDirectory(String path) async {
-    final response = await _bus.request({'type': 'scan_game_directory', 'path': path}, timeout: const Duration(seconds: 60));
+  /// 扫描一个目录里的可执行文件。`kind` 为 `game` 或 `app`，决定候选条目
+  /// 加入库后的分类（历史实现一律当成游戏，这是"游戏列表爆炸"的根因）。
+  Future<GameScanCandidatesResponse?> scanDirectory(
+    String path, {
+    String kind = 'game',
+  }) async {
+    final response = await _bus.request({
+      'type': 'scan_game_directory',
+      'path': path,
+      'kind': kind,
+    }, timeout: const Duration(seconds: 60));
     if (response['type'] != 'game_scan_candidates') return null;
     return GameScanCandidatesResponse.fromJson(response['data'] as Map<String, dynamic>);
   }
 
-  Future<List<LauncherItem>> addScannedGames(String path, Iterable<String> paths, {Iterable<String>? names}) async {
-    final response = await _bus.request({'type': 'add_scanned_games', 'path': path, 'exe_paths': paths.toList(growable: false), if (names != null) 'names': names.toList(growable: false)}, timeout: const Duration(seconds: 60));
+  /// 批量加入目录条目。服务端不再重复扫描目录，所选路径直接落库。
+  Future<List<LauncherItem>> addScannedItems(
+    String folder,
+    Iterable<String> paths, {
+    Iterable<String>? names,
+    String kind = 'game',
+  }) async {
+    final response = await _bus.request({
+      'type': 'add_scanned_games',
+      'path': folder,
+      'exe_paths': paths.toList(growable: false),
+      if (names != null) 'names': names.toList(growable: false),
+      'kind': kind,
+    }, timeout: const Duration(seconds: 60));
     if (response['type'] != 'scanner_apps' || response['data'] is! List) return const [];
     return (response['data'] as List).whereType<Map>().map((e) => LauncherItem.fromJson(Map<String, dynamic>.from(e))).toList(growable: false);
   }

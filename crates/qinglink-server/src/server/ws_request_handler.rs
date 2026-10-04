@@ -1,3 +1,5 @@
+//! 控制通道请求分发：按请求类型路由到各功能处理器并发送响应。
+
 use axum::extract::ws::Message;
 
 use crate::protocol::requests::{WsClientRequest, WsServerMessage, WsServerResponse};
@@ -42,7 +44,7 @@ fn scanning_is_paused(state: &AppState) -> bool {
         .unwrap_or(true)
 }
 
-fn mouse_input_error(error: anyhow::Error) -> WsServerMessage {
+fn mouse_input_error(error: &anyhow::Error) -> WsServerMessage {
     let message = error.to_string();
     let code = if message.starts_with("SECURE_DESKTOP_INPUT_BLOCKED:") {
         "SECURE_DESKTOP_INPUT_BLOCKED"
@@ -105,12 +107,60 @@ mod scanner_management {
     include!("ws_handler_scanner_management.rs");
 }
 
-pub fn handle_client_request(
+/// 在指定输入代次内处理一次客户端请求；服务暂停或代次过期时直接拒绝。
+pub fn handle_client_request_in_generation(
+    state: &AppState,
+    req: &WsClientRequest,
+    session_token: Option<&str>,
+    generation: u64,
+) -> WsServerMessage {
+    let Ok(_input_guard) = state.control.input_gate.lock() else {
+        return WsServerMessage::Response(WsServerResponse::error(
+            "SERVICE_UNAVAILABLE",
+            "服务状态不可用",
+        ));
+    };
+    if state.control.is_paused() || state.input_generation() != generation {
+        return WsServerMessage::Response(WsServerResponse::error(
+            "SERVICE_PAUSED",
+            "服务已暂停或连接已过期",
+        ));
+    }
+    if session_token.is_some_and(|token| !state.token_store.validate(token)) {
+        return WsServerMessage::Response(WsServerResponse::error("REVOKED", "设备授权已失效"));
+    }
+    route_client_request(state, req, session_token)
+}
+
+/// 依次询问各领域路由表，由第一个认领该请求的路由表返回响应。
+///
+/// 四张路由表两两不重叠，因此依次询问与拆分前的单个 `match` 等价：
+/// 变体到处理函数的映射逐条保持，处理函数的调用参数也保持不变。
+fn route_client_request(
     state: &AppState,
     req: &WsClientRequest,
     session_token: Option<&str>,
 ) -> WsServerMessage {
-    match req {
+    if let Some(message) = route_control_request(state, req, session_token) {
+        return message;
+    }
+    if let Some(message) = route_catalog_request(state, req, session_token) {
+        return message;
+    }
+    if let Some(message) = route_host_request(state, req, session_token) {
+        return message;
+    }
+    route_app_management_request(state, req, session_token)
+        .unwrap_or_else(|| unreachable!("request routed to the wrong handler"))
+}
+
+/// 鉴权、系统电源、显示与输入类请求的路由表；不负责该领域时返回 `None`。
+fn route_control_request(
+    state: &AppState,
+    req: &WsClientRequest,
+    session_token: Option<&str>,
+) -> Option<WsServerMessage> {
+    let message = match req {
         WsClientRequest::Authenticate { .. }
         | WsClientRequest::Ping
         | WsClientRequest::RevokeToken => auth::handle(state, req, session_token),
@@ -140,6 +190,18 @@ pub fn handle_client_request(
         | WsClientRequest::SendText { .. }
         | WsClientRequest::KeyPress { .. }
         | WsClientRequest::KeyEvent { .. } => display_input::handle(state, req, session_token),
+        _ => return None,
+    };
+    Some(message)
+}
+
+/// 进程与应用目录（启动器条目、扫描器应用、Steam）请求的路由表；不负责该领域时返回 `None`。
+fn route_catalog_request(
+    state: &AppState,
+    req: &WsClientRequest,
+    session_token: Option<&str>,
+) -> Option<WsServerMessage> {
+    let message = match req {
         WsClientRequest::GetProcesses { .. }
         | WsClientRequest::GetForeground
         | WsClientRequest::KillProcess { .. }
@@ -152,6 +214,9 @@ pub fn handle_client_request(
         | WsClientRequest::GetRecentLauncherItems { .. }
         | WsClientRequest::GetLauncherIcon { .. }
         | WsClientRequest::RefreshScannerAppIcon { .. }
+        | WsClientRequest::ListScannerAppIcons { .. }
+        | WsClientRequest::SetScannerAppIcon { .. }
+        | WsClientRequest::ListBlockedScannerApps
         | WsClientRequest::RefreshLauncherCatalog { .. } => {
             mobile_catalog::handle(state, req, session_token)
         }
@@ -167,6 +232,18 @@ pub fn handle_client_request(
         | WsClientRequest::RefreshSteamGames
         | WsClientRequest::InstallSteamGame { .. }
         | WsClientRequest::LaunchSteamGame { .. } => steam::handle(state, req, session_token),
+        _ => return None,
+    };
+    Some(message)
+}
+
+/// 自定义目录、任务、音量媒体、文件浏览与窗口管理请求的路由表；不负责该领域时返回 `None`。
+fn route_host_request(
+    state: &AppState,
+    req: &WsClientRequest,
+    session_token: Option<&str>,
+) -> Option<WsServerMessage> {
+    let message = match req {
         WsClientRequest::GetCustomDirs
         | WsClientRequest::AddCustomDir { .. }
         | WsClientRequest::UpdateCustomDir { .. }
@@ -201,15 +278,35 @@ pub fn handle_client_request(
         | WsClientRequest::MinimizeForeground
         | WsClientRequest::MaximizeForeground
         | WsClientRequest::CloseForeground => windows::handle(state, req, session_token),
+        _ => return None,
+    };
+    Some(message)
+}
+
+/// 扫描器应用增删改与隐藏/收藏/置顶请求的路由表；不负责该领域时返回 `None`。
+fn route_app_management_request(
+    state: &AppState,
+    req: &WsClientRequest,
+    session_token: Option<&str>,
+) -> Option<WsServerMessage> {
+    let message = match req {
         WsClientRequest::AddScannerApp { .. }
         | WsClientRequest::UpdateScannerApp { .. }
         | WsClientRequest::DeleteScannerApp { .. }
-        | WsClientRequest::SetScannerAppHidden { .. } => {
+        | WsClientRequest::SetScannerAppHidden { .. }
+        | WsClientRequest::SetScannerAppFavorite { .. }
+        | WsClientRequest::SetScannerAppPinned { .. } => {
             scanner_management::handle(state, req, session_token)
         }
-    }
+        _ => return None,
+    };
+    Some(message)
 }
 
+/// 将响应序列化为 JSON 并写入 WebSocket，失败时返回 `Err`。
+///
+/// # Errors
+/// 响应序列化为 JSON 失败，或向 WebSocket 写入失败时返回 `Err(())`。
 pub async fn send_ws_message(
     socket: &mut axum::extract::ws::WebSocket,
     msg: WsServerMessage,

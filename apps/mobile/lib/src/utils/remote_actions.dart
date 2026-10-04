@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/process_info.dart';
+import '../models/system_status.dart';
 import '../providers/feature_facades.dart';
 import '../providers/system_controller.dart';
 import '../providers/window_controller.dart';
@@ -150,135 +151,198 @@ Future<void> showVolumeSheet(BuildContext context, WidgetRef ref) async {
     context: context,
     showDragHandle: true,
     isScrollControlled: true,
-    builder: (_) => Consumer(
-      builder: (context, ref, _) {
-        final palette = context.palette;
-        final system = ref.watch(systemControllerProvider);
-        final volume = system.volume;
-        final outputs = system.audioOutputs;
-        final muted = volume?.muted ?? false;
-        final percent = volume?.percent ?? 0;
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Text(
-                      '电脑音量',
-                      style: AppText.cardTitle.copyWith(
-                        color: palette.textPrimary,
-                      ),
-                    ),
-                    const Spacer(),
-                    Text(
-                      muted ? '静音' : '$percent%',
-                      style: AppText.label.copyWith(color: AppColors.primary),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: IconButton(
-                        tooltip: '静音',
-                        onPressed: volume == null
-                            ? null
-                            : () => ref.read(systemControllerProvider.notifier).setMuted(!muted).catchError((
-                                Object e,
-                              ) {
-                                if (context.mounted) {
-                                  context.showErrorSnackBar('静音失败: $e');
-                                }
-                              }),
-                        icon: Icon(
-                          muted
-                              ? Icons.volume_off_rounded
-                              : Icons.volume_up_rounded,
-                          size: 17,
-                        ),
-                        style: IconButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: AppColors.onPrimary,
-                          shape: const CircleBorder(),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Slider(
-                        value: percent.toDouble(),
-                        max: 100,
-                        onChanged: volume == null
-                            ? null
-                            : (v) => ref.read(systemControllerProvider.notifier).setVolume(v.round()).catchError((
-                                Object e,
-                              ) {
-                                if (context.mounted) {
-                                  context.showErrorSnackBar('设置音量失败: $e');
-                                }
-                              }),
-                      ),
-                    ),
-                    Text(
-                      '$percent',
-                      style: AppText.body.copyWith(color: palette.textMuted),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Divider(color: palette.line, height: 1),
-                const SizedBox(height: 12),
-                Text(
-                  '输出设备',
-                  style: AppText.meta.copyWith(color: palette.textSubtle),
-                ),
-                const SizedBox(height: 4),
-                if (outputs.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Text(
-                      '没有可用的输出设备',
-                      style: AppText.body.copyWith(color: palette.textMuted),
-                    ),
-                  )
-                else
-                  ...outputs.map(
-                    (device) => AppListRow(
-                      icon: device.isDefault
-                          ? Icons.check_circle_rounded
-                          : Icons.speaker_rounded,
-                      iconTone: device.isDefault
-                          ? AppColors.primary
-                          : palette.textMuted,
-                      title: device.name,
-                      minHeight: 48,
-                      trailing: device.isDefault ? const StatusTag('默认') : null,
-                      onTap: () async {
-                        try {
-                          await ref.read(systemControllerProvider.notifier).setAudioOutput(device.id);
-                          if (context.mounted) {
-                            context.showSuccessSnackBar('输出设备已切换');
-                          }
-                        } catch (error) {
-                          if (context.mounted) {
-                            context.showErrorSnackBar('切换输出失败: $error');
-                          }
-                        }
-                      },
-                    ),
-                  ),
-              ],
+    builder: (_) => const _VolumeSheetBody(),
+  );
+}
+
+/// 音量弹层内容：读取音量与输出设备状态，组合标题、调节区与设备列表。
+class _VolumeSheetBody extends ConsumerWidget {
+  const _VolumeSheetBody();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
+    final system = ref.watch(systemControllerProvider);
+    final volume = system.volume;
+    final muted = volume?.muted ?? false;
+    final percent = volume?.percent ?? 0;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _VolumeHeader(muted: muted, percent: percent),
+            const SizedBox(height: 8),
+            _VolumeSliderRow(volume: volume, muted: muted, percent: percent),
+            const SizedBox(height: 8),
+            Divider(color: palette.line, height: 1),
+            const SizedBox(height: 12),
+            Text(
+              '输出设备',
+              style: AppText.meta.copyWith(color: palette.textSubtle),
+            ),
+            const SizedBox(height: 4),
+            _AudioOutputList(outputs: system.audioOutputs),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 音量标题行：左侧标题，右侧静音状态或音量百分比。
+class _VolumeHeader extends StatelessWidget {
+  const _VolumeHeader({required this.muted, required this.percent});
+
+  final bool muted;
+  final int percent;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Row(
+      children: [
+        Text(
+          '电脑音量',
+          style: AppText.cardTitle.copyWith(color: palette.textPrimary),
+        ),
+        const Spacer(),
+        Text(
+          muted ? '静音' : '$percent%',
+          style: AppText.label.copyWith(color: AppColors.primary),
+        ),
+      ],
+    );
+  }
+}
+
+/// 静音开关与音量滑动条：两个写入操作各自处理失败提示。
+class _VolumeSliderRow extends ConsumerWidget {
+  const _VolumeSliderRow({
+    required this.volume,
+    required this.muted,
+    required this.percent,
+  });
+
+  final VolumeStatus? volume;
+  final bool muted;
+  final int percent;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
+    return Row(
+      children: [
+        SizedBox(
+          width: 40,
+          height: 40,
+          child: IconButton(
+            tooltip: '静音',
+            onPressed: volume == null
+                ? null
+                : () => ref.read(systemControllerProvider.notifier).setMuted(!muted).catchError((
+                    Object e,
+                  ) {
+                    if (context.mounted) {
+                      context.showErrorSnackBar('静音失败: $e');
+                    }
+                  }),
+            icon: Icon(
+              muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+              size: 17,
+            ),
+            style: IconButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: AppColors.onPrimary,
+              shape: const CircleBorder(),
             ),
           ),
-        );
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Slider(
+            value: percent.toDouble(),
+            max: 100,
+            onChanged: volume == null
+                ? null
+                : (v) => ref.read(systemControllerProvider.notifier).setVolume(v.round()).catchError((
+                    Object e,
+                  ) {
+                    if (context.mounted) {
+                      context.showErrorSnackBar('设置音量失败: $e');
+                    }
+                  }),
+          ),
+        ),
+        Text(
+          '$percent',
+          style: AppText.body.copyWith(color: palette.textMuted),
+        ),
+      ],
+    );
+  }
+}
+
+/// 输出设备列表：无可用设备时给出占位提示，否则逐项展示切换入口。
+class _AudioOutputList extends ConsumerWidget {
+  const _AudioOutputList({required this.outputs});
+
+  final List<AudioOutputDevice> outputs;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
+    if (outputs.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Text(
+          '没有可用的输出设备',
+          style: AppText.body.copyWith(color: palette.textMuted),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final device in outputs) _AudioOutputRow(device: device),
+      ],
+    );
+  }
+}
+
+/// 单个输出设备行：点击后把该设备切换为默认输出设备。
+class _AudioOutputRow extends ConsumerWidget {
+  const _AudioOutputRow({required this.device});
+
+  final AudioOutputDevice device;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
+    return AppListRow(
+      icon: device.isDefault
+          ? Icons.check_circle_rounded
+          : Icons.speaker_rounded,
+      iconTone: device.isDefault ? AppColors.primary : palette.textMuted,
+      title: device.name,
+      minHeight: 48,
+      trailing: device.isDefault ? const StatusTag('默认') : null,
+      onTap: () async {
+        try {
+          await ref
+              .read(systemControllerProvider.notifier)
+              .setAudioOutput(device.id);
+          if (context.mounted) {
+            context.showSuccessSnackBar('输出设备已切换');
+          }
+        } catch (error) {
+          if (context.mounted) {
+            context.showErrorSnackBar('切换输出失败: $error');
+          }
+        }
       },
-    ),
-  );
+    );
+  }
 }

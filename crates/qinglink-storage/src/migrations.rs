@@ -1,8 +1,14 @@
 use anyhow::{Context, Result};
 use rusqlite::{Connection, Transaction};
 
+/// 当前代码期望的 schema 版本号。
 pub const CURRENT_SCHEMA_VERSION: i64 = 2;
 
+/// 把数据库迁移到 [`CURRENT_SCHEMA_VERSION`]，已应用的版本不会重复执行。
+///
+/// # Errors
+///
+/// 读取当前版本、开启事务或执行任一迁移语句失败时返回错误。
 pub fn migrate(connection: &mut Connection) -> Result<()> {
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS schema_migrations (

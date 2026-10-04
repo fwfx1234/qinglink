@@ -1,3 +1,4 @@
+//! 功能验证测试：确认系统操作真正生效，而不只是返回成功码。
 #![allow(clippy::unwrap_used, clippy::zombie_processes)]
 
 /// 功能验证测试

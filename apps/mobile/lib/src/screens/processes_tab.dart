@@ -68,6 +68,29 @@ class _ProcessesTabState extends ConsumerState<ProcessesTab>
     _reload();
   }
 
+  /// 搜索输入变化：更新查询词，并以 300ms 防抖刷新进程列表。
+  void _onQueryChanged(String value) {
+    _query = value.trim();
+    setState(() {});
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      ref
+          .read(processControllerProvider.notifier)
+          .refresh(
+            search: _query.isEmpty ? null : _query,
+            filter: _filter,
+          );
+    });
+  }
+
+  /// 清空搜索框：重置查询词并立即刷新进程列表。
+  void _clearQuery() {
+    _searchController.clear();
+    _query = '';
+    setState(() {});
+    _reload();
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -81,18 +104,6 @@ class _ProcessesTabState extends ConsumerState<ProcessesTab>
 
     if (!isAuthenticated) {
       return const UnconnectedState();
-    }
-
-    // 与 PC 任务管理器一致：应用 / 后台进程 / Windows 进程。
-    final rows = <Object>[];
-    String? currentGroup;
-    for (final process in processes) {
-      final group = process.group ?? 'background';
-      if (group != currentGroup) {
-        currentGroup = group;
-        rows.add(_groupLabel(group));
-      }
-      rows.add(process);
     }
 
     return Scaffold(
@@ -110,116 +121,117 @@ class _ProcessesTabState extends ConsumerState<ProcessesTab>
       body: Column(
         children: [
           const SizedBox(height: 10),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18),
-            child: SearchField(
+          _ProcessSearchBar(
             controller: _searchController,
-            hint: '搜索进程或 PID',
-            onChanged: (v) {
-              _query = v.trim();
-              setState(() {});
-              _searchDebounce?.cancel();
-              _searchDebounce = Timer(const Duration(milliseconds: 300), () {
-                ref
-                    .read(processControllerProvider.notifier)
-                    .refresh(
-                      search: _query.isEmpty ? null : _query,
-                      filter: _filter,
-                    );
-              });
-            },
-            onClear: () {
-              _searchController.clear();
-              _query = '';
-              setState(() {});
-              _reload();
-            },
+            onChanged: _onQueryChanged,
+            onClear: _clearQuery,
           ),
-        ),
-        const SizedBox(height: 10),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18),
-          child: Row(
-            children: [
-              FilterChipX(
-                label: '用户',
-                active: _filter == 'user',
-                onTap: () => _setFilter('user'),
-              ),
-              const SizedBox(width: 7),
-              FilterChipX(
-                label: '全部',
-                active: _filter == 'all',
-                onTap: () => _setFilter('all'),
-              ),
-            ],
+          const SizedBox(height: 10),
+          _ProcessFilterBar(filter: _filter, onChanged: _setFilter),
+          const SizedBox(height: 12),
+          Expanded(
+            child: _ProcessList(
+              processes: processes,
+              isLoading: isLoading,
+              hasMore: processHasMore,
+              query: _query,
+              scrollController: _scrollController,
+              onRefresh: _reload,
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: Column(
-            children: [
-              if (isLoading && processes.isNotEmpty)
-                const LinearProgressIndicator(
-                  minHeight: 2,
-                  color: AppColors.primary,
-                ),
-              Expanded(
-                child: isLoading && processes.isEmpty
-                    ? const Center(
-                        child: CircularProgressIndicator(
-                          color: AppColors.primary,
-                        ),
-                      )
-                    : processes.isEmpty
-                    ? EmptyState(
-                        icon: Icons.check_circle_outline_rounded,
-                        title: '没有找到进程',
-                        message: _query.isEmpty ? null : '试试其他名称或 PID。',
-                      )
-                    : RefreshIndicator(
-                        onRefresh: () async => _reload(),
-                        color: AppColors.primary,
-                        child: ListView.builder(
-                          controller: _scrollController,
-                          padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
-                          itemCount: rows.length + (processHasMore ? 1 : 0),
-                          itemBuilder: (context, index) {
-                            if (index >= rows.length) {
-                              return const Center(
-                                child: Padding(
-                                  padding: EdgeInsets.all(16),
-                                  child: CircularProgressIndicator(),
-                                ),
-                              );
-                            }
-                            final row = rows[index];
-                            if (row is String) {
-                              return _GroupHeader(title: row);
-                            }
-                            final process = row as ProcessInfo;
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
-                              child: _ProcessItem(
-                                process: process,
-                                onKill: () => confirmKillProcess(
-                                  context,
-                                  ref,
-                                  pid: process.pid,
-                                  name: process.name,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ],
+        ],
       ),
     );
+  }
+}
+
+/// 进程页搜索框：输入交给外部防抖处理，清空立即触发刷新。
+class _ProcessSearchBar extends StatelessWidget {
+  const _ProcessSearchBar({
+    required this.controller,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      child: SearchField(
+        controller: controller,
+        hint: '搜索进程或 PID',
+        onChanged: onChanged,
+        onClear: onClear,
+      ),
+    );
+  }
+}
+
+/// 进程页筛选条：用户进程 / 全部进程。
+class _ProcessFilterBar extends StatelessWidget {
+  const _ProcessFilterBar({required this.filter, required this.onChanged});
+
+  final String filter;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      child: Row(
+        children: [
+          FilterChipX(
+            label: '用户',
+            active: filter == 'user',
+            onTap: () => onChanged('user'),
+          ),
+          const SizedBox(width: 7),
+          FilterChipX(
+            label: '全部',
+            active: filter == 'all',
+            onTap: () => onChanged('all'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 进程列表区：负责分组、加载态、空态与上拉加载占位。
+class _ProcessList extends StatelessWidget {
+  const _ProcessList({
+    required this.processes,
+    required this.isLoading,
+    required this.hasMore,
+    required this.query,
+    required this.scrollController,
+    required this.onRefresh,
+  });
+
+  final List<ProcessInfo> processes;
+  final bool isLoading;
+  final bool hasMore;
+  final String query;
+  final ScrollController scrollController;
+  final VoidCallback onRefresh;
+
+  static List<Object> _groupedRows(List<ProcessInfo> processes) {
+    // 与 PC 任务管理器一致：应用 / 后台进程 / Windows 进程。
+    final rows = <Object>[];
+    String? currentGroup;
+    for (final process in processes) {
+      final group = process.group ?? 'background';
+      if (group != currentGroup) {
+        currentGroup = group;
+        rows.add(_groupLabel(group));
+      }
+      rows.add(process);
+    }
+    return rows;
   }
 
   static String _groupLabel(String group) {
@@ -231,6 +243,82 @@ class _ProcessesTabState extends ConsumerState<ProcessesTab>
       default:
         return '后台进程';
     }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = _groupedRows(processes);
+    return Column(
+      children: [
+        if (isLoading && processes.isNotEmpty)
+          const LinearProgressIndicator(
+            minHeight: 2,
+            color: AppColors.primary,
+          ),
+        Expanded(
+          child: isLoading && processes.isEmpty
+              ? const Center(
+                  child: CircularProgressIndicator(
+                    color: AppColors.primary,
+                  ),
+                )
+              : processes.isEmpty
+              ? EmptyState(
+                  icon: Icons.check_circle_outline_rounded,
+                  title: '没有找到进程',
+                  message: query.isEmpty ? null : '试试其他名称或 PID。',
+                )
+              : RefreshIndicator(
+                  onRefresh: () async => onRefresh(),
+                  color: AppColors.primary,
+                  child: ListView.builder(
+                    controller: scrollController,
+                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
+                    itemCount: rows.length + (hasMore ? 1 : 0),
+                    itemBuilder: (context, index) =>
+                        _ProcessRow(rows: rows, index: index),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 列表中的一行：分组标题、进程卡片，或列表尾部的加载占位。
+class _ProcessRow extends ConsumerWidget {
+  const _ProcessRow({required this.rows, required this.index});
+
+  final List<Object> rows;
+  final int index;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (index >= rows.length) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+    final row = rows[index];
+    if (row is String) {
+      return _GroupHeader(title: row);
+    }
+    final process = row as ProcessInfo;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: _ProcessItem(
+        process: process,
+        onKill: () => confirmKillProcess(
+          context,
+          ref,
+          pid: process.pid,
+          name: process.name,
+        ),
+      ),
+    );
   }
 }
 

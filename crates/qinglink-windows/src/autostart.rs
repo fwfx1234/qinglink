@@ -24,7 +24,12 @@ mod platform {
 
     fn command() -> Result<String> {
         let executable = std::env::current_exe().context("cannot locate QingLink executable")?;
-        Ok(format!("\"{}\" --startup --silent", executable.display()))
+        // Only `--startup` is written: every argument here must exist in
+        // `StartupOptions::parse`, because an unknown one makes the process exit
+        // with an error before anything starts. An earlier revision also wrote
+        // `--silent`, which the parser rejects, so login startup died with
+        // "未知启动参数: --silent" and the application never came up.
+        Ok(format!("\"{}\" --startup", executable.display()))
     }
 
     fn open(access: windows::Win32::System::Registry::REG_SAM_FLAGS) -> Option<HKEY> {
@@ -42,6 +47,13 @@ mod platform {
         result.is_ok().then_some(key)
     }
 
+    /// 在当前用户的 Run 注册表项下写入自启动命令，使 QingLink 随登录启动。
+    ///
+    /// # Errors
+    /// 取不到当前可执行文件路径（“cannot locate QingLink executable”）、
+    /// `RegCreateKeyExW` 打开/创建 Run 项失败（“cannot open Windows autostart
+    /// registry key”）或 `RegSetValueExW` 写入失败（“cannot enable QingLink
+    /// autostart”）时返回错误。
     pub fn enable() -> Result<()> {
         let path = wide(RUN_KEY);
         let name = wide(VALUE_NAME);
@@ -69,6 +81,11 @@ mod platform {
         Ok(())
     }
 
+    /// 删除 Run 注册表项中的自启动命令；键值本就不存在时视为成功。
+    ///
+    /// # Errors
+    /// 当前实现不返回 `Err`：Run 项打不开、`RegDeleteValueW` 失败（含键值不存在）
+    /// 都被视为已达到目标状态并返回 `Ok(())`。返回值保留 `Result` 以维持接口稳定。
     pub fn disable() -> Result<()> {
         let Some(key) = open(KEY_SET_VALUE) else {
             return Ok(());
@@ -85,6 +102,12 @@ mod platform {
         Ok(())
     }
 
+    /// 读取 Run 注册表项，并判断其中的自启动命令是否与当前可执行文件一致。
+    ///
+    /// # Errors
+    /// 仅在取不到当前可执行文件路径（`command()` 返回“cannot locate QingLink
+    /// executable”）时返回错误。Run 项打不开或 `RegQueryValueExW` 查询失败都返回
+    /// `Ok(false)`。
     pub fn is_enabled() -> Result<bool> {
         let Some(key) = open(KEY_READ) else {
             return Ok(false);
@@ -116,12 +139,15 @@ mod platform {
 mod platform {
     use super::*;
 
+    /// 非 Windows 平台的占位实现，始终返回不支持错误。
     pub fn enable() -> Result<()> {
         anyhow::bail!("QingLink autostart is only supported on Windows")
     }
+    /// 非 Windows 平台的占位实现，无操作直接成功。
     pub fn disable() -> Result<()> {
         Ok(())
     }
+    /// 非 Windows 平台的占位实现，始终报告未启用自启动。
     pub fn is_enabled() -> Result<bool> {
         Ok(false)
     }

@@ -2,8 +2,6 @@ import '../../services/qinglink_pairing.dart';
 import '../../core/network/http_transport.dart';
 
 abstract interface class PairingRepository {
-  Map<String, dynamic>? get lastAutoConfirm;
-
   Future<String> request({
     required String baseUrl,
     required String deviceId,
@@ -26,9 +24,6 @@ final class QingLinkPairingRepository implements PairingRepository {
     : _pairing = pairing ?? QingLinkPairing(transport: transport);
 
   final QingLinkPairing _pairing;
-
-  @override
-  Map<String, dynamic>? get lastAutoConfirm => _pairing.lastAutoConfirm;
 
   QingLinkPairing get pairing => _pairing;
 

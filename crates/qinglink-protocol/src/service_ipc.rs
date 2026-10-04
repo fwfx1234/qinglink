@@ -1,31 +1,33 @@
-use serde::{Deserialize, Serialize};
+//! 桌面服务本地管理 IPC 的协议类型：命令、能力协商、应答与事件。
+//!
+//! 本文件只做子模块声明与重导出，公开路径保持为
+//! `qinglink_protocol::service_ipc::<符号>`。实现按职责拆在同目录子模块中：
+//!
+//! - `envelope`：版本常量、请求 / 应答 / 事件信封与分页包装；
+//! - `command`：命令枚举及其专属参数；
+//! - `capabilities`：能力协商位；
+//! - `snapshot`：服务运行快照与扫描进度；
+//! - `device`：设备摘要与待确认配对载荷；
+//! - `catalog`：目录条目、管理行、策展标记与统计；
+//! - `icon`：图标数据、刷新结果与候选文件载荷；
+//! - `icon_budget`：图标体积预算与校验函数。
 
-pub const SERVICE_IPC_VERSION: u32 = 2;
+mod capabilities;
+mod catalog;
+mod command;
+mod device;
+mod envelope;
+mod icon;
+mod icon_budget;
+mod snapshot;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ServiceRequest {
-    pub version: u32,
-    pub request_id: String,
-    pub command: String,
-    #[serde(default)]
-    pub payload: serde_json::Value,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ServiceResponse {
-    pub version: u32,
-    pub request_id: String,
-    pub ok: bool,
-    pub code: String,
-    pub message: String,
-    #[serde(default)]
-    pub payload: serde_json::Value,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ServiceEvent {
-    pub version: u32,
-    pub event: String,
-    #[serde(default)]
-    pub payload: serde_json::Value,
-}
+pub use capabilities::Capabilities;
+pub use catalog::{CatalogApp, CatalogEntry, CatalogFlags, CatalogKindStats, CatalogStats};
+pub use command::DesktopCommand;
+pub use device::{DeviceSummary, PendingPairing};
+pub use envelope::{
+    DesktopRequest, MAX_PAGE_SIZE, Page, SERVICE_IPC_VERSION, ServiceEvent, ServiceResponse,
+};
+pub use icon::{AppIcon, AppIconCandidate, AppIconCandidates, AppIconUpdate};
+pub use icon_budget::{MAX_ICON_BYTES, icon_fits_budget};
+pub use snapshot::{CatalogScanState, ServiceSnapshot};

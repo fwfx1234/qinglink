@@ -22,16 +22,16 @@ axum = { version = "0.7", features = ["ws", "json"] }
 base64 = "0.22"
 dirs = "6.0"
 futures-util = "0.3"
-# `windows-manifest` 被刻意关闭：它给 gpui 链接的库注入 RT_MANIFEST/1，
-# 与本 crate 自己的 RT_MANIFEST 冲突（CVTRES CVT1100 资源重复）。桌面端在
-# `apps/desktop/qinglink.exe.manifest` 里提供了等价（并额外声明执行级别）的清单。
-gpui = { version = "=0.2.2", default-features = false, features = ["font-kit", "runtime_shaders", "wayland", "x11"] }
-image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg"] }
+# 桌面端已移除 gpui，改为“仅托盘 + 本地 Web 界面”。
+# 应用清单（PerMonitorV2 DPI 感知、Common-Controls 依赖、执行级别）由
+# `apps/desktop/qinglink.exe.manifest` 经 `qinglink.rc` 嵌入。
+# `ico` is needed because many Windows programs ship their real icon as a
+# standalone `.ico` next to the executable instead of embedding it.
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "jpeg", "ico"] }
 local-ip-address = "0.6"
 r2d2 = "0.8"
 r2d2_sqlite = { version = "0.31", features = ["bundled"] }
 rand = "0.9"
-raw-window-handle = "0.6"
 resvg = "0.45"
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -45,7 +45,9 @@ tower = "0.5"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
-tray-icon = { version = "=0.25.1", default-features = false }
+# 桌面端托盘直接用 Win32 外壳 API 实现（见 apps/desktop/src/tray/），
+# 不再依赖托盘 crate：`tray-icon` 会吞掉 `Shell_NotifyIcon` 的失败结果，
+# 而"图标没出现"恰恰只能靠那个结果定位。
 tiny-skia = "0.11"
 usvg = "0.45"
 uuid = { version = "1.16", features = ["v4", "serde"] }

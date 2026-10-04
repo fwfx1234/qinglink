@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 pub struct LifecycleMonitor {
-    should_stop: Arc<AtomicBool>,
+    pub(super) should_stop: Arc<AtomicBool>,
     desktop_registered: Arc<AtomicBool>,
     parent_pid: Arc<AtomicU32>,
 }

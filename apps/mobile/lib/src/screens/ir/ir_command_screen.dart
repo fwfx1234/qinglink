@@ -136,38 +136,7 @@ class _IrCommandScreenState extends ConsumerState<IrCommandScreen> {
               ),
             ),
             if (profile.builtin)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: AppCard(
-                  radius: AppRadius.lg,
-                  padding: const EdgeInsets.all(13),
-                  color: AppColors.cyan.withValues(alpha: 0.07),
-                  borderColor: AppColors.cyan.withValues(alpha: 0.3),
-                  boxShadow: const [],
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.lock_outline_rounded,
-                        size: 18,
-                        color: AppColors.cyan,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          '内置遥控器为只读，复制后可自由编辑。',
-                          style: AppText.meta.copyWith(
-                            color: palette.textMuted,
-                          ),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () => _copyProfile(profile),
-                        child: const Text('复制'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              _BuiltinProfileNotice(onCopy: () => _copyProfile(profile)),
             SectionHeading(
               title: '按键列表',
               trailing: Text(
@@ -183,55 +152,12 @@ class _IrCommandScreenState extends ConsumerState<IrCommandScreen> {
               )
             else
               ...profile.commands.map(
-                (command) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: AppCard(
-                    radius: AppRadius.lg,
-                    padding: EdgeInsets.zero,
-                    child: AppListRow(
-                      title: command.name,
-                      subtitle:
-                          '${command.carrierHz} Hz · ${command.patternUs.length} 个脉冲 · 重复 ${command.repeatCount} 次',
-                      icon: Icons.radio_button_checked_rounded,
-                      iconTone: AppColors.cyan,
-                      tile: true,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconBtn(
-                            icon: Icons.send_rounded,
-                            tooltip: '测试发送',
-                            size: 36,
-                            iconSize: 17,
-                            onPressed: () => _testCommand(command),
-                          ),
-                          if (!profile.builtin)
-                            IconBtn(
-                              icon: Icons.edit_outlined,
-                              tooltip: '编辑',
-                              size: 36,
-                              iconSize: 17,
-                              onPressed: () =>
-                                  _editCommand(profile, command: command),
-                            ),
-                          if (!profile.builtin)
-                            IconBtn(
-                              icon: Icons.delete_outline,
-                              tooltip: '删除',
-                              size: 36,
-                              iconSize: 17,
-                              color: AppColors.red,
-                              onPressed: () =>
-                                  _deleteCommand(profile, command),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
+                (command) => _CommandTile(
+                  command: command,
+                  editable: !profile.builtin,
+                  onTest: () => _testCommand(command),
+                  onEdit: () => _editCommand(profile, command: command),
+                  onDelete: () => _deleteCommand(profile, command),
                 ),
               ),
             const SizedBox(height: 6),
@@ -246,6 +172,139 @@ class _IrCommandScreenState extends ConsumerState<IrCommandScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 内置遥控器提示条：说明只读限制并提供「复制」入口。
+class _BuiltinProfileNotice extends StatelessWidget {
+  const _BuiltinProfileNotice({required this.onCopy});
+
+  final VoidCallback onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: AppCard(
+        radius: AppRadius.lg,
+        padding: const EdgeInsets.all(13),
+        color: AppColors.cyan.withValues(alpha: 0.07),
+        borderColor: AppColors.cyan.withValues(alpha: 0.3),
+        boxShadow: const [],
+        child: Row(
+          children: [
+            const Icon(
+              Icons.lock_outline_rounded,
+              size: 18,
+              color: AppColors.cyan,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '内置遥控器为只读，复制后可自由编辑。',
+                style: AppText.meta.copyWith(color: palette.textMuted),
+              ),
+            ),
+            TextButton(
+              onPressed: onCopy,
+              child: const Text('复制'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 单个按键卡片：展示载波/脉冲/重复信息与操作按钮组。
+class _CommandTile extends StatelessWidget {
+  const _CommandTile({
+    required this.command,
+    required this.editable,
+    required this.onTest,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final IrCommand command;
+  final bool editable;
+  final VoidCallback onTest;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: AppCard(
+        radius: AppRadius.lg,
+        padding: EdgeInsets.zero,
+        child: AppListRow(
+          title: command.name,
+          subtitle:
+              '${command.carrierHz} Hz · ${command.patternUs.length} 个脉冲 · 重复 ${command.repeatCount} 次',
+          icon: Icons.radio_button_checked_rounded,
+          iconTone: AppColors.cyan,
+          tile: true,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          trailing: _CommandActions(
+            editable: editable,
+            onTest: onTest,
+            onEdit: onEdit,
+            onDelete: onDelete,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 按键操作按钮组：测试发送，以及可编辑时的编辑与删除。
+class _CommandActions extends StatelessWidget {
+  const _CommandActions({
+    required this.editable,
+    required this.onTest,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final bool editable;
+  final VoidCallback onTest;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconBtn(
+          icon: Icons.send_rounded,
+          tooltip: '测试发送',
+          size: 36,
+          iconSize: 17,
+          onPressed: onTest,
+        ),
+        if (editable)
+          IconBtn(
+            icon: Icons.edit_outlined,
+            tooltip: '编辑',
+            size: 36,
+            iconSize: 17,
+            onPressed: onEdit,
+          ),
+        if (editable)
+          IconBtn(
+            icon: Icons.delete_outline,
+            tooltip: '删除',
+            size: 36,
+            iconSize: 17,
+            color: AppColors.red,
+            onPressed: onDelete,
+          ),
+      ],
     );
   }
 }

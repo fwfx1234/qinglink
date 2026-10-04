@@ -1,31 +1,35 @@
+//! WebSocket 会话注册表：跟踪连接、绑定令牌摘要并支持定向关闭。
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use serde::Serialize;
 use tokio::sync::mpsc;
 
 static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
 
+/// 连接的单调递增标识。
 pub type ConnectionId = u64;
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ConnectionInfo {
-    pub id: u64,
-    pub connected_at_secs: u64,
-    pub last_activity_secs: u64,
-}
-
+/// 当前服务端的 WebSocket 会话注册表。
+///
+/// 每个会话只保留令牌摘要与关闭通知通道，因此手写 `Debug` 而不派生。
 pub struct ConnectionRegistry {
     inner: Mutex<HashMap<u64, ConnectionInfoInner>>,
 }
 
+impl std::fmt::Debug for ConnectionRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionRegistry").finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug)]
 struct ConnectionInfoInner {
-    connected_at: Instant,
     last_activity: Instant,
-    token: Option<String>,
+    // Store only the digest. Raw bearer tokens must not remain in the registry.
+    token_hash: Option<String>,
     close_tx: mpsc::UnboundedSender<String>,
 }
 
@@ -36,12 +40,14 @@ impl Default for ConnectionRegistry {
 }
 
 impl ConnectionRegistry {
+    /// 创建一个空注册表。
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
         }
     }
 
+    /// 登记一个新会话，返回其标识与关闭通知接收端。
     pub fn register(&self) -> (ConnectionId, mpsc::UnboundedReceiver<String>) {
         let id = NEXT_CONN_ID.fetch_add(1, Ordering::SeqCst);
         let now = Instant::now();
@@ -50,9 +56,8 @@ impl ConnectionRegistry {
         inner.insert(
             id,
             ConnectionInfoInner {
-                connected_at: now,
                 last_activity: now,
-                token: None,
+                token_hash: None,
                 close_tx,
             },
         );
@@ -60,13 +65,15 @@ impl ConnectionRegistry {
     }
 
     /// Binds an authenticated token and closes older sessions with the same
-    /// token. Removing them immediately keeps listings single-session while
-    /// their WebSocket handlers process the close signal.
+    /// token. Only its digest is retained after this call returns.
     pub fn bind_token(&self, id: ConnectionId, token: &str) {
+        let hash = crate::server::auth::token_hash(token);
         let mut inner = crate::lock_unpoisoned(&self.inner);
         let old_ids: Vec<_> = inner
             .iter()
-            .filter(|(other_id, info)| **other_id != id && info.token.as_deref() == Some(token))
+            .filter(|(other_id, info)| {
+                **other_id != id && info.token_hash.as_deref() == Some(&hash)
+            })
             .map(|(other_id, _)| *other_id)
             .collect();
         for old_id in old_ids {
@@ -75,15 +82,31 @@ impl ConnectionRegistry {
             }
         }
         if let Some(info) = inner.get_mut(&id) {
-            info.token = Some(token.to_string());
+            info.token_hash = Some(hash);
         }
     }
 
-    pub fn close_token(&self, token: &str, reason: &str) {
+    /// Closes all sessions whose stored digest is in `hashes`.
+    pub fn close_hashes<I, S>(&self, hashes: I, reason: &str)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let hashes: std::collections::HashSet<String> = hashes
+            .into_iter()
+            .map(|hash| hash.as_ref().to_owned())
+            .collect();
+        if hashes.is_empty() {
+            return;
+        }
         let mut inner = crate::lock_unpoisoned(&self.inner);
         let matching_ids: Vec<_> = inner
             .iter()
-            .filter(|(_, info)| info.token.as_deref() == Some(token))
+            .filter(|(_, info)| {
+                info.token_hash
+                    .as_deref()
+                    .is_some_and(|hash| hashes.contains(hash))
+            })
             .map(|(id, _)| *id)
             .collect();
         for id in matching_ids {
@@ -93,11 +116,28 @@ impl ConnectionRegistry {
         }
     }
 
+    /// Closes every registered session.
+    pub fn close_all(&self, reason: &str) {
+        let mut inner = crate::lock_unpoisoned(&self.inner);
+        let sessions: Vec<_> = inner.drain().map(|(_, info)| info).collect();
+        for info in sessions {
+            let _ = info.close_tx.send(reason.to_string());
+        }
+    }
+
+    /// Legacy raw-token API retained for callers that have not migrated.
+    pub fn close_token(&self, token: &str, reason: &str) {
+        let hash = crate::server::auth::token_hash(token);
+        self.close_hashes([hash], reason);
+    }
+
+    /// 注销会话；连接结束后调用。
     pub fn unregister(&self, id: ConnectionId) {
         let mut inner = crate::lock_unpoisoned(&self.inner);
         inner.remove(&id);
     }
 
+    /// 刷新会话的最近活动时间。
     pub fn activity(&self, id: ConnectionId) {
         let mut inner = crate::lock_unpoisoned(&self.inner);
         if let Some(info) = inner.get_mut(&id) {
@@ -105,21 +145,9 @@ impl ConnectionRegistry {
         }
     }
 
+    /// 当前已登记的会话数量。
     pub fn count(&self) -> usize {
         crate::lock_unpoisoned(&self.inner).len()
-    }
-
-    pub fn list_connections(&self) -> Vec<ConnectionInfo> {
-        let inner = crate::lock_unpoisoned(&self.inner);
-        let now = Instant::now();
-        inner
-            .iter()
-            .map(|(id, info)| ConnectionInfo {
-                id: *id,
-                connected_at_secs: now.duration_since(info.connected_at).as_secs(),
-                last_activity_secs: now.duration_since(info.last_activity).as_secs(),
-            })
-            .collect()
     }
 }
 
@@ -153,5 +181,24 @@ mod tests {
 
         assert_eq!(first_close.try_recv().unwrap(), "REVOKED");
         assert!(second_close.try_recv().is_err());
+    }
+
+    #[test]
+    fn close_hashes_isolates_same_name_devices_and_close_all_drains_registry() {
+        let registry = ConnectionRegistry::new();
+        let (first, mut first_close) = registry.register();
+        let (second, mut second_close) = registry.register();
+        registry.bind_token(first, "same-name-token-a");
+        registry.bind_token(second, "same-name-token-b");
+
+        let first_hash = crate::server::auth::token_hash("same-name-token-a");
+        registry.close_hashes([first_hash], "REVOKED");
+        assert_eq!(first_close.try_recv().unwrap(), "REVOKED");
+        assert!(second_close.try_recv().is_err());
+        assert_eq!(registry.count(), 1);
+
+        registry.close_all("SHUTDOWN");
+        assert_eq!(second_close.try_recv().unwrap(), "SHUTDOWN");
+        assert_eq!(registry.count(), 0);
     }
 }

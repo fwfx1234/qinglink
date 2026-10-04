@@ -1,0 +1,171 @@
+/* 全局重置与基础排版。组件样式一律写在各自的 <style scoped> 中；
+   只有跨组件复用的骨架（工具栏、控件皮肤）放这里。 */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-0);
+  color: var(--text-1);
+  font-family: var(--font-sans);
+  font-size: var(--font-md);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure {
+  margin: 0;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-mono);
+}
+
+/* 数字对齐：统计、计数、页码用等宽数字，避免变化时抖动 */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ */
+/* 共享骨架                                                            */
+/*                                                                     */
+/* 工具栏外壳与控件皮肤此前在 AppToolbar / LogToolbar / TextField /    */
+/* SelectField 里各写了一遍，这里只保留一份。                           */
+/* 描边一律走 --border-1 发丝线：结构由底色分层给出，描边只负责勾边。    */
+/* 断点约定：1180px = 窄屏允许换行；1080px = 侧边栏收成图标轨道。        */
+/* ------------------------------------------------------------------ */
+
+.ql-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.ql-toolbar__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.ql-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font-size: var(--font-md);
+  min-width: 0;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.ql-control:hover:not(:disabled) {
+  border-color: var(--border-2);
+}
+
+.ql-control:focus,
+.ql-control:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  outline: none;
+}
+
+.ql-control::placeholder {
+  color: var(--text-3);
+}
+
+.ql-control--grow {
+  flex: 1 1 220px;
+}
+
+.ql-hint {
+  font-size: var(--font-sm);
+  color: var(--text-3);
+}
+
+/* 统一的键盘焦点指示：不依赖组件的边框宽度 */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-2);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

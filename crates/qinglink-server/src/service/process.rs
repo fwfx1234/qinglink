@@ -1,3 +1,5 @@
+//! 进程服务：枚举并分页进程列表，并提供终止、挂起、恢复与优先级调整操作。
+
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -10,12 +12,15 @@ use crate::protocol::responses::{ForegroundResponse, ProcessInfo, ProcessListRes
 const SNAPSHOT_TTL: Duration = Duration::from_secs(1);
 
 /// 一次系统枚举的快照，包含过滤/排序/分页所需的全部原始数据。
+#[derive(Debug)]
 struct ProcessSnapshot {
     processes: Vec<ProcessInfo>,
     foreground_pid: Option<u32>,
     visible_pids: HashSet<u32>,
 }
 
+/// 进程管理器：缓存一次系统枚举结果，并对外提供进程查询与操作。
+#[derive(Debug)]
 pub struct ProcessManager {
     system: System,
     snapshot: Option<(Instant, ProcessSnapshot)>,
@@ -28,6 +33,7 @@ impl Default for ProcessManager {
 }
 
 impl ProcessManager {
+    /// 创建管理器并立即完成一次全量系统枚举。
     pub fn new() -> Self {
         Self {
             system: System::new_all(),
@@ -74,6 +80,7 @@ impl ProcessManager {
         ));
     }
 
+    /// 查询进程列表：支持关键词搜索、用户/全部过滤与分页。
     pub fn list_processes(
         &mut self,
         search: Option<&str>,
@@ -216,22 +223,47 @@ impl ProcessManager {
         false
     }
 
+    /// 获取当前前台窗口及其所属进程信息。
+    ///
+    /// # Errors
+    /// 无法获取前台窗口 / 进程信息（例如没有前台窗口或系统调用失败）时返回 `Err`；
+    /// 非 Windows 平台恒返回不支持错误。
     pub fn get_foreground(&self) -> anyhow::Result<ForegroundResponse> {
         crate::platform::get_foreground_window_info()
     }
 
+    /// 强制终止指定 PID 的进程。
+    ///
+    /// # Errors
+    /// 打开进程或调用终止进程的系统接口失败（如 PID 不存在、权限不足）时返回 `Err`；
+    /// 非 Windows 平台恒返回不支持错误。
     pub fn kill_process(&self, pid: u32) -> anyhow::Result<()> {
         ProcessActions::kill(pid)
     }
 
+    /// 挂起（暂停）指定 PID 的进程。
+    ///
+    /// # Errors
+    /// 打开进程或调用挂起进程的系统接口失败（如 PID 不存在、权限不足）时返回 `Err`；
+    /// 非 Windows 平台恒返回不支持错误。
     pub fn suspend_process(&self, pid: u32) -> anyhow::Result<()> {
         ProcessActions::suspend(pid)
     }
 
+    /// 恢复先前被挂起的进程。
+    ///
+    /// # Errors
+    /// 打开进程或调用恢复进程的系统接口失败（如 PID 不存在、权限不足）时返回 `Err`；
+    /// 非 Windows 平台恒返回不支持错误。
     pub fn resume_process(&self, pid: u32) -> anyhow::Result<()> {
         ProcessActions::resume(pid)
     }
 
+    /// 调整指定进程的优先级（如 `high`、`normal`、`low`）。
+    ///
+    /// # Errors
+    /// `priority` 不是受支持的优先级名称，或打开 / 调整进程优先级失败
+    /// （如 PID 不存在、权限不足）时返回 `Err`；非 Windows 平台恒返回不支持错误。
     pub fn set_process_priority(&self, pid: u32, priority: &str) -> anyhow::Result<()> {
         crate::platform::set_priority(pid, priority)
     }

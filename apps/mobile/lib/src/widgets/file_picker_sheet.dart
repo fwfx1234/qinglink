@@ -89,7 +89,6 @@ class _FilePickerSheetState extends ConsumerState<_FilePickerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.palette;
     final listing = _listing;
     final parentPath = _parentPath(listing);
     final dirs = <RemoteFileEntry>[];
@@ -106,41 +105,11 @@ class _FilePickerSheetState extends ConsumerState<_FilePickerSheet> {
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(18, 0, 12, 8),
-          child: Row(
-            children: [
-              IconBtn(
-                icon: Icons.arrow_upward_rounded,
-                tooltip: '上一级',
-                size: 38,
-                iconSize: 18,
-                onPressed: parentPath != null ? () => _load(parentPath) : null,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.folderMode ? '选择文件夹' : '选择程序',
-                      style: AppText.cardTitle.copyWith(
-                        color: palette.textPrimary,
-                      ),
-                    ),
-                    Text(
-                      (listing?.currentPath.isEmpty ?? true)
-                          ? '此电脑'
-                          : listing!.currentPath,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppText.meta.copyWith(color: palette.textSubtle),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        _PickerHeader(
+          folderMode: widget.folderMode,
+          currentPath: listing?.currentPath,
+          parentPath: parentPath,
+          onNavigate: _load,
         ),
         if (_error != null)
           Padding(
@@ -153,47 +122,16 @@ class _FilePickerSheetState extends ConsumerState<_FilePickerSheet> {
         if (_loading)
           const LinearProgressIndicator(minHeight: 2, color: AppColors.primary),
         if (listing != null)
-          if (dirs.isEmpty && files.isEmpty && !_loading)
-            Expanded(
-              child: Center(
-                child: Text(
-                  widget.folderMode ? '此文件夹没有子文件夹' : '此文件夹没有可执行文件',
-                  style: AppText.body.copyWith(color: palette.textSubtle),
-                ),
-              ),
-            )
-          else
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                children: [
-                  ...dirs.map(
-                    (entry) => ListTile(
-                      leading: const Icon(Icons.folder_rounded),
-                      title: Text(
-                        entry.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: const Icon(Icons.chevron_right_rounded),
-                      onTap: () => _load(entry.path),
-                    ),
-                  ),
-                  ...files.map(
-                    (entry) => ListTile(
-                      leading: const Icon(Icons.desktop_windows_outlined),
-                      title: Text(
-                        entry.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: const Icon(Icons.add_rounded),
-                      onTap: () => Navigator.of(context).pop(entry.path),
-                    ),
-                  ),
-                ],
-              ),
+          Expanded(
+            child: _PickerBody(
+              folderMode: widget.folderMode,
+              dirs: dirs,
+              files: files,
+              loading: _loading,
+              onOpenDirectory: _load,
+              onPickFile: (path) => Navigator.of(context).pop(path),
             ),
+          ),
         if (widget.folderMode && listing != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 8, 18, 16),
@@ -206,6 +144,123 @@ class _FilePickerSheetState extends ConsumerState<_FilePickerSheet> {
                   : () => Navigator.of(context).pop(listing.currentPath),
             ),
           ),
+      ],
+    );
+  }
+}
+
+/// 选择器顶部：返回上一级按钮、标题与当前路径。
+class _PickerHeader extends StatelessWidget {
+  const _PickerHeader({
+    required this.folderMode,
+    required this.currentPath,
+    required this.parentPath,
+    required this.onNavigate,
+  });
+
+  final bool folderMode;
+  final String? currentPath;
+  final String? parentPath;
+  final ValueChanged<String> onNavigate;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final parent = parentPath;
+    final path = currentPath ?? '';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 0, 12, 8),
+      child: Row(
+        children: [
+          IconBtn(
+            icon: Icons.arrow_upward_rounded,
+            tooltip: '上一级',
+            size: 38,
+            iconSize: 18,
+            onPressed: parent != null ? () => onNavigate(parent) : null,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  folderMode ? '选择文件夹' : '选择程序',
+                  style: AppText.cardTitle.copyWith(
+                    color: palette.textPrimary,
+                  ),
+                ),
+                Text(
+                  path.isEmpty ? '此电脑' : path,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.meta.copyWith(color: palette.textSubtle),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 选择器内容区：空目录提示，或「子文件夹 + 可执行文件」列表。
+class _PickerBody extends StatelessWidget {
+  const _PickerBody({
+    required this.folderMode,
+    required this.dirs,
+    required this.files,
+    required this.loading,
+    required this.onOpenDirectory,
+    required this.onPickFile,
+  });
+
+  final bool folderMode;
+  final List<RemoteFileEntry> dirs;
+  final List<RemoteFileEntry> files;
+  final bool loading;
+  final ValueChanged<String> onOpenDirectory;
+  final ValueChanged<String> onPickFile;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    if (dirs.isEmpty && files.isEmpty && !loading) {
+      return Center(
+        child: Text(
+          folderMode ? '此文件夹没有子文件夹' : '此文件夹没有可执行文件',
+          style: AppText.body.copyWith(color: palette.textSubtle),
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      children: [
+        ...dirs.map(
+          (entry) => ListTile(
+            leading: const Icon(Icons.folder_rounded),
+            title: Text(
+              entry.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => onOpenDirectory(entry.path),
+          ),
+        ),
+        ...files.map(
+          (entry) => ListTile(
+            leading: const Icon(Icons.desktop_windows_outlined),
+            title: Text(
+              entry.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: const Icon(Icons.add_rounded),
+            onTap: () => onPickFile(entry.path),
+          ),
+        ),
       ],
     );
   }

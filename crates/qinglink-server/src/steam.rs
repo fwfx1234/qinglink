@@ -1,6 +1,6 @@
-//! Steam game scanner.
+//! Steam 游戏扫描器。
 //!
-//! Parses Steam library manifests and extracts installed game information.
+//! 解析 Steam 库清单文件，提取已安装游戏的信息。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,36 +11,50 @@ use serde::{Deserialize, Serialize};
 /// Steam 库文件夹信息
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SteamLibrary {
+    /// 库文件夹的路径
     pub path: String,
+    /// 该库中已安装的游戏数量
     pub game_count: usize,
 }
 
 /// Steam 游戏信息
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SteamGame {
+    /// Steam 应用 ID
     pub app_id: u32,
+    /// 游戏名称
     pub name: String,
+    /// 安装目录名（steamapps/common 下的相对目录名）
     pub install_dir: String,
+    /// 游戏安装的完整路径
     pub install_path: String,
+    /// 所在 Steam 库的根路径
     pub library_path: String,
+    /// 本地图标文件的路径
     pub icon_path: Option<String>,
+    /// 磁盘占用字节数
     pub size_bytes: Option<u64>,
+    /// 最近游玩时间（Unix 时间戳，秒）
     pub last_played: Option<i64>,
 }
 
 /// Steam 安装信息
 #[derive(Clone, Debug)]
 pub struct SteamInstallInfo {
+    /// Steam 根目录
     pub root_path: PathBuf,
+    /// 所有 Steam 库目录
     pub libraries: Vec<PathBuf>,
 }
 
 /// Steam 扫描器
+#[derive(Debug)]
 pub struct SteamScanner {
     install_info: Option<SteamInstallInfo>,
 }
 
 impl SteamScanner {
+    /// 创建一个尚未定位 Steam 安装路径的扫描器。
     pub fn new() -> Self {
         Self { install_info: None }
     }
@@ -73,7 +87,7 @@ impl SteamScanner {
         {
             self.install_info = Some(SteamInstallInfo {
                 root_path: path.clone(),
-                libraries: vec![path.clone()],
+                libraries: vec![path],
             });
             return self.install_info.as_ref();
         }
@@ -82,7 +96,7 @@ impl SteamScanner {
         if let Some(path) = Self::find_steam_on_drives() {
             self.install_info = Some(SteamInstallInfo {
                 root_path: path.clone(),
-                libraries: vec![path.clone()],
+                libraries: vec![path],
             });
             return self.install_info.as_ref();
         }
@@ -184,6 +198,11 @@ impl SteamScanner {
     }
 
     /// 解析所有库文件夹
+    ///
+    /// # Errors
+    ///
+    /// 尚未定位到 Steam 安装路径（内部 `install_info` 为空）时返回 `Err`；
+    /// 读取 `<Steam>/steamapps/libraryfolders.vdf` 失败时同样返回 `Err`。
     pub fn parse_library_folders(&mut self) -> Result<Vec<PathBuf>> {
         let info = self
             .install_info
@@ -220,6 +239,12 @@ impl SteamScanner {
     }
 
     /// 扫描所有 Steam 游戏
+    ///
+    /// # Errors
+    ///
+    /// 解析库文件夹列表失败（见 [`Self::parse_library_folders`]）时返回 `Err`；
+    /// 读取某个库的 `steamapps` 目录失败时同样返回 `Err`。单个
+    /// `appmanifest_*.acf` 解析失败只会跳过该游戏，不会让整体扫描失败。
     pub fn scan_games(&mut self) -> Result<Vec<SteamGame>> {
         let libraries = self.parse_library_folders()?;
         let mut games = Vec::new();
@@ -406,41 +431,6 @@ impl SteamScanner {
         }
 
         None
-    }
-
-    /// 获取 Steam 游戏统计信息
-    pub fn get_library_stats(&self) -> Vec<SteamLibrary> {
-        let info = match &self.install_info {
-            Some(i) => i,
-            None => return Vec::new(),
-        };
-
-        info.libraries
-            .iter()
-            .map(|lib| {
-                let steamapps = lib.join("steamapps");
-                let game_count = if steamapps.is_dir() {
-                    fs::read_dir(&steamapps)
-                        .map(|entries| {
-                            entries
-                                .flatten()
-                                .filter(|e| {
-                                    let name = e.file_name().to_string_lossy().to_lowercase();
-                                    name.starts_with("appmanifest_") && name.ends_with(".acf")
-                                })
-                                .count()
-                        })
-                        .unwrap_or(0)
-                } else {
-                    0
-                };
-
-                SteamLibrary {
-                    path: lib.to_string_lossy().to_string(),
-                    game_count,
-                }
-            })
-            .collect()
     }
 }
 

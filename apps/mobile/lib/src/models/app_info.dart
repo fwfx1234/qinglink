@@ -10,6 +10,22 @@ class LauncherItem {
   final String? iconBase64;
   final List<String> args;
 
+  /// 图标来源（manual/steam/shortcut/executable/image/shell）。
+  /// 为 `shell` 表示只拿到系统默认图标，通常意味着图标不准。
+  final String? iconSource;
+
+  /// 目录扫描提示：可执行文件大小（字节）。
+  final int? sizeBytes;
+
+  /// 目录扫描提示：这个 exe 像是所在目录的主程序。
+  final bool recommended;
+
+  /// 在「常用（我的库）」中。由服务端拥有，因此换手机也一致。
+  final bool favorite;
+
+  /// 置顶到手机首页。
+  final bool pinned;
+
   const LauncherItem({
     required this.id,
     required this.name,
@@ -19,7 +35,16 @@ class LauncherItem {
     required this.source,
     this.iconBase64,
     this.args = const [],
+    this.iconSource,
+    this.sizeBytes,
+    this.recommended = false,
+    this.favorite = false,
+    this.pinned = false,
   });
+
+  /// 只拿到系统默认图标时，图标几乎必然与程序不符。
+  bool get iconLooksWrong =>
+      iconSource == null || iconSource == 'shell' || iconSource == 'none';
 
   factory LauncherItem.fromJson(Map<String, dynamic> json) => LauncherItem(
     id: json['id'] as String,
@@ -29,12 +54,87 @@ class LauncherItem {
     category: json['category'] as String? ?? 'Application',
     source: json['source'] as String? ?? 'Unknown',
     iconBase64: json['icon_base64'] as String?,
+    iconSource: json['icon_source'] as String?,
+    sizeBytes: (json['size_bytes'] as num?)?.toInt(),
+    recommended: json['recommended'] as bool? ?? false,
+    favorite: json['favorite'] as bool? ?? false,
+    pinned: json['pinned'] as bool? ?? false,
     args:
         (json['args'] as List<dynamic>?)
             ?.map((value) => value.toString())
             .toList() ??
         const [],
   );
+
+  /// 服务端改了标记后本地先更新，避免整页重拉带来的闪烁。
+  LauncherItem copyWith({bool? favorite, bool? pinned, String? name, List<String>? args}) =>
+      LauncherItem(
+        id: id,
+        name: name ?? this.name,
+        originalName: originalName,
+        executablePath: executablePath,
+        category: category,
+        source: source,
+        iconBase64: iconBase64,
+        args: args ?? this.args,
+        iconSource: iconSource,
+        sizeBytes: sizeBytes,
+        recommended: recommended,
+        favorite: favorite ?? this.favorite,
+        pinned: pinned ?? this.pinned,
+      );
+}
+
+/// 单个条目可选的图标文件（来自 PC 上的实际文件）。
+class IconCandidate {
+  final String path;
+
+  /// executable | shortcut | shortcut_icon | image
+  final String kind;
+  final int sizeBytes;
+
+  const IconCandidate({
+    required this.path,
+    required this.kind,
+    required this.sizeBytes,
+  });
+
+  factory IconCandidate.fromJson(Map<String, dynamic> json) => IconCandidate(
+    path: json['path'] as String? ?? '',
+    kind: json['kind'] as String? ?? 'image',
+    sizeBytes: (json['size_bytes'] as num?)?.toInt() ?? 0,
+  );
+
+  String get kindLabel => switch (kind) {
+    'executable' => '程序本体',
+    'shortcut' => '快捷方式',
+    'shortcut_icon' => '快捷方式图标',
+    'image' => '图片文件',
+    _ => kind,
+  };
+}
+
+/// 重新解析图标的结果。
+class IconUpdateResult {
+  final String id;
+  final String? iconBase64;
+  final String source;
+  final String? iconPath;
+
+  const IconUpdateResult({
+    required this.id,
+    this.iconBase64,
+    required this.source,
+    this.iconPath,
+  });
+
+  factory IconUpdateResult.fromJson(Map<String, dynamic> json) =>
+      IconUpdateResult(
+        id: json['id'] as String? ?? '',
+        iconBase64: json['icon_base64'] as String?,
+        source: json['source'] as String? ?? 'none',
+        iconPath: json['icon_path'] as String?,
+      );
 }
 
 class LauncherItemPage {

@@ -16,6 +16,32 @@ fn allow_secure_attention() -> bool {
 pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Option<&str>) -> WsServerMessage {
     match req {
         // === System ===
+        WsClientRequest::GetSystemStatus
+        | WsClientRequest::GetMacAddress
+        | WsClientRequest::GetSubnetPrefix
+        | WsClientRequest::GetWakeNetworks => handle_system_query(state, req),
+        WsClientRequest::Shutdown { .. }
+        | WsClientRequest::Sleep { .. }
+        | WsClientRequest::Restart { .. }
+        | WsClientRequest::Logoff
+        | WsClientRequest::Lock => handle_power_request(state, req),
+        WsClientRequest::GetUnlockStatus | WsClientRequest::AutoUnlock { .. } => {
+            handle_unlock_request(state, req)
+        }
+        WsClientRequest::GetLockInputStatus | WsClientRequest::SubmitLockPin { .. } => {
+            handle_lock_input_request(state, req)
+        }
+        WsClientRequest::GetSecureDesktopStatus => handle_secure_desktop_status(state, req),
+        WsClientRequest::SendSecureAscii { .. } | WsClientRequest::SecureAttention => {
+            handle_secure_input_request(state, req)
+        }
+        _ => unreachable!("request routed to the wrong handler"),
+    }
+}
+
+/// 系统状态查询：总览状态、MAC 地址、子网前缀与网络唤醒网卡列表。
+fn handle_system_query(state: &AppState, req: &WsClientRequest) -> WsServerMessage {
+    match req {
         WsClientRequest::GetSystemStatus => {
             let status = state.system_service.get_status();
             WsServerMessage::Response(WsServerResponse::SystemStatus(status))
@@ -39,6 +65,13 @@ pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Op
         WsClientRequest::GetWakeNetworks => WsServerMessage::Response(
             WsServerResponse::WakeNetworks { networks: state.system_service.get_wake_networks() }
         ),
+        _ => unreachable!("request routed to the wrong handler"),
+    }
+}
+
+/// 电源与会话动作：关机、睡眠/休眠、重启、注销与锁定。
+fn handle_power_request(state: &AppState, req: &WsClientRequest) -> WsServerMessage {
+    match req {
         WsClientRequest::Shutdown { force, delay_secs } => {
             match state.system_service.shutdown(*force, *delay_secs) {
                 Ok(()) => WsServerMessage::Response(WsServerResponse::success()),
@@ -75,6 +108,13 @@ pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Op
                 WsServerMessage::Response(WsServerResponse::error("LOCK_FAILED", &e.to_string()))
             }
         },
+        _ => unreachable!("request routed to the wrong handler"),
+    }
+}
+
+/// 解锁状态查询与自动解锁：错误码取自错误消息中 `:` 之前的前缀。
+fn handle_unlock_request(state: &AppState, req: &WsClientRequest) -> WsServerMessage {
+    match req {
         WsClientRequest::GetUnlockStatus => match state.system_service.get_unlock_status() {
             Ok(status) => WsServerMessage::Response(WsServerResponse::UnlockStatus(status)),
             Err(e) => WsServerMessage::Response(WsServerResponse::error(
@@ -93,6 +133,13 @@ pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Op
                 WsServerMessage::Response(WsServerResponse::error(code, &message))
             }
         },
+        _ => unreachable!("request routed to the wrong handler"),
+    }
+}
+
+/// 锁屏输入：查询输入通道状态与提交锁屏 PIN。
+fn handle_lock_input_request(_state: &AppState, req: &WsClientRequest) -> WsServerMessage {
+    match req {
         WsClientRequest::GetLockInputStatus => match crate::platform::get_lock_input_status() {
             Ok(status) => WsServerMessage::Response(WsServerResponse::LockInputStatus(status)),
             Err(error) => WsServerMessage::Response(WsServerResponse::error(
@@ -118,6 +165,13 @@ pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Op
                 }
             }
         }
+        _ => unreachable!("request routed to the wrong handler"),
+    }
+}
+
+/// 安全桌面状态查询：是否已锁定、是否检测到 UAC 以及输入通道是否就绪。
+fn handle_secure_desktop_status(_state: &AppState, req: &WsClientRequest) -> WsServerMessage {
+    match req {
         WsClientRequest::GetSecureDesktopStatus => match crate::platform::get_secure_desktop_status() {
             Ok(status) => {
                 tracing::debug!(
@@ -137,6 +191,13 @@ pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Op
                 ))
             }
         },
+        _ => unreachable!("request routed to the wrong handler"),
+    }
+}
+
+/// 安全桌面输入：发送 ASCII 文本与控制台安全注意序列（Ctrl+Alt+Del）。
+fn handle_secure_input_request(_state: &AppState, req: &WsClientRequest) -> WsServerMessage {
+    match req {
         WsClientRequest::SendSecureAscii { text } => {
             if text.is_empty() || text.len() > 256 || !text.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
                 tracing::warn!(length = text.len(), "rejecting invalid secure ASCII input");
@@ -183,9 +244,6 @@ pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Op
                 }
             }
         }
-
         _ => unreachable!("request routed to the wrong handler"),
     }
 }
-
-

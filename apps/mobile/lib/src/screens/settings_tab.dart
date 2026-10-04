@@ -68,20 +68,6 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     if (mounted) context.showSuccessSnackBar('登录密码已清除');
   }
 
-  Future<void> _runRemoteAction(
-    Future<void> Function() action,
-    String successMessage,
-  ) async {
-    try {
-      await action();
-      if (!mounted) return;
-      context.showSuccessSnackBar(successMessage);
-    } catch (e) {
-      if (!mounted) return;
-      context.showErrorSnackBar('操作失败: $e');
-    }
-  }
-
   Future<void> _wakeOnLan() async {
     final config = ref.read(settingsProvider);
     if (config.macAddress == null || config.macAddress!.isEmpty) {
@@ -147,142 +133,21 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
             ),
-            SettingsGroup(
-              title: '电源',
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: PowerActionButton(
-                        icon: Icons.bedtime_rounded,
-                        label: '睡眠',
-                        onPressed: () =>
-                            confirmPowerAction(context, ref, 'sleep'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: PowerActionButton(
-                        icon: Icons.lock_rounded,
-                        label: '锁屏',
-                        onPressed: () => _runRemoteAction(
-                          () => ref.read(powerControllerProvider).lock(),
-                          '锁屏指令已执行',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: PowerActionButton(
-                        icon: Icons.restart_alt_rounded,
-                        label: '重启',
-                        onPressed: () =>
-                            confirmPowerAction(context, ref, 'restart'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: PowerActionButton(
-                        icon: Icons.power_settings_new_rounded,
-                        label: '关机',
-                        danger: true,
-                        onPressed: () =>
-                            confirmPowerAction(context, ref, 'shutdown'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+            const _PowerActionsGroup(),
+            const SizedBox(height: 12),
+            _UnlockGroup(
+              lockPasswordConfigured: settings.lockPasswordConfigured,
+              onEdit: _editLockPassword,
+              onClear: _clearLockPassword,
             ),
             const SizedBox(height: 12),
-            SettingsGroup(
-              title: 'Windows 解锁',
-              children: [
-                AppListRow(
-                  icon: Icons.password_rounded,
-                  iconTone: AppColors.amber,
-                  title: '登录密码',
-                  subtitle: settings.lockPasswordConfigured
-                      ? '已配置，解锁时自动输入'
-                      : '未配置，将尝试确认解锁；需要 PIN 时请手动输入',
-                  showChevron: true,
-                  onTap: _editLockPassword,
-                ),
-                if (settings.lockPasswordConfigured)
-                  SecondaryButton(
-                    label: '清除已保存密码',
-                    icon: Icons.delete_outline_rounded,
-                    expand: true,
-                    onPressed: _clearLockPassword,
-                  ),
-              ],
-            ),
+            const _LanDeviceGroup(),
             const SizedBox(height: 12),
-            SettingsGroup(
-              title: '局域网电脑',
-              children: [
-                _DiscoveryList(
-                  onSelect: (device) async {
-                    final connected = await ref
-                        .read(connectionProvider.notifier)
-                        .selectDevice(device);
-                    if (!context.mounted) return;
-                    if (!connected &&
-                        ref.read(connectionProvider).errorMessage != null) {
-                      context.showErrorSnackBar(
-                        ref.read(connectionProvider).errorMessage!,
-                      );
-                    } else if (connected) {
-                      context.showSuccessSnackBar('已选择 ${device.name}');
-                    }
-                  },
-                ),
-              ],
-            ),
+            _WakeOnLanGroup(isWakingUp: _isWakingUp, onWake: _wakeOnLan),
             const SizedBox(height: 12),
-            SettingsGroup(
-              title: '远程开机',
-              children: [
-                AppListRow(
-                  icon: Icons.wifi_tethering_rounded,
-                  title: 'Wake-on-LAN',
-                  subtitle: _isWakingUp ? '正在发送…' : '远程唤醒电脑',
-                  showChevron: !_isWakingUp,
-                  trailing: _isWakingUp
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.primary,
-                          ),
-                        )
-                      : null,
-                  onTap: _isWakingUp ? null : _wakeOnLan,
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            SettingsGroup(
-              title: '连接信息',
-              children: [
-                _InfoRow(
-                  label: '状态',
-                  value: authState.isAuthenticated ? '已连接' : '未连接',
-                  valueColor: authState.isAuthenticated
-                      ? AppColors.success
-                      : AppColors.warning,
-                ),
-                _InfoRow(label: 'PC 地址', value: settings.baseUrl ?? '自动发现中'),
-                _InfoRow(label: 'PC 名称', value: settings.pcName ?? '未发现'),
-                _InfoRow(label: 'MAC 地址', value: settings.macAddress ?? '未配置'),
-                _InfoRow(
-                  label: '配对状态',
-                  value: settings.isPaired ? '已配对' : '未配对',
-                  valueColor: settings.isPaired ? AppColors.success : null,
-                  last: true,
-                ),
-              ],
+            _ConnectionInfoGroup(
+              settings: settings,
+              isAuthenticated: authState.isAuthenticated,
             ),
             const SizedBox(height: 16),
             if (authState.isAuthenticated)
@@ -303,6 +168,213 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 执行远程动作并提示结果：成功提示 [successMessage]，失败提示错误原因。
+Future<void> _runRemoteAction(
+  BuildContext context,
+  Future<void> Function() action,
+  String successMessage,
+) async {
+  try {
+    await action();
+    if (!context.mounted) return;
+    context.showSuccessSnackBar(successMessage);
+  } catch (e) {
+    if (!context.mounted) return;
+    context.showErrorSnackBar('操作失败: $e');
+  }
+}
+
+/// 电源分组：睡眠 / 锁屏 / 重启 / 关机四个远程电源动作。
+class _PowerActionsGroup extends ConsumerWidget {
+  const _PowerActionsGroup();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return SettingsGroup(
+      title: '电源',
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: PowerActionButton(
+                icon: Icons.bedtime_rounded,
+                label: '睡眠',
+                onPressed: () => confirmPowerAction(context, ref, 'sleep'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: PowerActionButton(
+                icon: Icons.lock_rounded,
+                label: '锁屏',
+                onPressed: () => _runRemoteAction(
+                  context,
+                  () => ref.read(powerControllerProvider).lock(),
+                  '锁屏指令已执行',
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: PowerActionButton(
+                icon: Icons.restart_alt_rounded,
+                label: '重启',
+                onPressed: () => confirmPowerAction(context, ref, 'restart'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: PowerActionButton(
+                icon: Icons.power_settings_new_rounded,
+                label: '关机',
+                danger: true,
+                onPressed: () => confirmPowerAction(context, ref, 'shutdown'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Windows 解锁分组：登录密码配置入口与清除按钮。
+class _UnlockGroup extends StatelessWidget {
+  const _UnlockGroup({
+    required this.lockPasswordConfigured,
+    required this.onEdit,
+    required this.onClear,
+  });
+
+  final bool lockPasswordConfigured;
+  final VoidCallback onEdit;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return SettingsGroup(
+      title: 'Windows 解锁',
+      children: [
+        AppListRow(
+          icon: Icons.password_rounded,
+          iconTone: AppColors.amber,
+          title: '登录密码',
+          subtitle: lockPasswordConfigured
+              ? '已配置，解锁时自动输入'
+              : '未配置，将尝试确认解锁；需要 PIN 时请手动输入',
+          showChevron: true,
+          onTap: onEdit,
+        ),
+        if (lockPasswordConfigured)
+          SecondaryButton(
+            label: '清除已保存密码',
+            icon: Icons.delete_outline_rounded,
+            expand: true,
+            onPressed: onClear,
+          ),
+      ],
+    );
+  }
+}
+
+/// 局域网电脑分组：展示发现结果并处理选中。
+class _LanDeviceGroup extends ConsumerWidget {
+  const _LanDeviceGroup();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return SettingsGroup(
+      title: '局域网电脑',
+      children: [
+        _DiscoveryList(
+          onSelect: (device) async {
+            final connected = await ref
+                .read(connectionProvider.notifier)
+                .selectDevice(device);
+            if (!context.mounted) return;
+            if (!connected &&
+                ref.read(connectionProvider).errorMessage != null) {
+              context.showErrorSnackBar(
+                ref.read(connectionProvider).errorMessage!,
+              );
+            } else if (connected) {
+              context.showSuccessSnackBar('已选择 ${device.name}');
+            }
+          },
+        ),
+      ],
+    );
+  }
+}
+
+/// 远程开机分组：Wake-on-LAN 入口与发送中的进度状态。
+class _WakeOnLanGroup extends StatelessWidget {
+  const _WakeOnLanGroup({required this.isWakingUp, required this.onWake});
+
+  final bool isWakingUp;
+  final VoidCallback onWake;
+
+  @override
+  Widget build(BuildContext context) {
+    return SettingsGroup(
+      title: '远程开机',
+      children: [
+        AppListRow(
+          icon: Icons.wifi_tethering_rounded,
+          title: 'Wake-on-LAN',
+          subtitle: isWakingUp ? '正在发送…' : '远程唤醒电脑',
+          showChevron: !isWakingUp,
+          trailing: isWakingUp
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.primary,
+                  ),
+                )
+              : null,
+          onTap: isWakingUp ? null : onWake,
+        ),
+      ],
+    );
+  }
+}
+
+/// 连接信息分组：连接状态、PC 地址与名称、MAC 与配对状态。
+class _ConnectionInfoGroup extends StatelessWidget {
+  const _ConnectionInfoGroup({
+    required this.settings,
+    required this.isAuthenticated,
+  });
+
+  final ConnectionConfig settings;
+  final bool isAuthenticated;
+
+  @override
+  Widget build(BuildContext context) {
+    return SettingsGroup(
+      title: '连接信息',
+      children: [
+        _InfoRow(
+          label: '状态',
+          value: isAuthenticated ? '已连接' : '未连接',
+          valueColor: isAuthenticated ? AppColors.success : AppColors.warning,
+        ),
+        _InfoRow(label: 'PC 地址', value: settings.baseUrl ?? '自动发现中'),
+        _InfoRow(label: 'PC 名称', value: settings.pcName ?? '未发现'),
+        _InfoRow(label: 'MAC 地址', value: settings.macAddress ?? '未配置'),
+        _InfoRow(
+          label: '配对状态',
+          value: settings.isPaired ? '已配对' : '未配对',
+          valueColor: settings.isPaired ? AppColors.success : null,
+          last: true,
+        ),
+      ],
     );
   }
 }

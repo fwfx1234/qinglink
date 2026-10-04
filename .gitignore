@@ -1,5 +1,9 @@
 /target/
 /target-uac/
+# 开发期数据目录：约定为 target\qinglink-runtime（已被 /target/ 覆盖）。
+# 下面两条是防御性的，避免有人把 QINGLINK_DATA_DIR 指到仓库根目录时把运行数据提交进来。
+/.qinglink-data/
+/.tmp-data/
 /apps/mobile/.dart_tool/
 /apps/mobile/build/
 /apps/mobile/.flutter-plugins

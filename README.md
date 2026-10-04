@@ -1,111 +1,204 @@
 # 轻联 QingLink
 
-轻联（QingLink）是一套面向可信局域网的 Windows PC 远程控制工具，包含 Windows 桌面伴侣、高权限 Windows 输入服务和 Flutter 手机客户端。手机可发现并配对 PC，之后可远程控制应用、进程、系统、电源及键鼠输入。QingLink 是独立项目，不依赖 QingQi crate，也不向 QingQi 主程序加载远控插件。
+面向可信局域网的 Windows PC 远程控制工具：Windows 桌面伴侣 + 高权限 Windows 输入服务 +
+Flutter 手机客户端。手机发现并配对 PC 后，可远程控制应用、进程、系统电源与键鼠输入。
+QingLink 是独立项目，不依赖 QingQi crate，也不向 QingQi 主程序加载远控插件。
 
-> 项目当前处于开发阶段。远控 HTTP/WebSocket 通信尚未启用 TLS/WSS，应只在可信局域网使用；不要将服务端口暴露到公网。
+> 开发阶段。远控 HTTP/WebSocket 通信尚未启用 TLS/WSS，只应部署在可信局域网，
+> 不要将服务端口暴露到公网。
 
-## 功能概览
+## 结构
 
-- UDP 局域网发现；通过 PC 确认的 6 位验证码配对，长期令牌存放在手机平台安全存储中。
-- PC 应用库、Steam 游戏与自定义目录扫描、应用启动、进程查看与管理。
-- 文件浏览、系统与电源控制、显示/音频设置、鼠标键盘和触控板输入。
-- Windows 服务支持登录前令牌认证及安全桌面输入；新设备配对仍需桌面端确认。
-- 手机端提供 Android/iOS Flutter 应用，并包含可选的本机红外遥控功能（取决于设备能力）。
-
-## 架构
+**数据只有一个所有者：Windows 服务。桌面端与手机都是它的客户端。**
 
 ```text
-Flutter 手机端 (apps/mobile)
-       | UDP 发现 + HTTP 配对 + WebSocket 控制
-       v
-QingLinkService (LocalSystem) <--> Windows 会话输入代理
-       ^
-       | 本机命名管道
-Windows 桌面端 (apps/desktop, GPUI)
-       |
-       +-- qinglink-server: Axum API、控制服务和 Windows 平台适配
-       +-- qinglink-storage: SQLite 路径、迁移和连接池
-
-共享 Rust crate: qinglink-protocol / qinglink-domain / qinglink-discovery
-移动端传输 DTO: apps/mobile/lib/src/protocol
-协议契约与夹具: protocol/
+                    ┌────────────────────────────────────────────┐
+                    │ QingLinkService.exe   LocalSystem Windows 服务│
+                    │ · 全部业务数据（应用目录、重命名、令牌…）      │
+                    │ · 局域网协议 TCP 3721 / 发现 UDP 3723        │
+                    │ · 命名管道：桌面管理通道                       │
+                    └───────┬───────────────────────┬────────────┘
+        命名管道（授权桌面端）  │                       │  TCP/UDP（已配对手机）
+                    ┌───────┴────────────┐   ┌──────┴─────────────┐
+                    │ QingLink.exe        │   │ Flutter 手机端      │
+                    │ · 托盘图标           │   │ · 控制端            │
+                    │ · 本地 Web 服务 3722 │   │ · 不持有业务数据     │
+                    │ · 日志采集与查询     │   └────────────────────┘
+                    └───────┬────────────┘
+                            │ HTTP + WS /api/admin/v1/*
+                    ┌───────┴────────────┐
+                    │ 浏览器管理界面       │
+                    │ Vue 3 SPA（内嵌 exe）│
+                    └────────────────────┘
 ```
 
-Rust workspace 位于仓库根目录。`qinglink-windows` 封装 Windows 系统能力，`qinglink-ui` 提供共享 UI 常量；`qinglink-server` 的非 Windows 平台使用存根实现。线上传输契约以 `protocol/qinglink-v2.schema.json` 为准，细节见 [`protocol/v2.md`](protocol/v2.md)。
+由此推出两条对使用者重要的结论：
 
-默认 TCP 控制端口为 `3721`，UDP 发现端口为 `3723`。`/api/v2/events` 用于控制事件，`/api/v2/input` 用于高频输入。配对请求验证码有效期为 60 秒。
+1. **数据跟随 PC，不跟随控制端。** 应用改名、隐藏、常用（我的库）、首页置顶、图标、
+   已配对设备都存在服务端；换手机、换浏览器、换用户会话，只要连的是同一台 PC，看到的就是
+   同一份数据。手机端只保留连接信息、输入法与红外遥控这类设备相关的本地设置。
+2. **手机是控制端，详细管理在本机。** 应用改名/隐藏/删除/常用属于服务端管理面，由本机
+   Web 界面暴露；桌面端自己不直接读写业务数据库（它对 `%ProgramData%\QingLink` 没有权限，
+   这正是结构上的强制）。
+
+完整的模块划分、线程模型与设计取舍见 [`docs/architecture.md`](docs/architecture.md)。
+
+## 端口与数据
+
+| 端口 | 用途 |
+| --- | --- |
+| 3722 | 桌面端本地管理界面（**仅回环**，无认证；安全性来自只允许本机访问 + 服务的管道授权） |
+| 3721 | 服务对外协议：`/api/v2/events` 控制、`/api/v2/input` 高频输入 |
+| 3723 | UDP 局域网发现 |
+
+| 数据 | 位置 |
+| --- | --- |
+| 应用目录、重命名、隐藏、常用与首页置顶、图标、已配对设备 | `%ProgramData%\QingLink\qinglink.db`（服务所有，ACL 仅 SYSTEM + 管理员） |
+| 桌面端设置 | `%LOCALAPPDATA%\QingLink\qinglink.db` |
+| 手机端连接信息、输入法/触控板设置、快捷键方案、红外遥控 | 手机本地（令牌在平台安全存储） |
+| 日志文本 | `%LOCALAPPDATA%\QingLink\logs\qinglink.<日期>.log`（按天轮转，长期保留） |
+
+`QINGLINK_DATA_DIR` 可覆盖数据目录，用于测试或便携部署。
+
+## 功能
+
+- UDP 局域网发现；由 PC 确认的 6 位验证码配对（60 秒失效，桌面锁屏时不下发），
+  长期令牌存放在手机平台安全存储中。
+- 应用库、Steam 游戏与自定义目录扫描、启动、进程查看与管理；扫描按"每个目录一个主程序"
+  给出推荐项，手机可逐个屏蔽并在「已屏蔽」里恢复。
+- **图标按条目管理**：可逐条重扫或指定图标文件，来源会一并记录（`shell` 表示只拿到默认
+  图标），落库前统一规范为 128×128；换图标立即对所有客户端生效。
+- **常用（我的库）归服务端**：手机「库 → 常用」、手机首页置顶与管理端「常用」是同一份
+  数据，升级时会把旧版本存在手机上的列表自动迁移。
+- **本机 Web 管理界面**：左侧导航 + 大留白布局，浅色/深色双主题；链路诊断与一键修复、
+  配对确认、应用目录管理（新增/启动/重命名/隐藏/删除/常用/置顶/批量操作/重扫图标、
+  逐条目详情抽屉；选文件由桌面端弹出**原生选择窗口**，不必手输路径）、设备撤销、
+  日志查看与下载、诊断包导出、桌面端设置；长说明收进 `?` tooltip，不占版面。
+- **系统托盘**：打开 QingLink、重启服务、保持唤醒、退出；直接注册 Win32 通知区域图标，
+  explorer 重启后自动重新注册。
+- **日志子系统**：内存环形缓冲（5000 条，供界面查询与实时推送）+ 按天轮转的文本日志；
+  **日志不写数据库**。
+- 文件浏览、系统与电源控制、显示/音频设置、鼠标键盘与触控板输入。
+- Windows 服务支持登录前令牌认证与安全桌面输入；新设备配对仍需桌面端确认。
+- 手机端为 Android/iOS Flutter 应用，含可选的本机红外遥控功能。
 
 ## 环境要求
 
-- Windows 10/11 x64 用于运行桌面端、输入服务以及完整系统控制功能。
-- Rust stable（支持 Rust 2024 edition）和 Cargo。
-- Flutter/Dart（SDK 约束见 [`apps/mobile/pubspec.yaml`](apps/mobile/pubspec.yaml)）；Android 或 iOS 构建还需对应平台 SDK。
-- 发布构建需准备签名后的 `QingLinkService.exe`。正式发布建议使用 Authenticode 签名。
+- Windows 10/11 x64（桌面端、输入服务与完整系统控制功能）。
+- Rust stable（需支持 edition 2024）与 Cargo。
+- Node.js 20+（仅构建 Web 界面；已有 `web-ui/dist` 时非必需）。
+- Windows SDK / Visual C++ 构建工具（`rusqlite` 使用 `bundled`，需要 C 编译器）。
+- Flutter/Dart（约束见 [`apps/mobile/pubspec.yaml`](apps/mobile/pubspec.yaml)）；
+  Android 或 iOS 构建还需对应平台 SDK。
+- 发布构建需准备签名后的 `QingLinkService.exe`（建议 Authenticode 签名）。
 
-## 开发
-
-从仓库根目录运行 Windows 桌面端（服务默认监听端口 `3721`）：
+## 快速开始
 
 ```powershell
-cargo run -p qinglink-desktop --bin QingLink
+# 仓库根目录；会自动构建并内嵌 Web 界面
+cargo run --bin QingLink
 ```
 
-开发版缺少输入服务发布资源时仍可启动，但安全输入安装入口不可用。运行移动端：
+debug 构建是 console 子系统进程，日志默认按 `info` 输出到运行它的终端，同时写入
+`%LOCALAPPDATA%\QingLink\logs\`；release 构建是无控制台的纯托盘形态。启动后监听
+<http://127.0.0.1:3722>，托盘左键单击即打开界面。
 
 ```powershell
-cd apps/mobile
+$env:RUST_LOG = 'debug'                   # 或 $env:QINGLINK_LOG_LEVEL = 'debug'
+target\debug\QingLink.exe --self-check    # 托盘/日志/服务体检，回答"托盘图标为什么看不见"
+target\debug\QingLink.exe --check-service # 只探一次服务命名管道并打印完整错误链
+```
+
+移动端：
+
+```powershell
+cd apps\mobile
 flutter pub get
 flutter run
 ```
 
-常用检查：
+使用流程、托盘图标看不见与"服务未连接"的排障、完整性级别、自检字段判读、命名管道被受限
+环境拒绝等，见 [`docs/development.md`](docs/development.md) 第 4、5 节。
+
+## 开发与校验
+
+改完代码按 [`AGENTS.md`](AGENTS.md) §6 的静态检查收口（本仓库不新增测试代码、不运行测试套件）：
 
 ```powershell
-# 仓库根目录
-cargo fmt --check
-cargo test --workspace
+cargo fmt --all --check
+cargo check --workspace --all-targets
 
-# apps/mobile 目录
-flutter analyze
-flutter test
+# 文件规模：本仓库没有校验脚本（AGENTS.md §7），按 §2.3 的清单与 §2.4 的原生命令自查
+(Get-Content <file>).Count
+
+# 前端
+cd apps\desktop\web-ui
+npm install
+npm run typecheck  # 只做类型检查
+npm run build      # vue-tsc 类型检查 + vite build
+npm run dev        # 开发服务器：默认 5173，/api 与 ws 已代理到桌面端 3722（需先跑桌面端）
+
+# 移动端
+cd apps\mobile; flutter analyze
 ```
 
-`cargo clippy --workspace --all-targets -- -D warnings` 目前不是通过状态：仓库已有 lint/documentation warning，严格模式会将其作为错误处理。不要将该命令的失败误认为测试失败。
+**本仓库没有构建脚本**：跨语言编排全部由 [`apps/desktop/build.rs`](apps/desktop/build.rs) 承担
+（等价于 Tauri 的 `tauri.conf.json` 加 CLI），日常只用 `cargo` / `npm` / `flutter` 的原生命令。
+规则见 [`AGENTS.md`](AGENTS.md) §7。
 
-## 使用
+前端构建有两条路径：标准 `vite build` 与 `npm run build:fallback`（无子进程的 Rollup
+构建，用于受限环境阻止 esbuild 派生服务进程的情形），`build.rs` 会依次尝试。细节与排障见
+[`docs/development.md`](docs/development.md)。
 
-1. 在 Windows PC 启动 QingLink 桌面端。需要服务托管的输入和登录前控制时，在桌面端的服务设置中安装/启动 QingLinkService，并按 UAC 提示确认。
-2. 在手机启动 QingLink，选择发现到的 PC 并发起配对。
-3. 在 PC 桌面端确认手机请求，将显示的 6 位验证码输入手机。验证码在 60 秒后失效。
-4. 配对成功后选择该 PC 即可使用控制功能；PC 更换局域网地址后，客户端会根据稳定 PC ID 更新地址。
+**改了 `services/` 或 `crates/` 之后，桌面端不会自动带上新的服务端。** `QingLinkService.exe`
+是内嵌资源，必须重建并刷新它，"修复服务"才会真正升级：
+
+```powershell
+# 1. 退出正在运行的桌面端（它占着 target\debug\QingLink.exe）
+# 2. 重建服务并刷新内嵌资源
+cargo build -p qinglink-service --bin QingLinkService
+Copy-Item .\target\debug\QingLinkService.exe .\apps\desktop\assets\input\QingLinkService.exe -Force
+# 3. 最后重建桌面端（build.rs 会在资源比服务源码旧时给出 cargo:warning）
+cargo build -p qinglink-desktop --bin QingLink
+# 4. 启动后在界面「诊断」页点「修复服务（升级）」，确认 UAC
+```
+
+顺序不可颠倒：服务的安装会登记桌面端可执行文件的 SHA256，先装服务再重建桌面端会让登记
+失效，界面会提示"桌面端未授权"，需要再修复一次。
 
 ## 发布构建
 
-正式构建前，将签名后的 `QingLinkService.exe` 放到 `apps/desktop/assets/input/`。仓库提供的脚本会构建服务、复制发布资源并构建桌面端：
+本仓库不提供发布脚本（[`AGENTS.md`](AGENTS.md) §7），发布就是下面四条命令：
 
 ```powershell
-.\scripts\build-release.ps1
+# 1. 构建服务
+cargo build --release -p qinglink-service --bin QingLinkService
+
+# 2. 对服务做 Authenticode 签名，并复核结果（Status 必须是 Valid）
+signtool sign /fd SHA256 /tr <时间戳服务器> /td SHA256 /a .\target\release\QingLinkService.exe
+Get-AuthenticodeSignature .\target\release\QingLinkService.exe
+
+# 3. 刷新桌面端的发布资源
+Copy-Item .\target\release\QingLinkService.exe .\apps\desktop\assets\input\QingLinkService.exe -Force
+
+# 4. 构建桌面端，缺资源直接失败
+$env:QINGLINK_REQUIRE_INPUT_ASSETS = '1'
+cargo build --release -p qinglink-desktop --bin QingLink
 ```
 
-资源检查可单独运行：
+产物 `target\release\QingLink.exe` 已内嵌 Web 界面，单文件即可分发；服务安装到
+`%ProgramFiles%\QingLink\Input`，安装时会请求 UAC。签名状态可用
+`Get-AuthenticodeSignature .\apps\desktop\assets\input\QingLinkService.exe` 检查。
 
-```powershell
-.\scripts\verify-input-assets.ps1
-```
+## 文档索引
 
-桌面端服务安装会请求 UAC，并将服务安装到 `%ProgramFiles%\QingLink\Input`。不要在不可信网络暴露服务；协议 v2 当前使用 HTTP/WebSocket 明文传输。
-
-## 项目进度
-
-- 已实现 Rust Windows 桌面端、Windows 输入服务、Flutter 手机端、v2 发现/配对/控制协议及 SQLite 存储。
-- Rust workspace 单元、集成及协议夹具测试已覆盖发现以外的核心服务行为；少数会启动或终止真实进程的功能测试默认忽略。
-- 最近一次检查：`cargo fmt --check`、`cargo test --workspace`、`flutter analyze` 和 `flutter test` 均通过；Rust 测试 99 项通过、4 项忽略，Flutter 测试 78 项通过。
-- 发布/签名、真实 Windows 服务安装、安全桌面交互及各手机设备上的端到端验证仍需在目标环境确认。
-
-## 协议与维护资料
-
-- [`protocol/v2.md`](protocol/v2.md)：API、发现、配对和安全约定。
-- [`protocol/README.md`](protocol/README.md)：跨语言 DTO 与 Schema/fixture 验证说明。
-- [`apps/mobile/README.md`](apps/mobile/README.md)：移动端配对与开发说明。
-
-如需从旧 QingQi 安装迁移，可单独审阅并以管理员身份运行 [`scripts/remove-legacy-qingqi-input.ps1`](scripts/remove-legacy-qingqi-input.ps1)。该脚本会停止/删除旧服务并卸载匹配的旧驱动；请确认目标机器和驱动后再执行。
+| 文档 | 内容 |
+| --- | --- |
+| [`AGENTS.md`](AGENTS.md) | **工程约束唯一权威**：大文件禁令与行数上限、文档同步映射、测试策略、完成定义 |
+| [`docs/architecture.md`](docs/architecture.md) | **结构总纲**：组件、数据归属、桌面端进程模型、托盘与日志子系统、关键时序 |
+| [`docs/web-api.md`](docs/web-api.md) | **桌面管理接口契约**：REST 端点、WebSocket 事件、错误码、前端约束 |
+| [`docs/development.md`](docs/development.md) | 构建、运行、`--self-check` 自检、排障、改动约定 |
+| [`protocol/v2.md`](protocol/v2.md) | 移动端对外协议（配对、发现、控制） |
+| [`protocol/README.md`](protocol/README.md) | 跨语言 DTO 与 Schema/fixture 验证说明 |
+| [`apps/mobile/README.md`](apps/mobile/README.md) | 移动端配对与开发说明 |
+| [`.opencode/rules/`](.opencode/rules) | Rust / Dart / 架构的分语言编码规范细节 |

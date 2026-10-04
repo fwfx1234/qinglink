@@ -1,3 +1,5 @@
+//! 校验 Rust 侧配对类型与 `protocol/fixtures` 中共享 JSON 夹具保持一致。
+
 use qinglink_protocol::{PairingConfirm, PairingRequest, PairingTokenResponse};
 
 #[test]

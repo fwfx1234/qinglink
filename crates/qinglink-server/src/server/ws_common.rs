@@ -14,12 +14,14 @@ pub const AUTH_TIMEOUT_SECS: u64 = 10;
 /// 服务端心跳状态机，跟踪连续丢失的 Pong 数。
 ///
 /// `events` 与 `input` 两个 WebSocket 通道共用该逻辑，避免重复实现。
+#[derive(Debug)]
 pub struct Heartbeat {
     interval: Interval,
     missed_pongs: u32,
 }
 
 impl Heartbeat {
+    /// 按 [`HEARTBEAT_INTERVAL_SECS`] 创建心跳，并消耗首次立即到期的 tick。
     pub async fn start() -> Self {
         let mut interval = tokio::time::interval(Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
         interval.tick().await;
@@ -34,6 +36,7 @@ impl Heartbeat {
         self.interval.tick()
     }
 
+    /// 收到 Pong 后清零丢失计数。
     pub fn on_pong(&mut self) {
         self.missed_pongs = 0;
     }

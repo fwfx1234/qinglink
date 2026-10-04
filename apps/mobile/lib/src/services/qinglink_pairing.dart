@@ -7,7 +7,6 @@ class QingLinkPairing {
     : _transport = transport ?? DartHttpTransport();
 
   final HttpTransport _transport;
-  Map<String, dynamic>? lastAutoConfirm;
 
   Future<void> cancelAt(String baseUrl, String requestId) async {
     try {
@@ -28,11 +27,8 @@ class QingLinkPairing {
       '$baseUrl/api/v2/pairing/requests',
       PairingRequestDto(deviceId: deviceId, deviceName: deviceName).toJson(),
     );
-    if (data.containsKey('token')) {
-      lastAutoConfirm = data;
-      return '';
-    }
-    lastAutoConfirm = null;
+    // A request never authorizes a device.  The token is returned only by a
+    // separate PIN confirmation and is intentionally not accepted here.
     final response = PairingRequestResponseDto.fromJson(data);
     if (response.requestId.isEmpty) {
       throw const QingLinkPairingException('PAIRING_FAILED', 'PC 未返回配对请求标识');
@@ -75,6 +71,10 @@ class QingLinkPairing {
       return (decoded['data'] as Map<String, dynamic>?) ?? decoded;
     } on QingLinkPairingException {
       rethrow;
+    } on ServerFailure catch (error) {
+      // The transport already decoded the server error envelope, so keep the
+      // stable protocol code instead of degrading it to a network failure.
+      throw QingLinkPairingException(error.code, error.message);
     } on QingLinkFailure catch (error) {
       throw QingLinkPairingException('PAIRING_NETWORK_ERROR', error.message);
     }
@@ -88,5 +88,5 @@ class QingLinkPairingException implements Exception {
   final String message;
 
   @override
-  String toString() => '$code: $message';
+  String toString() => message;
 }

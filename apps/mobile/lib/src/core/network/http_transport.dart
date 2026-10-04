@@ -38,6 +38,10 @@ final class DartHttpTransport implements HttpTransport {
       request.write(jsonEncode(body));
       final response = await request.close().timeout(timeout);
       final raw = await response.transform(utf8.decoder).join().timeout(timeout);
+      final serverFailure = _decodeErrorEnvelope(raw, response.statusCode);
+      if (serverFailure != null) {
+        throw serverFailure;
+      }
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw NetworkFailure('HTTP 请求失败：${response.statusCode} $uri');
       }
@@ -85,6 +89,33 @@ final class DartHttpTransport implements HttpTransport {
 
   void _ensureOpen() {
     if (_closed) throw StateError('HTTP transport has been closed');
+  }
+
+  /// Decodes the standard QingLink error envelope from a non-2xx response.
+  ///
+  /// Returns `null` when the status is successful or the body is not the
+  /// envelope (for example a framework-generated plain-text rejection), so the
+  /// caller can fall back to a generic [NetworkFailure].
+  static ServerFailure? _decodeErrorEnvelope(String raw, int statusCode) {
+    if (statusCode >= 200 && statusCode < 300) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map || decoded['ok'] != false) return null;
+      final error = decoded['error'];
+      if (error is! Map) return null;
+      final code = error['code'];
+      if (code is! String || code.isEmpty) return null;
+      final message = error['message'];
+      return ServerFailure(
+        message is String && message.isNotEmpty
+            ? message
+            : '请求失败：$statusCode',
+        code: code,
+        statusCode: statusCode,
+      );
+    } on FormatException {
+      return null;
+    }
   }
 
   void close() {

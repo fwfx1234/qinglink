@@ -1,182 +1,97 @@
-#![cfg_attr(windows, windows_subsystem = "windows")]
+// A release build is the tray-only product: it must never flash a console
+// window. A debug build is the opposite: `cargo run --bin QingLink` has to show
+// its logs in the launching terminal, which only works when the process is a
+// console-subsystem image that inherits the parent's standard handles.
+//
+// The earlier approach — a GUI-subsystem image in every build, plus an explicit
+// `AttachConsole(ATTACH_PARENT_PROCESS)` and `SetStdHandle(CONOUT$)` — was
+// measured to lose every record: re-pointing the standard handles to the console
+// discards the pipes `cargo run` reads, and in a low-integrity session both
+// `AttachConsole` and `CreateFileW("CONOUT$")` fail, leaving stderr unusable.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+//! QingLink 桌面端伴随程序。
+//!
+//! 进程只做四件事，别的都不做：
+//!
+//! 1. 持有通知区域图标——没有打开浏览器时，这是触达它的唯一入口；
+//! 2. 在 `127.0.0.1:3722` 上提供管理界面及其 API；
+//! 3. 采集、推流并持久化日志；
+//! 4. 保持 `QingLinkService` 运行，并通过已授权的本地命名管道把管理命令转发给它。
+//!
+//! 所有业务数据都在服务里。见 `docs/architecture.md`。
+//!
+//! # 模块划分
+//!
+//! 本文件只保留入口、进程起始时刻与启动顺序的接线，实现按职责分在下面几个
+//! 子模块里：
+//!
+//! - [`cli`]：命令行模式分发（提权辅助进程、`--check-service` 与正常启动）；
+//! - [`bootstrap`]：启动装配（数据目录 → 日志 → 数据库 → Web → 托盘 → 租约）；
+//! - [`main_loop`]：主循环（HostCommand、托盘事件、tooltip 同步、消息泵）；
+//! - [`exit`]：退出序列（通知浏览器 → 停 IPC → 租约 → 数据库 → 日志 flush）；
+//! - [`startup_trace`]：`QINGLINK_STARTUP_TRACE` 面包屑；
+//! - [`admin_ui`]：管理界面端口 / URL 与"交给默认浏览器"。
+
+mod admin_ui;
+mod bootstrap;
+mod cli;
+mod exit;
 mod input_install;
 mod logging;
+mod main_loop;
+mod preferences;
+mod self_check;
+mod service;
 mod service_lifecycle;
-mod service_runtime;
+mod startup;
+mod startup_trace;
 mod tray;
-mod view;
+mod web;
 
-use std::sync::{Arc, Mutex};
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use anyhow::Result;
-use gpui::{
-    App, AppContext, Bounds, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowKind, WindowOptions, px, size,
-};
-use qinglink_server::{AppState, RemoteControlService, server::pairing};
-use qinglink_storage::{
-    AppPaths,
-    database::{DatabaseService, DatabaseSpec},
-};
-use qinglink_windows::single_instance::{SingleInstance, activate_existing};
 
-use crate::{service_runtime::ServiceRuntime, tray::TrayController, view::RemoteDashboard};
+use crate::startup_trace::trace_step;
 
-fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    if let Some(result) = input_install::handle_helper_command(&args) {
-        return result;
+/// When `main` started, as opposed to when the web server did.
+///
+/// `/health` reports uptime so a caller can tell "just started" from "running a
+/// while". Measuring from web-server creation was wrong: migration, the secure
+/// input probe, the `--restart-parent` wait and the tray probe all happen
+/// first, so a healthy process reported a few seconds of uptime.
+static STARTED_AT: OnceLock<Instant> = OnceLock::new();
+
+fn main() {
+    if let Err(error) = run() {
+        // The GUI subsystem does not reliably show Rust's implicit Result error
+        // report. Keep the concrete startup cause visible in the launching
+        // terminal, where `cargo run` users can act on it.
+        eprintln!("QingLink 启动失败：{error:#}");
+        std::process::exit(1);
     }
-    let paths = AppPaths::resolve()?;
-    let (_log_guard, log_switch) = logging::initialize(&paths)?;
-    qinglink_windows::session::ensure_supported()?;
+}
 
-    let Some(_instance) = SingleInstance::acquire()? else {
-        activate_existing()?;
+/// 装配顺序：命令行分流 → 启动序列 → 主循环 → 退出序列。
+fn run() -> Result<()> {
+    let started_at = *STARTED_AT.get_or_init(Instant::now);
+    trace_step(started_at, "main entered");
+
+    let arguments: Vec<String> = std::env::args().collect();
+
+    let options = match cli::classify(&arguments, started_at)? {
+        cli::Preflight::Done(result) => return result,
+        cli::Preflight::Run(options) => options,
+    };
+
+    // 已有实例在运行或诊断命令已完成时，装配不会返回桌面端。
+    let Some(mut desktop) = bootstrap::start(&options, started_at)? else {
         return Ok(());
     };
 
-    let database = Arc::new(DatabaseService::new(paths.clone()));
-    database.migrate_application_database()?;
-    database.register_database(DatabaseSpec::app("qinglink/data", "qinglink.db"))?;
-    database.register_database(DatabaseSpec::app("qinglink/scanner", "qinglink.db"))?;
-    let service = RemoteControlService::new(paths.clone());
-    let state = AppState::new(service, Arc::clone(&database));
-
-    // 环境变量（QINGLINK_LOG_LEVEL/RUST_LOG）优先，否则使用上次界面里保存的开关。
-    let debug_logging = if std::env::var_os("QINGLINK_LOG_LEVEL").is_some()
-        || std::env::var_os("RUST_LOG").is_some()
-    {
-        log_switch.is_debug()
-    } else {
-        state
-            .app_db
-            .lock()
-            .ok()
-            .and_then(|database| database.get_setting("logging.debug").ok().flatten())
-            .is_some_and(|value| value == "true")
-    };
-    log_switch.set_debug(debug_logging);
-    tracing::info!(debug_logging, "日志级别已应用");
-    let silent = args.contains(&"--silent".to_string());
-    let startup = args.contains(&"--startup".to_string());
-    tracing::info!(silent, startup, "桌面端启动");
-
-    let mut lifecycle_manager = service_lifecycle::ServiceLifecycleManager::new();
-    let lifecycle_result = if silent || startup {
-        lifecycle_manager.try_start()
-    } else {
-        lifecycle_manager.start()
-    };
-    if let Err(error) = lifecycle_result {
-        tracing::warn!(%error, "服务生命周期管理器启动失败，继续运行");
-    }
-
-    // Start the desktop-hosted server only after the Windows service has had
-    // a chance to claim port 3721. This ordering prevents both implementations
-    // from racing for the same listener during startup.
-    let pairing_events = pairing::subscribe(&state);
-    let pairing_snapshot = Arc::new(Mutex::new(None));
-    tracing::info!("开始初始化桌面端服务运行时");
-    let runtime =
-        ServiceRuntime::start(state.clone(), pairing_events, Arc::clone(&pairing_snapshot));
-    tracing::info!("桌面端服务运行时已初始化");
-    let persisted_paused = state
-        .app_db
-        .lock()
-        .ok()
-        .and_then(|database| database.get_setting("service.paused").ok().flatten())
-        .is_some_and(|value| value == "true");
-    if persisted_paused {
-        let _ = runtime
-            .desired
-            .send(service_runtime::DesiredServiceState::Paused);
-    }
-
-    let autostart = qinglink_windows::autostart::is_enabled().unwrap_or(false);
-    let silent_launch = silent || startup;
-    tracing::info!("开始初始化 GPUI 应用");
-    let app = gpui::Application::new();
-    tracing::info!("GPUI 应用已初始化，即将进入 Windows 消息循环");
-    let startup_error = Arc::new(Mutex::new(None::<String>));
-    let error_slot = Arc::clone(&startup_error);
-    let dashboard_state = state;
-    let dashboard_status = Arc::clone(&runtime.status);
-    let desired_service = runtime.desired.clone();
-    let tray_paused = persisted_paused;
-    let tray_autostart = autostart;
-    app.run(move |cx: &mut App| {
-        tracing::info!("GPUI 启动回调已运行");
-        let show_on_start = !silent_launch;
-        let tray = match TrayController::new(tray_paused, tray_autostart) {
-            Ok(tray) => {
-                // `TrayIconBuilder::build()` 不会上报 `NIM_ADD` 失败，必须显式探测
-                // Shell 是否真的登记了这个图标，否则"创建成功"只是假阳性。
-                tracing::info!(
-                    registration = %tray::describe_registration(tray.registration()),
-                    "托盘控制器已在 Windows 消息循环中创建"
-                );
-                Some(tray)
-            }
-            Err(error) => {
-                tracing::warn!(%error, "托盘控制器初始化失败，桌面端将继续运行");
-                None
-            }
-        };
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(820.0), px(560.0)),
-                cx,
-            ))),
-            titlebar: Some(gpui::TitlebarOptions {
-                title: Some("轻联 QingLink".into()),
-                ..Default::default()
-            }),
-            focus: show_on_start,
-            show: show_on_start,
-            window_background: WindowBackgroundAppearance::Opaque,
-            window_decorations: Some(WindowDecorations::Server),
-            kind: WindowKind::Normal,
-            ..Default::default()
-        };
-        match cx.open_window(options, move |window, cx| {
-            cx.new(|cx| {
-                RemoteDashboard::new(
-                    dashboard_state,
-                    pairing_snapshot,
-                    dashboard_status,
-                    desired_service,
-                    autostart,
-                    show_on_start,
-                    tray,
-                    log_switch,
-                    window,
-                    cx,
-                )
-            })
-        }) {
-            Ok(_) => tracing::info!("GPUI 主窗口已创建"),
-            Err(error) => {
-                if let Ok(mut slot) = error_slot.lock() {
-                    *slot = Some(error.to_string());
-                }
-                cx.quit();
-            }
-        }
-    });
-
-    tracing::info!("GPUI Windows 消息循环已退出");
-
-    // The keep-awake toggle is intentionally session-scoped. Release the
-    // execution request before the desktop process finishes shutting down.
-    let _ = qinglink_windows::power::set_keep_awake(false);
-    runtime.shutdown()?;
-    let _ = lifecycle_manager.shutdown();
-    database.shutdown();
-    if let Some(error) = startup_error.lock().ok().and_then(|slot| slot.clone()) {
-        anyhow::bail!(error);
-    }
+    let request = main_loop::run(&mut desktop);
+    exit::shutdown(desktop, request);
     Ok(())
 }

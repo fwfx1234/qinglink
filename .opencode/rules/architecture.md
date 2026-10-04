@@ -7,53 +7,46 @@
 ## 1. Crate 依赖图
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        应用层                                     │
-│                                                                  │
-│  ┌──────────────────┐    ┌────────────────────────────────────┐ │
-│  │  apps/desktop    │    │  services/qinglink-service          │ │
-│  │  (GPUI + Axum)   │    │  (Windows Service)                  │ │
-│  └────────┬─────────┘    └──────────┬─────────────────────────┘ │
-│           │                         │                            │
-├───────────┼─────────────────────────┼────────────────────────────┤
-│           │       核心层             │                            │
-│  ┌────────▼─────────────────────────▼──────────────────────────┐ │
-│  │                    crates/qinglink-server                    │ │
-│  │              (Axum HTTP/WS, 认证, 服务)                      │ │
-│  └────────┬─────────────────────────┬─────────────────────────┘ │
-│           │                         │                            │
-│  ┌────────▼──────────┐    ┌─────────▼────────────────────────┐  │
-│  │ qinglink-storage  │    │ qinglink-windows                  │ │
-│  │ (SQLite + repos)  │    │ (audio, input, display, etc.)    │ │
-│  └────────┬──────────┘    └─────────┬────────────────────────┘  │
-│           │                         │                            │
-├───────────┼─────────────────────────┼────────────────────────────┤
-│           │    领域层                │                            │
-│  ┌────────▼─────────────────────────▼──────────────────────────┐ │
-│  │  qinglink-protocol  │  qinglink-domain                     │ │
-│  │  (DTOs, schemas)    │  (状态机, 能力协商)                   │ │
-│  └─────────────────────┴──────────────────────────────────────┘ │
-│                           │                                      │
-│                  ┌────────▼────────┐                             │
-│                  │ qinglink-       │                             │
-│                  │ discovery       │                             │
-│                  │ (mDNS)          │                             │
-│                  └─────────────────┘                             │
-└─────────────────────────────────────────────────────────────────┘
+叶子 crate（不依赖任何内部 crate）：
+    qinglink-protocol      线型 DTO 与 schema 契约
+    qinglink-domain        配对状态机与能力协商
+    qinglink-storage       SQLite 持久化与路径解析
+
+中间层：
+    qinglink-discovery  ──▶ qinglink-protocol
+    qinglink-windows    ──▶ qinglink-protocol, qinglink-domain
+
+核心层：
+    qinglink-server     ──▶ qinglink-protocol, qinglink-domain,
+                            qinglink-storage, qinglink-windows
+
+应用层：
+    apps/desktop            ──▶ qinglink-protocol, qinglink-storage, qinglink-windows
+    services/qinglink-service ──▶ qinglink-protocol, qinglink-discovery,
+                                  qinglink-server, qinglink-storage, qinglink-windows
 ```
+
+**apps/desktop 不依赖 `qinglink-server`**：桌面端自带 Web 管理面，服务端逻辑只在
+`qinglink-service` 进程里运行。箭头方向即允许的依赖方向，反向依赖一律禁止。
 
 ### 依赖规则（严格）
 
-| Crate | 可依赖 | 不可依赖 |
+下表按各 crate 真实 `Cargo.toml` 的内部依赖（`path = ...`）列出，**这张表以
+`Cargo.toml` 为准**；新增内部依赖必须同时更新本表。
+
+| Crate | 可依赖（内部 crate） | 不可依赖 |
 |-------|--------|---------|
-| `qinglink-protocol` | （叶子 crate） | 任何内部 crate |
-| `qinglink-domain` | `qinglink-protocol` | server, storage, windows |
-| `qinglink-storage` | `qinglink-protocol` | server, domain, windows |
-| `qinglink-discovery` | `qinglink-protocol` | server, storage, domain |
-| `qinglink-windows` | `qinglink-protocol`, `qinglink-domain` | server, storage |
-| `qinglink-server` | 其下所有 crate | apps/*, services/* |
-| `apps/desktop` | `qinglink-server`, `qinglink-storage` | `qinglink-service`, 直接访问 `qinglink-windows` |
-| `services/qinglink-service` | `qinglink-protocol`, `qinglink-windows` | `qinglink-server`, `qinglink-storage` |
+| `qinglink-protocol` | 无（叶子 crate） | 任何内部 crate |
+| `qinglink-domain` | 无（叶子 crate） | 任何内部 crate |
+| `qinglink-storage` | 无（叶子 crate） | 任何内部 crate |
+| `qinglink-discovery` | `qinglink-protocol` | server, storage, domain, windows |
+| `qinglink-windows` | `qinglink-protocol`, `qinglink-domain` | server, storage, discovery |
+| `qinglink-server` | `qinglink-protocol`, `qinglink-domain`, `qinglink-storage`, `qinglink-windows` | discovery, apps/*, services/* |
+| `apps/desktop`（`qinglink-desktop`） | `qinglink-protocol`, `qinglink-storage`, `qinglink-windows` | `qinglink-server`（自带 Web 层）, services/* |
+| `services/qinglink-service`（`qinglink-service`） | `qinglink-protocol`, `qinglink-discovery`, `qinglink-server`, `qinglink-storage`, `qinglink-windows` | apps/* |
+
+`qinglink-domain` 与 `qinglink-storage` 是**叶子 crate**：领域逻辑与持久化都必须能
+独立编译，不得为了方便反向拉入 `qinglink-protocol` 或任何其它内部 crate。
 
 **强制：** 禁止循环依赖。如果 crate A 依赖 crate B，B 绝不能依赖 A（即使是传递依赖）。
 
@@ -139,25 +132,16 @@ impl PairingState {
 **目的：** SQLite 数据访问，支持迁移和连接池。
 
 **包含：**
-- 数据库连接管理（r2d2 连接池）
-- Schema 迁移（仅追加）
-- 仓库模式实现
-- 设置/应用/设备数据模型
+- 数据库连接池注册表（`DatabaseService`：按路径/键取 r2d2 池）
+- Schema 迁移（仅追加，见 `migrations.rs`）
+- 数据目录与文件路径解析（`AppPaths`）
 
 **规则：**
 - 所有查询必须使用参数化语句（禁止字符串拼接）
 - 迁移仅追加（禁止修改已有迁移文件）
-- 连接池可通过 `max_connections` 配置
-- 返回领域类型，不返回原始 SQL 行
-
-```rust
-#[async_trait]
-pub trait AppRepository: Send + Sync {
-    async fn get_visible(&self) -> Result<Vec<AppInfo>, StorageError>;
-    async fn upsert(&self, app: &AppInfo) -> Result<(), StorageError>;
-    async fn delete(&self, id: &str) -> Result<bool, StorageError>;
-}
-```
+- 连接池大小与超时集中在该 crate 内定义，调用方不自行建池
+- **该 crate 是叶子 crate**：不得依赖 `qinglink-protocol` / `qinglink-domain` 或任何
+  其它内部 crate；业务模型与仓库模式属于上层（`qinglink-server`），不要下沉到这里
 
 ### 2.4 `qinglink-server` — HTTP/WS 服务器
 
@@ -331,7 +315,7 @@ pub struct ErrorResponse {
 │              │                    │                          │
 │              │── POST /pairing ──▶│                          │
 │              │   { device_name }  │                          │
-│              │                    │── 显示 PIN 弹窗 ──▶ GPUI │
+│              │                    │── 显示 PIN 弹窗 ──▶ Web UI │
 │              │◀── { pin, exp ───│                          │
 │              │                    │                          │
 │  用户输入    │                    │                          │
@@ -422,6 +406,30 @@ Future<SystemInfo> getSystemInfo() async {
 }
 ```
 
+### 5.5 禁止超大文件
+
+单文件超过行数上限属于结构违规，而不是风格问题：它通常意味着一个文件承担了多个职责，
+crate/模块边界名存实亡。
+
+| 对象 | 硬上限 |
+|------|--------|
+| 源码单文件（`.rs` / `.dart` / `.ts`） | 500 行 |
+| `.vue` 单文件组件 | 400 行 |
+| 单个函数 / 方法 | 120 行 |
+| 文档单篇 | 1200 行 |
+
+- 完整规则与棘轮清单见仓库根目录 [`AGENTS.md`](../../AGENTS.md) §2。
+- 已有超限文件列在 [`AGENTS.md`](../../AGENTS.md) §2.3 的表格里，
+  只许减少、不许增加；这是**优先重构目标清单**。
+- 禁止把代码藏在 `include!`、`#[cfg(...)]`、注释块、字符串或 `part` 指令中来规避统计。
+- 禁止以"文件太大"为由跨 crate 反向依赖或绕过既定模块职责——先按职责拆分，再保持依赖方向。
+
+**校验：** 本仓库没有行数校验脚本（[`AGENTS.md`](../../AGENTS.md) §7），用 §2.4 的原生命令自查：
+
+```powershell
+(Get-Content <file>).Count
+```
+
 ---
 
 ## 6. 配置管理
@@ -450,239 +458,12 @@ Future<SystemInfo> getSystemInfo() async {
 
 ---
 
-## 7. GPUI 线程模型（关键）
+## 7. 桌面端线程模型
 
-GPUI（Zed 编辑器的 UI 框架）有严格的线程模型约束。桌面端必须遵循以下规则，否则会导致数据竞争或 UI 崩溃。
-
-### 7.1 GPUI 线程模型概览
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    GPUI 主线程（UI 线程）                      │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │  GPUI 事件循环 (app.run(|cx| { ... }))                  │ │
-│  │  - 窗口管理                                              │ │
-│  │  - 渲染周期 (render(&mut self, window, cx))             │ │
-│  │  - 事件处理（点击、窗口事件）                              │ │
-│  │  - 持有所有 View/Entity 的可变引用                        │ │
-│  └─────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        ▼                     ▼                     ▼
-┌───────────────┐   ┌─────────────────┐   ┌──────────────────┐
-│ cx.spawn()    │   │ ServiceRuntime  │   │  单例监听器       │
-│ 后台任务       │   │ (独立线程 +     │   │  (独立线程)      │
-│               │   │  Tokio Runtime) │   │                  │
-│ - 定时器轮询   │   │                 │   │  TCP Listener    │
-│ - 状态同步     │   │  Axum/WS 服务器 │   │  (127.0.0.1:3722)│
-│               ││   │  服务发现       │   │                  │
-└───────────────┘   └─────────────────┘   └──────────────────┘
-```
-
-### 7.2 核心线程规则
-
-| 规则 | 说明 |
-|------|------|
-| **UI 操作只能在 GPUI 线程执行** | 所有 `cx.notify()`、`cx.open_window()`、View 更新必须在 GPUI 主线程 |
-| **`cx.spawn()` 用于后台异步任务** | 后台任务通过 `view.update(async_cx, \|view, cx\| { ... })` 回到 UI 线程 |
-| **`async_cx.background_executor()`** | GPUI 提供的异步执行器，用于 spawn 内的定时器和异步操作 |
-| **`cx.update()` / `view.update()`** | 从后台线程安全地更新 View 状态，GPUI 内部同步 |
-| **禁止跨线程直接修改 View** | 不能从 `std::thread` 或 `tokio::spawn` 直接修改 View 状态 |
-
-### 7.3 共享状态模式
-
-桌面端使用多种模式在 GPUI 线程和后台线程间共享状态：
-
-#### 模式 A：`Arc<Mutex<T>>` + 轮询（推荐用于 UI 频繁读取）
-
-```rust
-// 共享状态定义
-let pairing_snapshot = Arc::new(Mutex::new(None));
-
-// 后台线程写入
-if let Ok(mut guard) = pairing_snapshot.lock() {
-    *guard = Some(new_request);
-}
-
-// GPUI spawn 任务读取并更新 View
-cx.spawn(async move |view, async_cx| {
-    loop {
-        async_cx.background_executor()
-            .timer(Duration::from_millis(250))
-            .await;
-        if view.update(async_cx, |view, _cx| {
-            view.flush_pending_pairing();
-            _cx.notify();
-        }).is_err() {
-            break;
-        }
-    }
-}).detach();
-```
-
-**适用场景：** UI 需要定期检查后台状态变化（如配对请求、服务状态）。
-
-#### 模式 B：`tokio::sync::watch`（推荐用于配置/期望状态）
-
-```rust
-// 创建 watch channel
-let (desired_sender, desired_receiver) = watch::channel(DesiredServiceState::Running);
-
-// UI 发送期望状态变更
-self.desired_service.send(DesiredServiceState::Paused)?;
-
-// 后台线程接收
-let current = *desired_receiver.borrow();
-```
-
-**适用场景：** 单向状态传递（UI → 后台），如服务启停、自动启动切换。
-
-#### 模式 C：`broadcast::channel`（推荐用于事件通知）
-
-```rust
-// 创建广播 channel
-let (pairing_events, _) = broadcast::channel(16);
-
-// 后台线程发送事件
-pairing_events.send(PairingEvent::NewRequest(request))?;
-
-// 前台订阅者接收
-let mut subscriber = pairing_events.subscribe();
-```
-
-**适用场景：** 一对多事件通知，如配对请求、连接状态变化。
-
-#### 模式 D：`Arc<AtomicBool>`（推荐用于简单标志位）
-
-```rust
-let exiting = Arc::new(AtomicBool::new(false));
-
-// 任意线程设置
-exiting.store(true, Ordering::Release);
-
-// UI 线程读取
-if self.exiting.load(Ordering::Acquire) {
-    cx.quit();
-}
-```
-
-**适用场景：** 简单的布尔标志，如退出信号、激活请求。
-
-### 7.4 禁止的模式
-
-```rust
-// ❌ 错误 — 从 std::thread 直接修改 View 状态（绕过 GPUI）
-std::thread::spawn(move || {
-    let result = do_work();
-    let _ = state.lock().map(|mut s| s.result_message = Some(result));
-    // 问题：没有调用 cx.notify()，UI 不会刷新
-    // 问题：state 锁与 GPUI 内部状态可能产生竞争
-});
-
-// ❌ 错误 — 从 tokio::spawn 直接操作 UI 元素
-tokio::spawn(async move {
-    cx.notify();  // 编译错误！cx 不是 Send
-});
-
-// ❌ 错误 — 持有 MutexGuard 跨越 await 点
-let guard = mutex.lock().unwrap();
-some_async().await;  // 锁跨越 await，可能导致死锁或阻塞 UI
-drop(guard);
-
-// ✅ 正确 — 需要通知 UI 时，使用回调或 channel
-std::thread::spawn(move || {
-    let result = do_work();
-    let _ = result_sender.send(result); // 发送到 channel
-});
-
-// 然后在 cx.spawn 中监听 channel：
-cx.spawn(async move |view, async_cx| {
-    loop {
-        if let Ok(result) = result_receiver.try_recv() {
-            view.update(async_cx, |view, cx| {
-                view.message = Some(result);
-                cx.notify();
-            })?;
-        }
-        async_cx.background_executor()
-            .timer(Duration::from_millis(100)).await;
-    }
-}).detach();
-```
-
-### 7.5 后台任务生命周期管理
-
-```rust
-struct RemoteDashboard {
-    // 存储 join handle 或取消 token
-    background_tasks: Vec<Task<()>>,
-}
-
-impl RemoteDashboard {
-    fn spawn_background_tasks(&mut self, cx: &mut Context<Self>) {
-        // 任务 1：轮询配对状态
-        let handle = cx.spawn(async move |view, async_cx| {
-            loop {
-                async_cx.background_executor()
-                    .timer(Duration::from_millis(250)).await;
-                if view.update(async_cx, |view, cx| {
-                    view.flush_pending_pairing(cx);
-                }).is_err() {
-                    break; // View 已销毁，退出任务
-                }
-            }
-        });
-        self.background_tasks.push(handle.detach());
-    }
-}
-
-impl Drop for RemoteDashboard {
-    fn drop(&mut self) {
-        // GPUI 会在 View 销毁时自动停止 spawn 的任务
-        // 但需要手动停止独立的 std::thread 和 tokio runtime
-    }
-}
-```
-
-### 7.6 ServiceRuntime 线程模型
-
-ServiceRuntime 运行在独立线程，拥有独立的 Tokio runtime：
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      GPUI 主线程                              │
-│  RemoteDashboard View                                       │
-│  - desired_service: watch::Sender                           │
-│  - pairing: Arc<Mutex<Option<...>>>                         │
-│  - service_status: Arc<Mutex<ServiceStatus>>                │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ watch channel / Mutex
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   ServiceRuntime 线程                         │
-│  tokio::runtime::Runtime                                    │
-│  - Axum HTTP/WS 服务器                                       │
-│  - mDNS 服务发现                                             │
-│  - 服务监控循环                                               │
-│  - 配对事件处理                                               │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**交互规则：**
-- UI → 后台：通过 `watch::Sender` 发送期望状态
-- 后台 → UI：通过 `Arc<Mutex<>>` 更新状态 + GPUI 轮询读取
-- 配对事件：通过 `broadcast::channel` 通知
-
-### 7.7 常见陷阱
-
-| 陷阱 | 后果 | 解决方案 |
-|------|------|---------|
-| 从 `std::thread` 修改 View 状态 | UI 不刷新、数据竞争 | 使用 `cx.spawn()` + `view.update()` |
-| 持有锁跨越 `await` | 死锁、UI 卡顿 | 在 `await` 前 `drop(guard)` |
-| 在 `cx.spawn` 内执行阻塞操作 | 阻塞 GPUI 事件循环 | 使用 `async_cx.background_executor().spawn()` |
-| 后台线程 panic 导致 Mutex poison | 后续 `.lock().ok()` 静默失败 | 用 `.map_err()` 传播 poison 错误 |
-| 忘记调用 `cx.notify()` | 状态变化但 UI 不重绘 | 每次状态变更后必须 notify |
+桌面端不使用 GUI 框架：主线程负责托盘（直接调用 Win32 外壳 API）与窗口消息，
+Web 管理面跑在独立线程的 Axum 上，两者通过 `HostCommand` 通信；后台任务在 Tokio runtime 上。
+**Web 处理函数不得直接触碰只属于 main 线程的状态**，必须走 `HostCommand`。
+完整的进程/线程划分与职责边界见 [`docs/architecture.md`](../../docs/architecture.md) 第 4 节与第 8 节。
 
 ---
 

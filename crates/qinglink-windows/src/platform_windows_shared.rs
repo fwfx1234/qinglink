@@ -1,36 +1,15 @@
 // 使用 Win32 API 的 Windows 特定实现
 
-use std::io::{Read, Write};
-use std::{mem, sync::Arc};
-
 use anyhow::Context;
-use base64::Engine as _;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
-use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
-use windows::Win32::Graphics::Gdi::{
-    CDS_FULLSCREEN, ChangeDisplaySettingsExW, DEVMODEW, DISP_CHANGE_SUCCESSFUL,
-    DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICE_PRIMARY_DEVICE, DISPLAY_DEVICEW,
-    DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH, ENUM_CURRENT_SETTINGS,
-    ENUM_DISPLAY_SETTINGS_FLAGS, ENUM_DISPLAY_SETTINGS_MODE, EnumDisplayDevicesW,
-    EnumDisplaySettingsExW, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO,
-    MonitorFromWindow,
-};
+use windows::Win32::Foundation::{CloseHandle, HWND};
 use windows::Win32::System::ProcessStatus::GetModuleFileNameExW;
-use windows::Win32::System::Threading::{
-    AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
-};
+use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, EnumWindows, GW_OWNER, GWL_EXSTYLE, GetForegroundWindow, GetWindow,
-    GetWindowLongW, GetWindowTextW, GetWindowThreadProcessId, HWND_NOTOPMOST, HWND_TOPMOST,
-    IsWindow, IsWindowVisible, MSG, PM_NOREMOVE, PeekMessageW, PostMessageW, SW_RESTORE,
-    SW_SHOWMAXIMIZED, SW_SHOWMINIMIZED, SW_SHOWNORMAL, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SetForegroundWindow, SetWindowPos, ShowWindow, WM_CLOSE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
 };
 
-use qinglink_protocol::WindowSwitchDirection;
 use qinglink_protocol::{
-    AppInfo, AudioOutputDevice, AudioOutputsResponse, DisplayInfoResponse, DisplayModeResponse,
-    ForegroundResponse, UnlockStatus, VolumeStatus,
+    AudioOutputDevice, AudioOutputsResponse, ForegroundResponse, VolumeStatus,
 };
 
 fn lock_unpoisoned<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -43,13 +22,27 @@ fn lock_unpoisoned<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
 // Windows 在生成的 Core Audio 绑定中不暴露默认渲染设备设置器。
 // 策略客户端 COM 接口在受支持的 Windows 版本上是稳定的，
 // 因此这里仅表示未使用的 vtable 槽位。
-windows::core::imp::define_interface!(
-    IPolicyConfig,
-    IPolicyConfig_Vtbl,
-    0xf8679f50_850a_41cf_9c72_430f290290c8
-);
+// `define_interface!` 展开出的 `IPolicyConfig` 结构体无法附加文档注释，
+// 因此把宏调用放进豁免 `missing_docs` 的私有模块，再以带文档的 re-export 对外暴露。
+#[allow(missing_docs)]
+mod ipolicy_config {
+    use super::IPolicyConfig_Vtbl;
+
+    windows::core::imp::define_interface!(
+        IPolicyConfig,
+        IPolicyConfig_Vtbl,
+        0xf8679f50_850a_41cf_9c72_430f290290c8
+    );
+}
 windows::core::imp::interface_hierarchy!(IPolicyConfig, windows::core::IUnknown);
 
+/// `IPolicyConfig` 是 Core Audio 策略配置客户端 COM 接口，用于设置默认音频端点。
+pub use ipolicy_config::IPolicyConfig;
+
+/// `IPolicyConfig` 的 COM vtable 布局：前 11 个槽位仅为占位，
+/// 只有 `set_default_endpoint` 被实际调用。
+#[allow(missing_debug_implementations)]
+// COM vtable 的字段为裸指针与函数指针，且 `IUnknown_Vtbl` 未实现 `Debug`，无法 derive
 #[repr(C)]
 pub struct IPolicyConfig_Vtbl {
     base__: windows::core::IUnknown_Vtbl,

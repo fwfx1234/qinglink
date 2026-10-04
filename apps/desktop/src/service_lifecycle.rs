@@ -1,214 +1,228 @@
+//! 桌面端租约与服务准备。
+//!
+//! 只要桌面端在运行，它就持有服务上的一份租约，服务因此能区分"用户会话在线"和
+//! "机器前没人"。准备过程与租约都不得阻塞启动。
+
 #![cfg(target_os = "windows")]
 
-use std::io::{Read, Write};
-use std::os::windows::io::FromRawHandle;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use anyhow::{Result, ensure};
+use qinglink_protocol::service_ipc::SERVICE_IPC_VERSION;
+use serde::{Deserialize, Serialize};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
+pub(crate) const PIPE_NAME: &str = r"\\.\pipe\QingLinkControlV2";
 
-const PIPE_NAME: &str = r"\\.\pipe\QingLinkControlV2";
+/// How often a registered lease is refreshed.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Serialize)]
 struct PipeRequest {
     version: u32,
     request_id: String,
-    command: String,
+    command: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     parent_pid: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
-struct PipeResponse {
-    ok: bool,
-    code: String,
-    message: String,
+pub(crate) struct PipeResponse {
+    /// Protocol version the service answered with, when it echoed one.
     #[serde(default)]
-    request_id: Option<String>,
+    pub(crate) version: u32,
+    pub(crate) ok: bool,
+    pub(crate) code: String,
+    pub(crate) message: String,
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
+}
+
+/// Probe the management protocol once, as a diagnostic.
+///
+/// The lease uses the lifecycle commands; this goes through the management
+/// handshake instead, so a success also proves the installed service speaks the
+/// protocol the desktop actually needs. Nothing is mutated: `capabilities` is
+/// the read-only negotiation the desktop performs on every connect.
+pub(crate) fn probe_management_pipe() -> Result<PipeResponse> {
+    let request = PipeRequest {
+        version: 2,
+        request_id: format!(
+            "check-service-{}-{}",
+            std::process::id(),
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ),
+        command: "capabilities",
+        parent_pid: None,
+    };
+    let response: PipeResponse = qinglink_windows::ipc::request(
+        PIPE_NAME,
+        &request,
+        Duration::from_secs(3),
+        &AtomicBool::new(false),
+    )?;
+    // An old service answers with its own protocol version. Reporting that as
+    // "reachable" would hide the more useful fact that it needs an upgrade.
+    ensure!(
+        response.version == SERVICE_IPC_VERSION,
+        "服务协议版本不匹配（服务 {} / 桌面端 {}），请升级或修复服务",
+        response.version,
+        SERVICE_IPC_VERSION
+    );
+    Ok(response)
 }
 
 pub struct ServiceLifecycleManager {
     stop_signal: Arc<AtomicBool>,
-    heartbeat_handle: Option<std::thread::JoinHandle<()>>,
-    registered: bool,
+    registered: Arc<AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl ServiceLifecycleManager {
     pub fn new() -> Self {
         Self {
             stop_signal: Arc::new(AtomicBool::new(false)),
-            heartbeat_handle: None,
-            registered: false,
+            registered: Arc::new(AtomicBool::new(false)),
+            worker: None,
         }
     }
 
-    pub fn start(&mut self) -> Result<()> {
-        self.start_internal(false)
-    }
-
-    pub fn try_start(&mut self) -> Result<()> {
-        self.start_internal(true)
-    }
-
-    fn start_internal(&mut self, silent: bool) -> Result<()> {
-        let state = super::input_install::inspect();
-        tracing::info!(
-            service_installed = state.service_installed,
-            service_running = state.service_running,
-            service_binary_matches = state.service_binary_matches,
-            service_available = state.available,
-            detail = %state.detail,
-            silent,
-            "检查 Windows 服务状态"
-        );
-
-        if !state.service_installed {
-            tracing::info!("Windows 服务未安装，跳过服务生命周期管理");
-            return Ok(());
-        }
-
-        if !state.service_binary_matches {
-            tracing::warn!(
-                detail = %state.detail,
-                "Windows 服务版本过旧或无法校验，跳过旧服务注册；请执行安全输入组件修复"
-            );
-            return Ok(());
-        }
-
-        if !state.service_running {
-            if silent {
-                tracing::info!("Windows 服务未运行（静默模式），尝试使用服务 ACL 静默启动");
-                if let Err(error) = super::input_install::start_service_direct() {
-                    tracing::warn!(%error, "静默启动 Windows 服务失败");
-                    return Ok(());
-                }
-            } else {
-                tracing::info!("Windows 服务未运行，尝试启动...");
-                match super::input_install::start_service_elevated() {
-                    Ok(msg) => tracing::info!(msg, "服务启动命令已执行"),
-                    Err(error) => {
-                        tracing::warn!(%error, "启动 Windows 服务失败，安全桌面输入功能将不可用");
-                        return Ok(());
-                    }
-                }
+    pub fn start(&mut self, _silent: bool) {
+        let stop = Arc::clone(&self.stop_signal);
+        let registered = Arc::clone(&self.registered);
+        self.worker = Some(std::thread::spawn(move || {
+            if let Err(error) = Self::prepare_service() {
+                // Not fatal: the management interface still runs and reports the
+                // problem, which is more useful than refusing to start.
+                tracing::warn!(error = %format!("{error:#}"), "服务准备失败");
             }
-
-            if !Self::wait_for_network_ready(30) {
-                tracing::warn!("Windows 服务进程已运行，但 TCP 3721 未就绪");
-                if !silent {
-                    tracing::info!("尝试重启未就绪的 Windows 服务");
-                    let _ = super::input_install::restart_service_elevated();
-                    if !Self::wait_for_network_ready(30) {
-                        anyhow::bail!("Windows 服务启动后健康检查失败（TCP 3721 未监听）");
-                    }
+            let mut failures: u32 = 0;
+            // The lease is retried twice a second for the life of the process,
+            // so a persistent cause must be reported once: repeating it buries
+            // the rest of the log without adding information.
+            let mut reported: Option<String> = None;
+            let mut environment_reported = false;
+            let mut protocol_reported = false;
+            while !stop.load(Ordering::Acquire) {
+                let command = if registered.load(Ordering::Acquire) {
+                    "heartbeat"
                 } else {
-                    return Ok(());
+                    "register_parent"
+                };
+                match Self::send(command, &stop) {
+                    Ok(()) => {
+                        registered.store(true, Ordering::Release);
+                        failures = 0;
+                        reported = None;
+                    }
+                    Err(error) => {
+                        registered.store(false, Ordering::Release);
+                        failures = failures.saturating_add(1);
+                        // The full chain matters: the outer context is always
+                        // "cannot connect to local pipe", while the innermost
+                        // cause carries the OS error that identifies whether the
+                        // pipe is missing, busy, or denied by the environment.
+                        let chain = format!("{error:#}");
+                        if !stop.load(Ordering::Acquire) && reported.as_deref() != Some(&chain) {
+                            tracing::warn!(error = %chain, command, "服务租约通信失败，将重新注册");
+                            reported = Some(chain.clone());
+                        }
+                        if !environment_reported && is_environment_restriction(&chain) {
+                            environment_reported = true;
+                            Self::report_environment_restriction();
+                        }
+                        if !protocol_reported && is_protocol_mismatch(&chain) {
+                            protocol_reported = true;
+                            Self::report_protocol_mismatch();
+                        }
+                    }
+                }
+                let delay = if failures == 0 {
+                    HEARTBEAT_INTERVAL
+                } else {
+                    Duration::from_secs((1 << failures.min(4)).min(15))
+                };
+                if !Self::sleep_interruptible(delay, &stop) {
+                    break;
                 }
             }
-        } else if !Self::wait_for_network_ready(30) {
-            anyhow::bail!("Windows 服务处于 RUNNING 但 TCP 3721 未就绪");
-        }
+        }));
+    }
 
-        if let Err(error) = self.register_parent() {
-            tracing::warn!(%error, "注册桌面端租约失败，服务不会自动跟随桌面端退出");
+    /// Explain a refused pipe once, in the terms the user can act on.
+    ///
+    /// The service being installed and running while the pipe is refused is the
+    /// signature of an execution environment that forbids the connection (a
+    /// restricted sandbox, or a process below the integrity level the pipe
+    /// grants). Reporting only the transport error in that case sends people
+    /// looking for a broken service that is in fact healthy.
+    fn report_environment_restriction() {
+        let state = super::input_install::inspect();
+        if state.service_installed && state.service_running {
+            tracing::warn!(
+                "QingLinkService 正在运行，但当前执行环境拒绝访问其命名管道。\
+                 服务相关功能（设备、应用目录、配对）在此会话中不可用；\
+                 管理界面与日志仍可正常使用。请在普通用户会话或不受限的终端中启动桌面端。"
+            );
         } else {
-            self.registered = true;
-            self.start_heartbeat_thread();
+            tracing::warn!(
+                installed = state.service_installed,
+                running = state.service_running,
+                detail = %state.detail,
+                "无法连接 QingLinkService，服务相关功能不可用"
+            );
         }
+    }
 
-        tracing::info!("服务生命周期管理器已启动");
+    /// Explain a protocol mismatch once, in the terms the user can act on.
+    ///
+    /// A running service that answers without echoing the correlated envelope is
+    /// the signature of a service binary older than the desktop's management
+    /// protocol. The interface reports "服务未连接" for it, so the log has to
+    /// carry the real reason.
+    fn report_protocol_mismatch() {
+        let state = super::input_install::inspect();
+        tracing::warn!(
+            installed = state.service_installed,
+            running = state.service_running,
+            binary_matches = state.service_binary_matches,
+            "QingLinkService 正在运行，但服务协议与桌面端不匹配，管理通道不可用；\
+             请在设置中点击「修复服务（升级）」重新安装当前版本的服务"
+        );
+    }
+
+    fn prepare_service() -> Result<()> {
+        let state = super::input_install::inspect();
+        ensure!(
+            state.service_installed,
+            "Windows 服务尚未安装，请在设置中安装服务"
+        );
+        ensure!(
+            state.service_binary_matches,
+            "服务版本不匹配，请在设置中修复服务"
+        );
+        if !state.service_running {
+            // Login startup must never raise UAC. The service ACL grants the
+            // interactive user SERVICE_START, and IPC remains available while
+            // the network is paused or cannot bind.
+            super::input_install::start_service_direct()?;
+        }
         Ok(())
     }
 
-    fn wait_for_network_ready(max_attempts: u32) -> bool {
-        for attempt in 0..max_attempts {
-            if super::input_install::service_network_ready() {
-                tracing::info!(attempt = attempt + 1, "Windows 服务健康检查通过");
-                return true;
-            }
-            let delay = Duration::from_millis((250 * (1u64 << attempt.min(3))).min(2000));
-            std::thread::sleep(delay);
+    fn sleep_interruptible(total: Duration, stop: &AtomicBool) -> bool {
+        let mut remaining = total;
+        while !remaining.is_zero() && !stop.load(Ordering::Acquire) {
+            let step = remaining.min(Duration::from_millis(50));
+            std::thread::sleep(step);
+            remaining = remaining.saturating_sub(step);
         }
-        false
+        !stop.load(Ordering::Acquire)
     }
 
-    fn connect_pipe() -> Result<std::fs::File> {
-        let pipe_path = PIPE_NAME;
-        let wide_path: Vec<u16> = pipe_path.encode_utf16().chain([0]).collect();
-
-        use windows::Win32::Foundation::GENERIC_READ;
-        use windows::Win32::Foundation::GENERIC_WRITE;
-        use windows::Win32::Foundation::GetLastError;
-        use windows::Win32::Storage::FileSystem::{
-            CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_NONE, OPEN_EXISTING,
-        };
-
-        let desired_access = GENERIC_READ.0 | GENERIC_WRITE.0;
-        let handle = unsafe {
-            CreateFileW(
-                windows::core::PCWSTR(wide_path.as_ptr()),
-                desired_access,
-                FILE_SHARE_NONE,
-                None,
-                OPEN_EXISTING,
-                FILE_FLAGS_AND_ATTRIBUTES(0),
-                None,
-            )
-        };
-
-        match handle {
-            Ok(handle) => {
-                let file = unsafe { std::fs::File::from_raw_handle(handle.0 as _) };
-                Ok(file)
-            }
-            Err(_) => {
-                let last_error = unsafe { GetLastError() };
-                let error_msg = match last_error.0 {
-                    2 => "服务未运行 (ERROR_FILE_NOT_FOUND)".to_string(),
-                    5 => "访问被拒绝 (ERROR_ACCESS_DENIED)，可能需要管理员权限".to_string(),
-                    32 => "文件被其他进程占用 (ERROR_SHARING_VIOLATION)".to_string(),
-                    _ => format!("Windows 错误码: {}", last_error.0),
-                };
-                anyhow::bail!("无法连接到服务 Named Pipe: {}", error_msg)
-            }
-        }
-    }
-
-    fn send_request(request: &PipeRequest) -> Result<PipeResponse> {
-        let mut file = Self::connect_pipe()?;
-
-        let payload = serde_json::to_vec(request)?;
-        let length = (payload.len() as u32).to_le_bytes();
-
-        file.write_all(&length)?;
-        file.write_all(&payload)?;
-        file.flush()?;
-
-        let mut length_buf = [0u8; 4];
-        file.read_exact(&mut length_buf)?;
-        let response_len = u32::from_le_bytes(length_buf) as usize;
-
-        if response_len == 0 || response_len > 64 * 1024 {
-            anyhow::bail!("无效的响应大小: {}", response_len);
-        }
-
-        let mut response_buf = vec![0u8; response_len];
-        file.read_exact(&mut response_buf)?;
-
-        let response: PipeResponse = serde_json::from_slice(&response_buf)?;
-
-        std::mem::forget(file);
-        Ok(response)
-    }
-
-    fn register_parent(&self) -> Result<()> {
-        Self::register_parent_request(std::process::id())
-    }
-
-    fn register_parent_request(pid: u32) -> Result<()> {
+    fn send(command: &'static str, stop: &AtomicBool) -> Result<()> {
         let request = PipeRequest {
             version: 2,
             request_id: format!(
@@ -216,151 +230,87 @@ impl ServiceLifecycleManager {
                 std::process::id(),
                 time::OffsetDateTime::now_utc().unix_timestamp_nanos()
             ),
-            command: "register_parent".into(),
-            parent_pid: Some(pid),
+            command,
+            parent_pid: (command == "register_parent").then(std::process::id),
         };
-
-        let mut last_error = None;
-        for attempt in 0..10 {
-            match Self::send_request(&request) {
-                Ok(response) => {
-                    if response.ok {
-                        tracing::info!(pid, attempt = attempt + 1, "已向服务注册父进程 PID");
-                        return Ok(());
-                    } else {
-                        last_error = Some(format!("{} - {}", response.code, response.message));
-                        tracing::warn!(attempt = attempt + 1, code = %response.code, message = %response.message, "注册父进程被拒绝");
-                    }
-                }
-                Err(e) => {
-                    last_error = Some(e.to_string());
-                    tracing::warn!(attempt = attempt + 1, error = %e, "连接服务管道失败");
-                }
-            }
-            if attempt < 9 {
-                let delay_ms = 200 * (1_u64 << attempt.min(4));
-                std::thread::sleep(Duration::from_millis(delay_ms));
-            }
-        }
-        anyhow::bail!(
-            "无法注册父进程到服务（已重试10次）: {}",
-            last_error.unwrap_or_else(|| "未知错误".into())
-        )
-    }
-
-    fn start_heartbeat_thread(&mut self) {
-        let stop = Arc::clone(&self.stop_signal);
-
-        let handle = std::thread::spawn(move || {
-            let mut consecutive_failures = 0_u32;
-            while !stop.load(Ordering::Acquire) {
-                std::thread::sleep(HEARTBEAT_INTERVAL);
-
-                if stop.load(Ordering::Acquire) {
-                    break;
-                }
-
-                let request = PipeRequest {
-                    version: 2,
-                    request_id: format!(
-                        "heartbeat-{}-{}",
-                        std::process::id(),
-                        time::OffsetDateTime::now_utc().unix_timestamp_nanos()
-                    ),
-                    command: "heartbeat".into(),
-                    parent_pid: None,
-                };
-
-                match Self::send_request(&request) {
-                    Ok(response) => {
-                        if response.ok {
-                            if consecutive_failures > 0 {
-                                tracing::info!(consecutive_failures, "心跳恢复成功");
-                            }
-                            consecutive_failures = 0;
-                        } else if response.code == "UNREGISTERED_CLIENT" {
-                            tracing::warn!(
-                                consecutive_failures,
-                                "服务已重启或丢失桌面端租约，重新注册父进程"
-                            );
-                            match Self::register_parent_request(std::process::id()) {
-                                Ok(()) => {
-                                    consecutive_failures = 0;
-                                    tracing::info!("桌面端父进程租约重新注册成功");
-                                }
-                                Err(error) => {
-                                    consecutive_failures += 1;
-                                    tracing::warn!(%error, consecutive_failures, "重新注册桌面端父进程失败");
-                                }
-                            }
-                        } else {
-                            consecutive_failures += 1;
-                            tracing::warn!(
-                                consecutive_failures,
-                                "心跳响应异常: {}",
-                                response.message
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        consecutive_failures += 1;
-                        tracing::warn!(consecutive_failures, error = %e, "心跳发送失败");
-                        if consecutive_failures > 5 {
-                            std::thread::sleep(Duration::from_secs(2));
-                        }
-                    }
-                }
-            }
-        });
-
-        self.heartbeat_handle = Some(handle);
-    }
-
-    pub fn shutdown(mut self) -> Result<()> {
-        self.stop_signal.store(true, Ordering::Release);
-
-        if let Some(handle) = self.heartbeat_handle.take() {
-            let _ = handle.join();
-        }
-
-        if !self.registered {
-            return Ok(());
-        }
-
-        let request = PipeRequest {
-            version: 2,
-            request_id: format!(
-                "shutdown-{}-{}",
-                std::process::id(),
-                time::OffsetDateTime::now_utc().unix_timestamp_nanos()
-            ),
-            command: "shutdown".into(),
-            parent_pid: None,
-        };
-
-        match Self::send_request(&request) {
-            Ok(response) => {
-                if response.ok {
-                    tracing::info!("已发送 Shutdown 命令到服务");
-                } else {
-                    tracing::warn!("Shutdown 命令响应异常: {}", response.message);
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "发送 Shutdown 命令失败");
-            }
-        }
-
-        tracing::info!("服务生命周期管理器已关闭");
+        let response: PipeResponse =
+            qinglink_windows::ipc::request(PIPE_NAME, &request, Duration::from_secs(3), stop)?;
+        // Version first: a service predating the correlated envelope answers
+        // without `request_id` (and with its own protocol version), and that is
+        // an upgrade problem rather than a corrupted reply.
+        ensure!(
+            response.version == SERVICE_IPC_VERSION,
+            "服务协议版本不匹配（服务 {} / 桌面端 {}），请在设置中点击「修复服务（升级）」",
+            response.version,
+            SERVICE_IPC_VERSION
+        );
+        ensure!(
+            response.request_id.as_deref() == Some(request.request_id.as_str()),
+            "服务响应 request_id 不匹配"
+        );
+        ensure!(
+            response.ok,
+            "服务拒绝请求 ({}): {}",
+            response.code,
+            response.message
+        );
         Ok(())
     }
+
+    /// Explicit quit asks the service to stop; restart only releases the desktop lease.
+    pub fn shutdown(mut self, stop_service: bool) -> Result<()> {
+        self.stop_signal.store(true, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            worker
+                .join()
+                .map_err(|_| anyhow::anyhow!("服务租约线程异常退出"))?;
+        }
+        if stop_service
+            && self.registered.load(Ordering::Acquire)
+            && let Err(error) = Self::send("shutdown", &AtomicBool::new(false))
+        {
+            tracing::warn!(%error, "停止服务请求失败；服务可能仍在运行");
+        }
+        Ok(())
+    }
+}
+
+/// Whether a transport error chain points at the environment rather than the
+/// service.
+///
+/// These are the failures a connection attempt can produce when the pipe itself
+/// is unreachable for a reason the service cannot fix: access denied by policy,
+/// no such file (the endpoint was never created in this session's namespace), or
+/// the retry budget running out. Distinguishing them from a refusal matters
+/// because "install the service" is the wrong advice for all three.
+pub(crate) fn is_environment_restriction(chain: &str) -> bool {
+    [
+        "cannot connect to local pipe",
+        "拒绝访问",
+        "Access is denied",
+    ]
+    .iter()
+    .any(|marker| chain.contains(marker))
+}
+
+/// Whether a transport/refusal error chain points at an outdated service.
+///
+/// The service being installed and running while the request is refused this way
+/// is the signature of a binary that predates the desktop's protocol, which the
+/// admin interface cannot repair by itself but can name.
+pub(crate) fn is_protocol_mismatch(chain: &str) -> bool {
+    ["服务协议版本不匹配", "request_id 不匹配", "UNKNOWN_COMMAND"]
+        .iter()
+        .any(|marker| chain.contains(marker))
 }
 
 impl Drop for ServiceLifecycleManager {
     fn drop(&mut self) {
         self.stop_signal.store(true, Ordering::Release);
-        if let Some(handle) = self.heartbeat_handle.take() {
-            let _ = handle.join();
+        if let Some(worker) = self.worker.take()
+            && worker.join().is_err()
+        {
+            tracing::error!("服务租约线程异常退出");
         }
     }
 }

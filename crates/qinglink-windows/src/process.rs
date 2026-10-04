@@ -8,6 +8,12 @@ mod imp {
         SetPriorityClass, TerminateProcess,
     };
 
+    /// 挂起指定进程的全部线程（调用 ntdll 的 `NtSuspendProcess`）。
+    ///
+    /// # Errors
+    /// `OpenProcess` 失败或返回无效句柄（“Failed to open process {pid}”）、
+    /// `CloseHandle` 失败、或 `NtSuspendProcess` 调用失败（`GetModuleHandleW`/
+    /// `GetProcAddress` 失败，或返回的 NTSTATUS 为负值）时返回错误。
     pub fn suspend(pid: u32) -> anyhow::Result<()> {
         unsafe {
             let process = OpenProcess(PROCESS_SUSPEND_RESUME, false, pid)?;
@@ -20,6 +26,12 @@ mod imp {
         }
     }
 
+    /// 恢复指定进程中先前被挂起的线程（调用 ntdll 的 `NtResumeProcess`）。
+    ///
+    /// # Errors
+    /// `OpenProcess` 失败或返回无效句柄（“Failed to open process {pid}”）、
+    /// `CloseHandle` 失败、或 `NtResumeProcess` 调用失败（`GetModuleHandleW`/
+    /// `GetProcAddress` 失败，或返回的 NTSTATUS 为负值）时返回错误。
     pub fn resume(pid: u32) -> anyhow::Result<()> {
         unsafe {
             let process = OpenProcess(PROCESS_SUSPEND_RESUME, false, pid)?;
@@ -32,6 +44,11 @@ mod imp {
         }
     }
 
+    /// 强制结束指定进程。
+    ///
+    /// # Errors
+    /// `OpenProcess` 失败或返回无效句柄（“Failed to open process {pid}”）、
+    /// `TerminateProcess` 失败或 `CloseHandle` 失败时返回错误。
     pub fn kill(pid: u32) -> anyhow::Result<()> {
         unsafe {
             let process = OpenProcess(PROCESS_TERMINATE, false, pid)?;
@@ -45,6 +62,13 @@ mod imp {
         Ok(())
     }
 
+    /// 设置指定进程的优先级类别，支持 idle、below_normal/low、normal、
+    /// above_normal/high、realtime，无法识别的取值按 normal 处理。
+    ///
+    /// # Errors
+    /// `OpenProcess` 失败或返回无效句柄（“Failed to open process {pid}”）、
+    /// `SetPriorityClass` 失败或 `CloseHandle` 失败时返回错误；无法识别的
+    /// `priority` 不返回错误，而是按 normal 处理。
     pub fn set_priority(pid: u32, priority: &str) -> anyhow::Result<()> {
         unsafe {
             let process = OpenProcess(PROCESS_SET_INFORMATION, false, pid)?;
@@ -99,21 +123,25 @@ mod imp {
 #[cfg(target_os = "windows")]
 pub use imp::*;
 
+/// 非 Windows 平台的占位实现，始终返回不支持错误。
 #[cfg(not(target_os = "windows"))]
 pub fn suspend(_pid: u32) -> anyhow::Result<()> {
     anyhow::bail!("process control is only supported on Windows")
 }
 
+/// 非 Windows 平台的占位实现，始终返回不支持错误。
 #[cfg(not(target_os = "windows"))]
 pub fn resume(_pid: u32) -> anyhow::Result<()> {
     anyhow::bail!("process control is only supported on Windows")
 }
 
+/// 非 Windows 平台的占位实现，始终返回不支持错误。
 #[cfg(not(target_os = "windows"))]
 pub fn kill(_pid: u32) -> anyhow::Result<()> {
     anyhow::bail!("process control is only supported on Windows")
 }
 
+/// 非 Windows 平台的占位实现，始终返回不支持错误。
 #[cfg(not(target_os = "windows"))]
 pub fn set_priority(_pid: u32, _priority: &str) -> anyhow::Result<()> {
     anyhow::bail!("process control is only supported on Windows")

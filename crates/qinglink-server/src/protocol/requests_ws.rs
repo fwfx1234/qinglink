@@ -1,788 +1,566 @@
 // === WebSocket client requests ===
 
+use serde::Deserialize;
+
+use super::{
+    WindowSwitchDirection, default_bool_true, default_page, default_page_size,
+    default_process_filter, default_process_sort,
+};
+
+/// 客户端通过 WebSocket 发送的请求，按 `type` 字段的蛇形命名区分具体指令。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsClientRequest {
     // === Auth (no auth required) ===
+    /// 认证当前连接，是唯一无需预先认证的指令。
     Authenticate {
+        /// 认证方式，目前支持 `token`（配对 v2 已改为 HTTP 接口）。
         method: String,
+        /// 待校验的设备令牌，`method` 为 `token` 时必需。
         #[serde(default)]
         token: Option<String>,
+        /// 旧版配对 PIN 码，仅为兼容老客户端保留。
         #[serde(default)]
         pin: Option<String>,
+        /// 客户端设备名，用于在管理端标识该设备。
         #[serde(default)]
         device_name: Option<String>,
     },
+    /// 心跳探测，服务端以 `Pong` 应答。
     Ping,
+    /// 撤销当前连接所使用的设备令牌。
     RevokeToken,
 
     // === System ===
+    /// 获取 CPU、内存、磁盘等系统总览状态。
     GetSystemStatus,
+    /// 获取本机主网卡的 MAC 地址。
     GetMacAddress,
+    /// 获取局域网子网前缀长度，用于计算网络唤醒的广播地址。
     GetSubnetPrefix,
+    /// 获取支持网络唤醒的网卡列表。
     GetWakeNetworks,
+    /// 关闭计算机。
     Shutdown {
+        /// 是否强制关闭，跳过应用程序的确认流程。
         #[serde(default)]
         force: bool,
+        /// 延迟执行的秒数，0 表示立即执行。
         #[serde(default)]
         delay_secs: u64,
     },
+    /// 让计算机进入睡眠或休眠。
     Sleep {
+        /// 为 `true` 时进入休眠（状态写入磁盘），否则为普通睡眠。
         #[serde(default)]
         hibernate: bool,
     },
+    /// 重启计算机。
     Restart {
+        /// 是否强制重启，跳过应用程序的确认流程。
         #[serde(default)]
         force: bool,
+        /// 延迟执行的秒数，0 表示立即执行。
         #[serde(default)]
         delay_secs: u64,
     },
+    /// 注销当前登录的 Windows 用户。
     Logoff,
+    /// 锁定当前 Windows 会话。
     Lock,
+    /// 查询锁屏状态以及是否具备自动解锁条件。
     GetUnlockStatus,
+    /// 请求自动解锁当前的锁屏会话。
     AutoUnlock {
+        /// 可选的 PIN 码，缺省时使用已保存的登录凭据。
         #[serde(default)]
         pin: Option<String>,
     },
+    /// 查询安全桌面（锁屏或 UAC 界面）的输入通道是否就绪。
     GetLockInputStatus,
+    /// 在锁屏安全桌面上提交 Windows 登录 PIN。
     SubmitLockPin {
+        /// 待提交的登录 PIN 明文。
         pin: String,
     },
+    /// 查询安全桌面状态：当前桌面、是否锁屏、输入是否可用等。
     GetSecureDesktopStatus,
+    /// 发送安全注意序列（Ctrl+Alt+Del）。
     SecureAttention,
+    /// 在安全桌面上输入可打印 ASCII 文本。
     SendSecureAscii {
+        /// 待输入文本，仅允许 1 到 256 个 ASCII 可打印字符。
         text: String,
     },
 
     // === Display & remote input ===
+    /// 获取显示器列表及其支持的分辨率。
     GetDisplays,
+    /// 切换指定显示器的分辨率与刷新率。
     SetDisplayMode {
+        /// 目标显示器标识，形如 `\\.\DISPLAY1`。
         display_id: String,
+        /// 目标宽度，单位为像素。
         width: u32,
+        /// 目标高度，单位为像素。
         height: u32,
+        /// 目标刷新率，单位为毫赫兹（60000 表示 60 Hz）。
         refresh_millihz: u32,
     },
+    /// 以相对位移移动鼠标指针。
     MouseMove {
+        /// 水平位移，服务端会将其限制在允许的最大值内。
         dx: i32,
+        /// 垂直位移，服务端会将其限制在允许的最大值内。
         dy: i32,
     },
+    /// 把鼠标指针移动到屏幕绝对坐标。
     MouseMoveAbsolute {
+        /// 屏幕绝对横坐标，单位为像素。
         x: u32,
+        /// 屏幕绝对纵坐标，单位为像素。
         y: u32,
     },
+    /// 在指针当前位置单击一次鼠标按键。
     MouseButton {
+        /// 按键名，例如 `left`、`right`、`middle`。
         button: String,
     },
+    /// 按下或抬起指定鼠标按键，用于实现拖拽。
     MouseButtonState {
+        /// 按键名，例如 `left`、`right`、`middle`。
         button: String,
+        /// 为 `true` 表示按下，`false` 表示抬起。
         pressed: bool,
     },
+    /// 滚动鼠标滚轮。
     MouseWheel {
+        /// 滚动量，正值向上滚动，负值向下滚动。
         delta: i32,
     },
+    /// 向当前前台窗口输入一段文本。
     SendText {
+        /// 待输入文本，长度上限为 64 KiB。
         text: String,
     },
+    /// 触发一次具名按键，例如 `backspace`、`enter`。
     KeyPress {
+        /// 受支持的按键名。
         key: String,
     },
+    /// 发送原始 HID 键盘事件，用于组合键与长按场景。
     KeyEvent {
+        /// HID 用法码，有效范围为 0x04 到 0x73。
         usage: u8,
+        /// 修饰键位掩码，表示 Ctrl、Shift、Alt、Win 的组合。
         #[serde(default)]
         modifiers: u8,
+        /// 为 `true` 表示按下，`false` 表示抬起。
         pressed: bool,
     },
 
     // === Processes ===
+    /// 分页查询进程列表。
     GetProcesses {
+        /// 按进程名过滤的关键字，缺省表示不过滤。
         #[serde(default)]
         search: Option<String>,
+        /// 页码，从 0 开始，默认 0。
         #[serde(default = "default_page")]
         page: usize,
+        /// 每页条数，默认 50，服务端最多返回 50 条。
         #[serde(default = "default_page_size")]
         page_size: usize,
+        /// 过滤范围，默认 `user` 表示仅返回用户进程。
         #[serde(default = "default_process_filter")]
         filter: String,
+        /// 排序方式，默认 `active` 表示按活跃度排序。
         #[serde(default = "default_process_sort")]
         sort: String,
     },
+    /// 获取当前前台窗口所属的进程信息。
     GetForeground,
+    /// 结束指定进程。
     KillProcess {
+        /// 目标进程 ID。
         pid: u32,
     },
+    /// 挂起指定进程。
     SuspendProcess {
+        /// 目标进程 ID。
         pid: u32,
     },
+    /// 恢复被挂起的进程。
     ResumeProcess {
+        /// 目标进程 ID。
         pid: u32,
     },
 
     // === Apps ===
+    /// 按关键字搜索已扫描到的应用。
     SearchApps {
+        /// 搜索关键字。
         query: String,
     },
+    /// 启动指定的可执行文件。
     LaunchApp {
+        /// 可执行文件的绝对路径。
         path: String,
+        /// 启动参数列表，默认为空。
         #[serde(default)]
         args: Vec<String>,
     },
 
     // === Scanner ===
+    /// 分页查询启动器条目（按类别筛选）。
     ListLauncherItems {
+        /// 条目类别：`game`/`app`/`favorite`/`steam`/`software`/`other`；其它取值不筛选。
         kind: String,
+        /// 可选的名称过滤关键字。
         #[serde(default)]
         query: Option<String>,
+        /// 页码，从 0 开始，默认 0。
         #[serde(default = "default_page")]
         page: usize,
+        /// 每页条数，默认 50。
         #[serde(default = "default_page_size")]
         page_size: usize,
     },
+    /// 获取最近启动过的启动器条目。
     GetRecentLauncherItems {
+        /// 条目类别，取值为 `game` 或 `app`。
         kind: String,
     },
+    /// 获取指定启动器条目的图标数据。
     GetLauncherIcon {
+        /// 启动器条目 ID。
         id: String,
     },
+    /// 重新解析指定条目的图标。
     RefreshScannerAppIcon {
+        /// 启动器条目 ID。
+        id: String,
+        /// Optional explicit icon file. `None` re-runs the automatic chain
+        /// (shortcut icon → executable resource → sibling artwork → shell).
+        #[serde(default)]
+        icon_path: Option<String>,
+    },
+    /// List the icon files a user could pick for one entry.
+    ListScannerAppIcons {
+        /// 启动器条目 ID。
         id: String,
     },
+    /// Persist an explicit icon file (`None` clears the override) and re-resolve.
+    SetScannerAppIcon {
+        /// 启动器条目 ID。
+        id: String,
+        /// 显式指定的图标文件路径，`None` 表示清除覆盖并恢复自动解析。
+        #[serde(default)]
+        icon_path: Option<String>,
+    },
+    /// List the entries the user blocked, so they can be restored.
+    ListBlockedScannerApps,
+    /// 手动触发一次启动器目录扫描。
     RefreshLauncherCatalog {
         /// `app` and `game` are independent manual refreshes.  Older clients
         /// omit this field and therefore refresh software only.
         #[serde(default)]
         kind: String,
     },
+    /// 获取应用扫描结果（旧版接口）。
     GetScannerApps,
+    /// 强制重新扫描并同步应用目录（旧版接口）。
     RefreshScannerApps,
+    /// 重命名某个已扫描到的应用。
     RenameScannerApp {
+        /// 启动器条目 ID。
         id: String,
+        /// 条目的原始名称，用于同步内存目录。
         original_name: String,
+        /// 新的显示名称。
         new_name: String,
     },
+    /// 按 ID 启动启动器条目，支持 Steam 条目。
     LaunchScannerApp {
+        /// 启动器条目 ID。
         id: String,
     },
+    /// 扫描目录中的可执行文件，返回候选列表供用户确认。
     ScanGameDirectory {
+        /// 待扫描的目录路径。
         path: String,
+        /// `game` (default) or `app`; decides the category of the entries that
+        /// the user later confirms.
+        #[serde(default)]
+        kind: String,
     },
+    /// 把用户在扫描候选中确认的条目加入目录。
     AddScannedGames {
+        /// 本次扫描的根目录，用于校验候选文件确实位于其中。
         path: String,
+        /// 用户勾选的可执行文件路径列表。
         exe_paths: Vec<String>,
         /// Optional display names parallel to `exe_paths` (mobile clients).
         #[serde(default)]
         names: Vec<String>,
+        /// 条目类别，`game` 为默认值，`app` 表示按实用工具归入应用。
+        #[serde(default)]
+        kind: String,
     },
 
     // === Steam ===
+    /// 获取已安装的 Steam 游戏及库信息。
     GetSteamGames,
+    /// 重新扫描 Steam 库并同步到本地目录。
     RefreshSteamGames,
+    /// 触发指定 Steam 游戏的安装。
     InstallSteamGame {
+        /// Steam 应用 ID。
         app_id: u32,
     },
+    /// 启动指定的 Steam 游戏。
     LaunchSteamGame {
+        /// Steam 应用 ID。
         app_id: u32,
     },
 
     // === Custom Scan Dirs ===
+    /// 获取自定义扫描目录列表。
     GetCustomDirs,
+    /// 新增一个自定义扫描目录。
     AddCustomDir {
+        /// 目录的绝对路径。
         path: String,
+        /// 显示名称，缺省时使用目录名。
         #[serde(default)]
         name: Option<String>,
+        /// 是否启用该目录的扫描，默认为启用。
         #[serde(default = "default_bool_true")]
         enabled: bool,
+        /// 最大递归深度，0 表示不限制。
         #[serde(default)]
         max_depth: u32,
+        /// 限定扫描的文件扩展名，缺省表示使用默认集合。
         #[serde(default)]
         extensions: Option<Vec<String>>,
+        /// 是否递归扫描子目录，默认为递归。
         #[serde(default = "default_bool_true")]
         recursive: bool,
     },
+    /// 更新自定义扫描目录，未提供的字段保持原值。
     UpdateCustomDir {
+        /// 目标目录 ID。
         id: String,
+        /// 新的目录路径，`None` 表示不修改。
         #[serde(default)]
         path: Option<String>,
+        /// 新的显示名称，`None` 表示不修改。
         #[serde(default)]
         name: Option<String>,
+        /// 新的启用状态，`None` 表示不修改。
         #[serde(default)]
         enabled: Option<bool>,
+        /// 新的最大递归深度，`None` 表示不修改。
         #[serde(default)]
         max_depth: Option<u32>,
+        /// 新的扩展名过滤集合，`None` 表示不修改。
         #[serde(default)]
         extensions: Option<Vec<String>>,
+        /// 新的递归开关，`None` 表示不修改。
         #[serde(default)]
         recursive: Option<bool>,
     },
+    /// 删除指定的自定义扫描目录。
     DeleteCustomDir {
+        /// 目标目录 ID。
         id: String,
     },
+    /// 校验目录是否存在、可读，并统计其中的可执行文件数量。
     ValidateDir {
+        /// 待校验的目录路径。
         path: String,
     },
 
     // === Tasks ===
+    /// 分页查询任务（进程）列表。
     GetTasks {
+        /// 按进程名过滤的关键字，缺省表示不过滤。
         #[serde(default)]
         search: Option<String>,
+        /// 页码，从 0 开始，默认 0。
         #[serde(default = "default_page")]
         page: usize,
+        /// 每页条数，默认 50。
         #[serde(default = "default_page_size")]
         page_size: usize,
+        /// 过滤范围，默认 `user` 表示仅返回用户进程。
         #[serde(default = "default_process_filter")]
         filter: String,
     },
+    /// 获取系统资源占用统计。
     GetTasksStats,
+    /// 结束指定的任务。
     KillTask {
+        /// 目标进程 ID。
         pid: u32,
     },
+    /// 设置指定任务的优先级。
     SetTaskPriority {
+        /// 目标进程 ID。
         pid: u32,
+        /// 目标优先级名称，例如 `normal`、`high`。
         priority: String,
     },
 
     // === Volume & Media ===
+    /// 获取当前音量与静音状态。
     GetVolume,
+    /// 获取音频输出设备列表。
     GetAudioOutputs,
+    /// 切换默认的音频输出设备。
     SetAudioOutput {
+        /// 目标音频输出设备 ID。
         device_id: String,
     },
+    /// 设置系统主音量。
     SetVolume {
+        /// 音量百分比，取值范围 0 到 100。
         percent: u8,
     },
+    /// 设置系统静音状态。
     SetMuted {
+        /// 为 `true` 表示静音。
         muted: bool,
     },
+    /// 调高一级系统音量。
     VolumeUp,
+    /// 调低一级系统音量。
     VolumeDown,
+    /// 切换系统静音状态。
     VolumeMute,
+    /// 播放或暂停当前媒体。
     MediaPlayPause,
+    /// 停止当前媒体播放。
     MediaStop,
+    /// 切换到下一个媒体曲目。
     MediaNext,
+    /// 切换到上一个媒体曲目。
     MediaPrev,
 
     // === File System ===
+    /// 浏览文件系统，未提供路径时返回驱动器列表。
     BrowseFiles {
+        /// 目标目录路径，`None` 表示列出所有驱动器。
         #[serde(default)]
         path: Option<String>,
     },
+    /// 获取文件浏览器的快速访问项。
     GetQuickAccess,
 
     // === Window Control ===
+    /// 获取当前打开的窗口列表。
     ListWindows {
+        /// 为 `true` 时忽略缓存，强制重新枚举窗口。
         #[serde(default)]
         force_refresh: bool,
     },
+    /// 把指定窗口切换到前台。
     FocusWindow {
+        /// 目标窗口句柄。
         hwnd: usize,
     },
+    /// 按方向切换到上一个或下一个窗口。
     SwitchWindow {
+        /// 相对当前窗口的切换方向。
         direction: WindowSwitchDirection,
     },
+    /// 最小化指定窗口。
     MinimizeWindow {
+        /// 目标窗口句柄。
         hwnd: usize,
     },
+    /// 最大化指定窗口。
     MaximizeWindow {
+        /// 目标窗口句柄。
         hwnd: usize,
     },
+    /// 把指定窗口恢复为普通显示状态。
     RestoreWindow {
+        /// 目标窗口句柄。
         hwnd: usize,
     },
+    /// 关闭指定窗口。
     CloseWindow {
+        /// 目标窗口句柄。
         hwnd: usize,
     },
+    /// 最小化当前前台窗口。
     MinimizeForeground,
+    /// 最大化当前前台窗口。
     MaximizeForeground,
+    /// 关闭当前前台窗口。
     CloseForeground,
     // === Scanner App Management ===
+    /// 手动把一个应用加入启动器目录。
     AddScannerApp {
+        /// 应用显示名称。
         name: String,
+        /// 可执行文件路径。
         exe_path: String,
+        /// 应用分类，例如 `Application` 或 `Game`。
         category: String,
+        /// 客户端显式提供的 Base64 图标，缺省时由服务端解析。
         icon_base64: Option<String>,
+        /// 条目来源，缺省时记为 `User`。
         #[serde(default)]
         source: Option<String>,
+        /// 启动参数列表，默认为空。
         #[serde(default)]
         args: Vec<String>,
     },
+    /// 更新用户添加的应用条目。
     UpdateScannerApp {
+        /// 目标条目 ID。
         id: String,
+        /// 新的显示名称。
         name: String,
+        /// 新的可执行文件路径。
         exe_path: String,
+        /// 新的 Base64 图标，`None` 表示保留原图标。
         icon_base64: Option<String>,
+        /// 新的启动参数，`None` 表示保留原参数。
         #[serde(default)]
         args: Option<Vec<String>>,
     },
+    /// 从目录中删除一个应用条目。
     DeleteScannerApp {
+        /// 目标条目 ID。
         id: String,
     },
+    /// 屏蔽或恢复显示一个应用条目。
     SetScannerAppHidden {
+        /// 目标条目 ID。
         id: String,
+        /// 为 `true` 表示屏蔽该条目。
         hidden: bool,
     },
+    /// 加入 / 移出"常用"（我的库）。Stored on the service so it follows the PC.
+    SetScannerAppFavorite {
+        /// 目标条目 ID。
+        id: String,
+        /// 为 `true` 表示加入常用，`false` 表示移出。
+        favorite: bool,
+    },
+    /// 置顶 / 取消置顶到手机首页。置顶会自动加入常用。
+    SetScannerAppPinned {
+        /// 目标条目 ID。
+        id: String,
+        /// 为 `true` 表示置顶，`false` 表示取消置顶。
+        pinned: bool,
+    },
 }
 
+/// 序列化测试独立成文件，避免本文件超出 AGENTS.md §2.1 的规模上限。
 #[cfg(test)]
-mod secure_desktop_protocol_tests {
-    use super::{WsClientRequest, WsServerMessage, WsServerResponse};
-
-    #[test]
-    fn secure_requests_use_stable_snake_case_wire_names() {
-        let status: WsClientRequest = serde_json::from_str(r#"{"type":"get_secure_desktop_status"}"#).unwrap();
-        assert!(matches!(status, WsClientRequest::GetSecureDesktopStatus));
-        let sas: WsClientRequest = serde_json::from_str(r#"{"type":"secure_attention"}"#).unwrap();
-        assert!(matches!(sas, WsClientRequest::SecureAttention));
-        let ascii: WsClientRequest = serde_json::from_str(r#"{"type":"send_secure_ascii","text":"Admin123!"}"#).unwrap();
-        assert!(matches!(ascii, WsClientRequest::SendSecureAscii { text } if text == "Admin123!"));
-    }
-
-    #[test]
-    fn secure_status_response_contains_all_state_fields() {
-        let message = WsServerMessage::Response(WsServerResponse::SecureDesktopStatus(
-            crate::protocol::responses::SecureDesktopStatus {
-                desktop: "winlogon".into(),
-                locked: true,
-                input_ready: true,
-                sas_supported: true,
-                session_id: 7,
-                agent_state: "ready".into(),
-                uac_detected: false,
-                token_integrity_level: 0,
-                last_error: String::new(),
-            },
-        ));
-        let value = serde_json::to_value(message).unwrap();
-        assert_eq!(value["type"], "secure_desktop_status");
-        assert_eq!(value["data"]["session_id"], 7);
-        assert_eq!(value["data"]["input_ready"], true);
-    }
-}
-
-// === WebSocket server responses ===
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", content = "data", rename_all = "snake_case")]
-pub enum WsServerResponse {
-    // === Auth ===
-    Authenticated(crate::protocol::responses::AuthenticatedResponse),
-    Revoked,
-
-    // === System ===
-    SystemStatus(crate::protocol::responses::SystemStatus),
-    UnlockStatus(crate::protocol::responses::UnlockStatus),
-    LockInputStatus(crate::protocol::responses::LockInputStatus),
-    LockInputResult(crate::protocol::responses::LockInputResult),
-    SecureDesktopStatus(crate::protocol::responses::SecureDesktopStatus),
-    Displays(crate::protocol::responses::DisplaysResponse),
-    MacAddress { mac_address: String },
-    SubnetPrefix { prefix: u8 },
-    WakeNetworks { networks: Vec<qinglink_protocol::WakeNetworkAdapter> },
-
-    // === Processes ===
-    ProcessList(crate::protocol::responses::ProcessListResponse),
-    Foreground(crate::protocol::responses::ForegroundResponse),
-
-    // === Apps ===
-    SearchApps(crate::protocol::responses::SearchAppsResponse),
-
-    // === Scanner ===
-    ScannerApps(Vec<crate::service::app_scanner::ScannerAppEntryResponse>),
-    LauncherItems(crate::protocol::responses::LauncherItemPage),
-    RecentLauncherItems(Vec<crate::protocol::responses::LauncherItemSummary>),
-    LauncherIcon(crate::protocol::responses::LauncherIconResponse),
-    GameScanCandidates(crate::protocol::responses::GameScanCandidatesResponse),
-    SteamGames(crate::protocol::responses::SteamGamesResponse),
-    SteamRefresh { scanned: usize },
-
-    // === Custom Dirs ===
-    CustomDirs(crate::protocol::responses::CustomDirListResponse),
-    CustomDir(crate::custom_dir::CustomDir),
-    DirValidation(crate::custom_dir::DirValidationResult),
-
-    // === Tasks ===
-    Tasks(crate::protocol::responses::ProcessListResponse),
-
-    // === Volume ===
-    VolumeStatus(crate::protocol::responses::VolumeStatus),
-    AudioOutputs(crate::protocol::responses::AudioOutputsResponse),
-
-    // === File System ===
-    DirectoryListing(crate::service::file_browser::DirectoryListing),
-    QuickAccess(Vec<(String, String)>),
-
-    // === Window Control ===
-    WindowList(Vec<WindowInfo>),
-    // === Scanner App Management ===
-    ScannerAppUpdated { id: String },
-    ScannerAppDeleted { id: String },
-
-    // === Common ===
-    Pong,
-    Success,
-    Error { code: String, message: String },
-}
-
-impl WsServerResponse {
-    pub fn success() -> Self {
-        Self::Success
-    }
-
-    pub fn error(code: &str, message: &str) -> Self {
-        Self::Error {
-            code: code.into(),
-            message: message.into(),
-        }
-    }
-}
-
-// === WebSocket unified message (server → client) ===
-
-#[derive(Debug, Serialize)]
-#[serde(untagged)]
-pub enum WsServerMessage {
-    Event(WsEvent),
-    Response(WsServerResponse),
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn deserialize_auth_pair_request() {
-        let json = r#"{"pin": "123456"}"#;
-        let req: AuthPairRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.pin, "123456");
-    }
-
-    #[test]
-    fn deserialize_shutdown_request_default() {
-        let json = r#"{}"#;
-        let req: ShutdownRequest = serde_json::from_str(json).unwrap();
-        assert!(!req.force);
-        assert_eq!(req.delay_secs, 0);
-    }
-
-    #[test]
-    fn deserialize_shutdown_request_with_fields() {
-        let json = r#"{"force": true, "delay_secs": 30}"#;
-        let req: ShutdownRequest = serde_json::from_str(json).unwrap();
-        assert!(req.force);
-        assert_eq!(req.delay_secs, 30);
-    }
-
-    #[test]
-    fn deserialize_sleep_request() {
-        let json = r#"{"hibernate": true}"#;
-        let req: SleepRequest = serde_json::from_str(json).unwrap();
-        assert!(req.hibernate);
-    }
-
-    #[test]
-    fn deserialize_restart_request_with_delay() {
-        let request: WsClientRequest =
-            serde_json::from_str(r#"{"type":"restart","force":true,"delay_secs":15}"#).unwrap();
-        assert!(matches!(
-            request,
-            WsClientRequest::Restart {
-                force: true,
-                delay_secs: 15
-            }
-        ));
-    }
-
-    #[test]
-    fn deserialize_process_list_query_default() {
-        let json = r#"{}"#;
-        let req: ProcessListQuery = serde_json::from_str(json).unwrap();
-        assert_eq!(req.search, None);
-        assert_eq!(req.page, 0);
-        assert_eq!(req.page_size, 50);
-    }
-
-    #[test]
-    fn deserialize_process_list_query_with_search() {
-        let json = r#"{"search": "notepad", "page": 1, "page_size": 20}"#;
-        let req: ProcessListQuery = serde_json::from_str(json).unwrap();
-        assert_eq!(req.search, Some("notepad".to_string()));
-        assert_eq!(req.page, 1);
-        assert_eq!(req.page_size, 20);
-    }
-
-    #[test]
-    fn deserialize_launch_app_request() {
-        let json = r#"{"path": "C:\\Windows\\System32\\notepad.exe", "args": ["file.txt"]}"#;
-        let req: LaunchAppRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.path, "C:\\Windows\\System32\\notepad.exe");
-        assert_eq!(req.args, vec!["file.txt".to_string()]);
-    }
-
-    #[test]
-    fn deserialize_launch_app_request_no_args() {
-        let json = r#"{"path": "C:\\Windows\\System32\\calc.exe"}"#;
-        let req: LaunchAppRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.path, "C:\\Windows\\System32\\calc.exe");
-        assert!(req.args.is_empty());
-    }
-
-    #[test]
-    fn deserialize_add_custom_dir_request() {
-        let json = r#"{"path": "D:\\Games", "name": "游戏目录", "enabled": true, "max_depth": 3, "recursive": true}"#;
-        let req: AddCustomDirRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.path, "D:\\Games");
-        assert_eq!(req.name, Some("游戏目录".to_string()));
-        assert!(req.enabled);
-        assert_eq!(req.max_depth, 3);
-        assert!(req.recursive);
-    }
-
-    #[test]
-    fn deserialize_update_custom_dir_request() {
-        let json = r#"{"name": "新名称", "enabled": false}"#;
-        let req: UpdateCustomDirRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.name, Some("新名称".to_string()));
-        assert_eq!(req.enabled, Some(false));
-        assert_eq!(req.path, None);
-    }
-
-    #[test]
-    fn deserialize_update_settings_request() {
-        let json = r#"{"port": 8080, "auto_start": true, "minimize_to_tray": false}"#;
-        let req: UpdateSettingsRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.port, Some(8080));
-        assert_eq!(req.auto_start, Some(true));
-        assert_eq!(req.minimize_to_tray, Some(false));
-    }
-
-    #[test]
-    fn serialize_ws_event_foreground() {
-        let event = WsEvent::ForegroundChanged {
-            data: ForegroundInfo {
-                pid: 1234,
-                title: "测试窗口".to_string(),
-                path: Some("C:\\test.exe".to_string()),
-                hwnd: 42,
-            },
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"type\":\"foreground_changed\""));
-        assert!(json.contains("\"pid\":1234"));
-        assert!(json.contains("\"hwnd\":42"));
-        assert!(json.contains("测试窗口"));
-    }
-
-    #[test]
-    fn deserialize_ws_volume_and_window_requests() {
-        let get_volume: WsClientRequest = serde_json::from_str(r#"{"type":"get_volume"}"#).unwrap();
-        assert!(matches!(get_volume, WsClientRequest::GetVolume));
-
-        let set_muted: WsClientRequest =
-            serde_json::from_str(r#"{"type":"set_muted","muted":true}"#).unwrap();
-        assert!(matches!(
-            set_muted,
-            WsClientRequest::SetMuted { muted: true }
-        ));
-
-        let focus: WsClientRequest =
-            serde_json::from_str(r#"{"type":"focus_window","hwnd":12345}"#).unwrap();
-        assert!(matches!(
-            focus,
-            WsClientRequest::FocusWindow { hwnd: 12345 }
-        ));
-
-        let switch: WsClientRequest =
-            serde_json::from_str(r#"{"type":"switch_window","direction":"previous"}"#).unwrap();
-        assert!(matches!(
-            switch,
-            WsClientRequest::SwitchWindow {
-                direction: WindowSwitchDirection::Previous
-            }
-        ));
-    }
-
-    #[test]
-    fn deserialize_display_and_remote_input_requests() {
-        let display: WsClientRequest = serde_json::from_str(
-            r#"{"type":"set_display_mode","display_id":"\\.\\DISPLAY1","width":1920,"height":1080,"refresh_millihz":60000}"#,
-        )
-        .unwrap();
-        assert!(matches!(
-            display,
-            WsClientRequest::SetDisplayMode {
-                width: 1920,
-                height: 1080,
-                ..
-            }
-        ));
-
-        let mouse: WsClientRequest =
-            serde_json::from_str(r#"{"type":"mouse_move","dx":4,"dy":-2}"#).unwrap();
-        assert!(matches!(
-            mouse,
-            WsClientRequest::MouseMove { dx: 4, dy: -2 }
-        ));
-
-        let mouse_abs: WsClientRequest =
-            serde_json::from_str(r#"{"type":"mouse_move_absolute","x":960,"y":540}"#).unwrap();
-        assert!(matches!(
-            mouse_abs,
-            WsClientRequest::MouseMoveAbsolute { x: 960, y: 540 }
-        ));
-
-        let get_audio_outputs: WsClientRequest =
-            serde_json::from_str(r#"{"type":"get_audio_outputs"}"#).unwrap();
-        assert!(matches!(
-            get_audio_outputs,
-            WsClientRequest::GetAudioOutputs
-        ));
-
-        let set_audio_output: WsClientRequest =
-            serde_json::from_str(r#"{"type":"set_audio_output","device_id":"audio-device-1"}"#)
-                .unwrap();
-        assert!(matches!(
-            set_audio_output,
-            WsClientRequest::SetAudioOutput { device_id } if device_id == "audio-device-1"
-        ));
-
-        let text: WsClientRequest =
-            serde_json::from_str(r#"{"type":"send_text","text":"你好"}"#).unwrap();
-        assert!(matches!(text, WsClientRequest::SendText { text } if text == "你好"));
-
-        let key: WsClientRequest =
-            serde_json::from_str(r#"{"type":"key_press","key":"backspace"}"#).unwrap();
-        assert!(matches!(key, WsClientRequest::KeyPress { key } if key == "backspace"));
-
-        let key_event: WsClientRequest = serde_json::from_str(
-            r#"{"type":"key_event","usage":4,"modifiers":2,"pressed":true}"#,
-        )
-        .unwrap();
-        assert!(matches!(
-            key_event,
-            WsClientRequest::KeyEvent { usage: 4, modifiers: 2, pressed: true }
-        ));
-
-        let state_down: WsClientRequest =
-            serde_json::from_str(r#"{"type":"mouse_button_state","button":"left","pressed":true}"#)
-                .unwrap();
-        assert!(matches!(
-            state_down,
-            WsClientRequest::MouseButtonState { button, pressed } if button == "left" && pressed
-        ));
-
-        let state_up: WsClientRequest = serde_json::from_str(
-            r#"{"type":"mouse_button_state","button":"left","pressed":false}"#,
-        )
-        .unwrap();
-        assert!(matches!(
-            state_up,
-            WsClientRequest::MouseButtonState { button, pressed } if button == "left" && !pressed
-        ));
-    }
-
-    #[test]
-    fn deserialize_auto_unlock_request() {
-        let request: WsClientRequest = serde_json::from_str(r#"{"type":"auto_unlock"}"#).unwrap();
-        assert!(matches!(request, WsClientRequest::AutoUnlock { pin: None }));
-        let request: WsClientRequest =
-            serde_json::from_str(r#"{"type":"auto_unlock","pin":"1234"}"#).unwrap();
-        assert!(matches!(request, WsClientRequest::AutoUnlock { pin: Some(pin) } if pin == "1234"));
-    }
-
-    #[test]
-    fn deserialize_manual_catalog_and_steam_install_requests() {
-        let refresh: WsClientRequest =
-            serde_json::from_str(r#"{"type":"refresh_launcher_catalog","kind":"game"}"#).unwrap();
-        assert!(matches!(
-            refresh,
-            WsClientRequest::RefreshLauncherCatalog { kind } if kind == "game"
-        ));
-
-        let install: WsClientRequest =
-            serde_json::from_str(r#"{"type":"install_steam_game","app_id":570}"#).unwrap();
-        assert!(matches!(
-            install,
-            WsClientRequest::InstallSteamGame { app_id: 570 }
-        ));
-    }
-
-    #[test]
-    fn serialize_volume_and_unlock_status() {
-        let volume = WsServerResponse::VolumeStatus(crate::protocol::responses::VolumeStatus {
-            percent: 65,
-            muted: false,
-        });
-        let json = serde_json::to_string(&volume).unwrap();
-        assert!(json.contains("\"type\":\"volume_status\""));
-        assert!(json.contains("\"percent\":65"));
-
-        let outputs =
-            WsServerResponse::AudioOutputs(crate::protocol::responses::AudioOutputsResponse {
-                devices: vec![crate::protocol::responses::AudioOutputDevice {
-                    id: "audio-device-1".into(),
-                    name: "扬声器".into(),
-                    is_default: true,
-                }],
-            });
-        let json = serde_json::to_string(&outputs).unwrap();
-        assert!(json.contains("\"type\":\"audio_outputs\""));
-        assert!(json.contains("\"is_default\":true"));
-
-        let unlock = WsServerResponse::UnlockStatus(crate::protocol::responses::UnlockStatus {
-            locked: true,
-            mode: "manual".to_string(),
-            auto_login_enabled: false,
-            message: "PC 已上线但仍需本机解锁".to_string(),
-            uac_detected: false,
-            surface: "login".to_string(),
-        });
-        let json = serde_json::to_string(&unlock).unwrap();
-        assert!(json.contains("\"type\":\"unlock_status\""));
-        assert!(json.contains("\"locked\":true"));
-    }
-
-    #[test]
-    fn serialize_ws_event_process_started() {
-        let event = WsEvent::ProcessStarted {
-            data: ProcessBasic {
-                pid: 5678,
-                name: "test.exe".to_string(),
-            },
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"type\":\"process_started\""));
-        assert!(json.contains("\"pid\":5678"));
-        assert!(json.contains("test.exe"));
-    }
-
-    #[test]
-    fn deserialize_mobile_launch_directory_requests() {
-        let list: WsClientRequest = serde_json::from_str(
-            r#"{"type":"list_launcher_items","kind":"game","query":"elden","page":1,"page_size":30}"#,
-        )
-        .unwrap();
-        assert!(matches!(
-            list,
-            WsClientRequest::ListLauncherItems { kind, query: Some(query), page: 1, page_size: 30 }
-                if kind == "game" && query == "elden"
-        ));
-
-        let process: WsClientRequest = serde_json::from_str(r#"{"type":"get_processes"}"#).unwrap();
-        assert!(matches!(
-            process,
-            WsClientRequest::GetProcesses { filter, sort, page: 0, page_size: 50, .. }
-                if filter == "user" && sort == "active"
-        ));
-    }
-
-    #[test]
-    fn serialize_ping_pong_with_request_id_shape() {
-        let ping: WsClientRequest =
-            serde_json::from_str(r#"{"type":"ping","request_id":"health-1"}"#).unwrap();
-        assert!(matches!(ping, WsClientRequest::Ping));
-
-        let pong = serde_json::to_string(&WsServerResponse::Pong).unwrap();
-        assert_eq!(pong, r#"{"type":"pong"}"#);
-    }
-
-}
-
+#[path = "requests_ws_test.rs"]
+mod requests_ws_test;

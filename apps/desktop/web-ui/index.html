@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="QingLink 桌面端本地管理界面" />
+    <title>QingLink 桌面管理台</title>
+    <!--vite-entry-->
+    <script>
+      // 在样式表解析前定主题：读取本地偏好，**未设置时默认亮色**（不跟随系统，
+      // 否则系统深色的机器永远看不到亮色主题）。这段脚本必须保持内联且无依赖，
+      // 否则首屏会先闪一帧另一个主题。
+      // 键名与 src/stores/theme.ts 的 STORAGE_KEY 保持一致。
+      ;(function () {
+        try {
+          var stored = window.localStorage.getItem('qinglink.theme')
+          var mode = stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'light'
+          var resolved =
+            mode === 'system'
+              ? window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark'
+              : mode
+          document.documentElement.dataset.theme = resolved
+          document.documentElement.dataset.themeMode = mode
+        } catch (error) {
+          document.documentElement.dataset.theme = 'light'
+          document.documentElement.dataset.themeMode = 'light'
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,4 +1,4 @@
-//! QingLink system service and secure-session agent.
+//! QingLink 系统服务与安全会话代理。
 //!
 //! 一个高权限 Windows 服务，为 QingLink 远程控制应用
 //! 提供安全桌面输入注入功能。

@@ -1,28 +1,48 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+//! 输入通道的二进制帧格式：鼠标相对位移帧的布局与解析。
 
 use crate::protocol::requests::MAX_MOUSE_MOVE_DELTA;
 
+/// 一帧的固定字节数。
 pub const FRAME_LEN: usize = 12;
+/// 二进制输入协议版本，写在首字节。
 pub const PROTOCOL_VERSION: u8 = 1;
+/// 鼠标相对位移事件类型，写在第二字节。
 pub const EVENT_MOUSE_MOVE: u8 = 1;
 
+/// 客户端上报的一次鼠标相对位移。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MouseMoveFrame {
+    /// 客户端递增的序号，用于丢弃乱序帧。
     pub sequence: u16,
+    /// 水平位移，范围受 `MAX_MOUSE_MOVE_DELTA` 限制。
     pub dx: i16,
+    /// 垂直位移，范围受 `MAX_MOUSE_MOVE_DELTA` 限制。
     pub dy: i16,
+    /// 客户端时间戳（毫秒）。
     pub timestamp_ms: u32,
 }
 
+/// 解析输入帧时的失败原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameError {
+    /// 字节数不等于 [`FRAME_LEN`]。
     InvalidLength,
+    /// 版本字节与 [`PROTOCOL_VERSION`] 不符。
     InvalidVersion,
+    /// 事件类型字节与 [`EVENT_MOUSE_MOVE`] 不符。
     InvalidEventType,
+    /// 位移超出允许范围。
     OutOfRange,
 }
 
 impl MouseMoveFrame {
+    /// 从小端字节序的定长帧解析一次鼠标位移。
+    ///
+    /// # Errors
+    /// 字节数不等于 [`FRAME_LEN`]（[`FrameError::InvalidLength`]）、版本字节不符
+    /// （[`FrameError::InvalidVersion`]）、事件类型不符
+    /// （[`FrameError::InvalidEventType`]），或位移超出 `MAX_MOUSE_MOVE_DELTA` 允许
+    /// 范围（[`FrameError::OutOfRange`]）时返回 `Err`。
     pub fn parse(bytes: &[u8]) -> Result<Self, FrameError> {
         if bytes.len() != FRAME_LEN {
             return Err(FrameError::InvalidLength);
@@ -47,13 +67,6 @@ impl MouseMoveFrame {
             timestamp_ms: u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
         })
     }
-}
-
-pub fn now_millis_u32() -> u32 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u32
 }
 
 #[cfg(test)]

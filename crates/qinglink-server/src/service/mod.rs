@@ -1,6 +1,6 @@
-//! Core service layer.
+//! 核心服务层。
 //!
-//! Provides SQLite persistence, pairing management, and server settings.
+//! 提供 SQLite 持久化、配对管理与服务器设置。
 
 pub mod app_db;
 pub mod app_scanner;
@@ -18,11 +18,11 @@ use uuid::Uuid;
 
 use local_ip_address::local_ip;
 use qinglink_storage::{AppPaths, database::DatabaseService};
-use serde::{Deserialize, Serialize};
 
 use self::process::ProcessManager;
 use self::system::SystemService;
 
+/// 远程控制服务门面：统一持有数据目录、系统服务、进程管理器与配对状态。
 #[derive(Clone)]
 pub struct RemoteControlService {
     paths: AppPaths,
@@ -32,20 +32,21 @@ pub struct RemoteControlService {
     pc_id: Uuid,
 }
 
+impl std::fmt::Debug for RemoteControlService {
+    // 内部持有配对 PIN，禁止整体 derive；这里只输出非敏感的本机标识。
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteControlService")
+            .field("pc_id", &self.pc_id)
+            .finish_non_exhaustive()
+    }
+}
+
 const PAIRING_PIN_FILE: &str = "qinglink-pairing-pin";
 
 /// Maximum consecutive failed PIN attempts before temporary lockout.
 const PIN_MAX_ATTEMPTS: u32 = 5;
 /// PIN lockout duration in seconds.
 const PIN_LOCKOUT_SECS: u64 = 30;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PairedDevice {
-    pub name: String,
-    pub token: String,
-    pub expires_at: i64,
-    pub paired_at: i64,
-}
 
 #[derive(Default)]
 struct ServiceInner {
@@ -68,6 +69,7 @@ struct ServiceInner {
 }
 
 impl RemoteControlService {
+    /// 创建服务实例：解析本机 IP、PC 标识，并恢复上次持久化的配对 PIN。
     pub fn new(paths: AppPaths) -> Self {
         let local_ip = Self::obtain_local_ip();
         let pairing_pin = Self::load_pairing_pin(&paths);
@@ -104,10 +106,12 @@ impl RemoteControlService {
         id
     }
 
+    /// 本机在 QingLink 中的唯一标识。
     pub fn pc_id(&self) -> Uuid {
         self.pc_id
     }
 
+    /// 本机计算机名，取不到环境变量时回退为 `QingLink PC`。
     pub fn pc_name(&self) -> String {
         std::env::var("COMPUTERNAME")
             .or_else(|_| std::env::var("HOSTNAME"))
@@ -121,18 +125,22 @@ impl RemoteControlService {
             .unwrap_or_else(|_| "127.0.0.1".to_string())
     }
 
+    /// 数据目录布局，用于定位配置与数据库文件。
     pub fn paths(&self) -> &AppPaths {
         &self.paths
     }
 
+    /// 共享的系统状态与电源控制服务。
     pub fn system_service(&self) -> &SystemService {
         &self.system_service
     }
 
+    /// 共享的进程管理器，使用前需先获取其内部互斥锁。
     pub fn process_manager(&self) -> &std::sync::Mutex<ProcessManager> {
         &self.process_manager
     }
 
+    /// 生成新的 6 位配对 PIN 并持久化，同时清零失败计数与锁定状态。
     pub fn generate_pin(&self) -> String {
         let uuid = uuid::Uuid::new_v4();
         let bytes = uuid.as_bytes();
@@ -151,6 +159,7 @@ impl RemoteControlService {
         pin
     }
 
+    /// 校验配对 PIN，失败会累计次数并在超过上限后临时锁定。
     pub fn check_pin(&self, pin: &str) -> bool {
         self.check_pin_inner(pin)
     }
@@ -196,6 +205,7 @@ impl RemoteControlService {
         inner.pin_failed_attempts = 0;
     }
 
+    /// 清除当前配对 PIN（配对成功后调用）。
     pub fn consume_pin(&self) {
         let mut inner = crate::lock_unpoisoned(&self.inner);
         inner.pairing_pin = None;
@@ -203,16 +213,19 @@ impl RemoteControlService {
         self.persist_pairing_pin(None);
     }
 
+    /// 记录 HTTP 服务的运行状态与监听端口。
     pub fn set_server_running(&self, running: bool, port: u16) {
         let mut inner = crate::lock_unpoisoned(&self.inner);
         inner.server_running = running;
         inner.server_port = port;
     }
 
+    /// HTTP 服务当前是否正在运行。
     pub fn is_server_running(&self) -> bool {
         crate::lock_unpoisoned(&self.inner).server_running
     }
 
+    /// HTTP 服务当前监听的端口。
     pub fn server_port(&self) -> u16 {
         crate::lock_unpoisoned(&self.inner).server_port
     }
@@ -263,7 +276,7 @@ impl RemoteControlService {
     }
 
     /// Update the server settings.
-    pub fn update_settings(&self, req: crate::protocol::requests::UpdateSettingsRequest) {
+    pub fn update_settings(&self, req: &crate::protocol::requests::UpdateSettingsRequest) {
         let mut inner = crate::lock_unpoisoned(&self.inner);
         if let Some(port) = req.port {
             inner.server_port = port;
@@ -274,34 +287,6 @@ impl RemoteControlService {
         if let Some(minimize_to_tray) = req.minimize_to_tray {
             inner.minimize_to_tray = minimize_to_tray;
         }
-    }
-
-    /// List paired devices (only returns valid tokens).
-    pub fn list_paired_devices(&self, database: &DatabaseService) -> Vec<PairedDevice> {
-        let key = "qinglink/data";
-        let connection = match database.connection(key) {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
-        let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        let mut stmt = match connection.prepare(
-            "SELECT device_name, token_prefix, expires_at, created_at FROM tokens_v2 WHERE permanent = 1 OR expires_at > ?1 ORDER BY created_at DESC",
-        ) {
-            Ok(s) => s,
-            Err(_) => return Vec::new(),
-        };
-        let rows = match stmt.query_map([now], |row| {
-            Ok(PairedDevice {
-                name: row.get(0)?,
-                token: row.get(1)?,
-                expires_at: row.get(2)?,
-                paired_at: row.get(3)?,
-            })
-        }) {
-            Ok(rows) => rows,
-            Err(_) => return Vec::new(),
-        };
-        rows.filter_map(|r| r.ok()).collect()
     }
 
     /// Revoke a device pairing.

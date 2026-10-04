@@ -14,8 +14,5 @@ r2d2_sqlite.workspace = true
 rusqlite.workspace = true
 tracing.workspace = true
 
-[dev-dependencies]
-tempfile = "3"
-
 [lints]
 workspace = true

@@ -1,3 +1,4 @@
+//! WebSocket 协议端到端测试：认证、API v2 配对与二进制输入通道。
 #![allow(clippy::unwrap_used)]
 
 /// WebSocket 协议端到端测试
@@ -168,7 +169,7 @@ async fn ws_binary_input_frame_reaches_move_channel() {
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        let (dx, dy) = *move_rx.borrow_and_update();
+        let (_, dx, dy) = *move_rx.borrow_and_update();
         if (dx, dy) == (5, -3) {
             break;
         }

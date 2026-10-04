@@ -64,7 +64,10 @@ GoRouter buildAppRouter(Ref ref) => GoRouter(
     GoRoute(
       path: AppRoutes.scanFolder,
       name: 'scan-folder',
-      builder: (_, _) => const ScanFolderScreen(),
+      builder: (_, state) => ScanFolderScreen(
+        // `game`（默认）或 `app`：决定扫描到的条目加入库后的分类。
+        initialKind: state.uri.queryParameters['kind'] == 'app' ? 'app' : 'game',
+      ),
     ),
     GoRoute(
       path: AppRoutes.settings,
