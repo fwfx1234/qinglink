@@ -11,10 +11,10 @@ import '../widgets/icon_picker_sheet.dart';
 import 'library_entry_utils.dart';
 
 /// 目录条目管理菜单的动作。
-enum LibraryCatalogAction { add, unadd, icon, rename, args, block, delete }
+enum LibraryCatalogAction { add, unadd, icon, rename, args, launchMode, block, delete }
 
 /// 常用条目管理菜单的动作。
-enum LibraryFavoriteAction { home, icon, rename, args, remove }
+enum LibraryFavoriteAction { home, icon, rename, args, launchMode, remove }
 
 /// 「添加 / 扫描」菜单的动作。
 enum LibraryAddAction { rescan, folderGame, folderApp, file }
@@ -69,6 +69,13 @@ Future<LibraryCatalogAction?> showLibraryCatalogMenu(
             ),
             onTap: () => Navigator.pop(ctx, LibraryCatalogAction.args),
           ),
+          if (item.category.toLowerCase() == 'game')
+            ListTile(
+              leading: const Icon(Icons.display_settings_outlined),
+              title: const Text('启动分辨率'),
+              subtitle: Text(item.launchMode?.label ?? '跟随当前分辨率'),
+              onTap: () => Navigator.pop(ctx, LibraryCatalogAction.launchMode),
+            ),
           ListTile(
             leading: const Icon(Icons.visibility_off_outlined),
             title: const Text('屏蔽（不再出现在列表里）'),
@@ -124,6 +131,13 @@ Future<LibraryFavoriteAction?> showLibraryFavoriteMenu(
             ),
             onTap: () => Navigator.pop(ctx, LibraryFavoriteAction.args),
           ),
+          if (item.category.toLowerCase() == 'game')
+            ListTile(
+              leading: const Icon(Icons.display_settings_outlined),
+              title: const Text('启动分辨率'),
+              subtitle: Text(item.launchMode?.label ?? '跟随当前分辨率'),
+              onTap: () => Navigator.pop(ctx, LibraryFavoriteAction.launchMode),
+            ),
           ListTile(
             leading: const Icon(Icons.delete_outline, color: AppColors.red),
             title: const Text('从库中移除'),

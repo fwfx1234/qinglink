@@ -1,3 +1,5 @@
+import 'display_info.dart';
+
 /// A compact launch-directory entry. Icons are fetched on demand, while the
 /// executable path is available for the details view.
 class LauncherItem {
@@ -9,6 +11,7 @@ class LauncherItem {
   final String source;
   final String? iconBase64;
   final List<String> args;
+  final DisplayModeInfo? launchMode;
 
   /// 图标来源（manual/steam/shortcut/executable/image/shell）。
   /// 为 `shell` 表示只拿到系统默认图标，通常意味着图标不准。
@@ -35,16 +38,13 @@ class LauncherItem {
     required this.source,
     this.iconBase64,
     this.args = const [],
+    this.launchMode,
     this.iconSource,
     this.sizeBytes,
     this.recommended = false,
     this.favorite = false,
     this.pinned = false,
   });
-
-  /// 只拿到系统默认图标时，图标几乎必然与程序不符。
-  bool get iconLooksWrong =>
-      iconSource == null || iconSource == 'shell' || iconSource == 'none';
 
   factory LauncherItem.fromJson(Map<String, dynamic> json) => LauncherItem(
     id: json['id'] as String,
@@ -64,10 +64,13 @@ class LauncherItem {
             ?.map((value) => value.toString())
             .toList() ??
         const [],
+    launchMode: json['launch_mode'] is Map<String, dynamic>
+        ? DisplayModeInfo.fromJson(json['launch_mode'] as Map<String, dynamic>)
+        : null,
   );
 
   /// 服务端改了标记后本地先更新，避免整页重拉带来的闪烁。
-  LauncherItem copyWith({bool? favorite, bool? pinned, String? name, List<String>? args}) =>
+  LauncherItem copyWith({bool? favorite, bool? pinned, String? name, List<String>? args, DisplayModeInfo? launchMode}) =>
       LauncherItem(
         id: id,
         name: name ?? this.name,
@@ -77,6 +80,7 @@ class LauncherItem {
         source: source,
         iconBase64: iconBase64,
         args: args ?? this.args,
+        launchMode: launchMode ?? this.launchMode,
         iconSource: iconSource,
         sizeBytes: sizeBytes,
         recommended: recommended,

@@ -123,6 +123,15 @@ pub fn resolve_icon(_path: &str, _explicit: Option<&str>) -> IconResolution {
     }
 }
 
+/// 非 Windows 平台没有进程图标来源，返回空的解析结果。
+pub fn resolve_process_icon(_path: &str) -> IconResolution {
+    IconResolution {
+        icon_base64: None,
+        source: "none".to_string(),
+        source_path: None,
+    }
+}
+
 /// 非 Windows 平台没有可选的图标来源，恒返回空列表。
 pub fn list_icon_candidates(_path: &str) -> Vec<IconCandidateInfo> {
     Vec::new()
@@ -130,6 +139,11 @@ pub fn list_icon_candidates(_path: &str) -> Vec<IconCandidateInfo> {
 
 /// 非 Windows 平台无法把图片文件转换为图标，恒返回 `None`。
 pub fn image_file_to_icon_base64(_path: &str) -> Option<String> {
+    None
+}
+
+/// 非 Windows 平台无法规范化客户端上传的图标位图，恒返回 `None`。
+pub fn base64_image_to_icon_base64(_payload: &str) -> Option<String> {
     None
 }
 

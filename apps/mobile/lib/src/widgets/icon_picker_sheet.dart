@@ -7,6 +7,9 @@ import '../theme/app_theme.dart';
 import '../utils/snackbar_extension.dart';
 import 'app_icon.dart';
 import 'app_ui.dart';
+import 'file_picker_sheet.dart';
+import 'icon_candidate_section.dart';
+import 'icon_picker_pc_section.dart';
 
 /// 图标来源的中文说明。`shell` 意味着只拿到系统默认图标，通常就是"图标不对"。
 String iconSourceLabel(String? source) {
@@ -36,40 +39,50 @@ String iconSourceLabel(String? source) {
 /// 外部文件或同目录的 PNG/ICO。这个面板把服务端能找到的全部候选列出来，
 /// 让用户一次点掉"图标不对"的问题。
 ///
-/// 返回值为 `true` 表示图标已改变，调用方需要刷新对应条目的图标。
+/// 返回值为 `true` 表示图标已改变，调用方需要刷新对应条目的图标。变更记在
+/// 调用方持有的 [_IconChangeTracker] 上而不是面板状态里：面板被拖拽关闭时
+/// `showModalBottomSheet` 只会返回 `null`，用面板内的标志会丢掉"图标已经换了"
+/// 这件事，列表就会一直显示旧图标。
 Future<bool> showIconPickerSheet(
   BuildContext context, {
   required LauncherItem item,
 }) async {
-  final changed = await showModalBottomSheet<bool>(
+  final tracker = _IconChangeTracker();
+  await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
     showDragHandle: true,
     builder: (_) => FractionallySizedBox(
       heightFactor: 0.86,
-      child: _IconPickerSheet(item: item),
+      child: _IconPickerSheet(item: item, tracker: tracker),
     ),
   );
-  return changed ?? false;
+  return tracker.changed;
+}
+
+/// 图标面板的变更标记；由调用方持有，面板关闭后仍可读。
+class _IconChangeTracker {
+  bool changed = false;
 }
 
 class _IconPickerSheet extends ConsumerStatefulWidget {
-  const _IconPickerSheet({required this.item});
+  const _IconPickerSheet({required this.item, required this.tracker});
   final LauncherItem item;
+  final _IconChangeTracker tracker;
 
   @override
   ConsumerState<_IconPickerSheet> createState() => _IconPickerSheetState();
 }
 
 class _IconPickerSheetState extends ConsumerState<_IconPickerSheet> {
-  final _manualController = TextEditingController();
+  /// 在 PC 上选好、还没应用的图片文件路径。
+  String? _pickedPath;
   List<IconCandidate> _candidates = const [];
   bool _loading = true;
   bool _busy = false;
   int _revision = 0;
   String _source = '';
-  bool _changed = false;
   String? _error;
 
   @override
@@ -77,12 +90,6 @@ class _IconPickerSheetState extends ConsumerState<_IconPickerSheet> {
     super.initState();
     _source = widget.item.iconSource ?? '';
     _loadCandidates();
-  }
-
-  @override
-  void dispose() {
-    _manualController.dispose();
-    super.dispose();
   }
 
   Future<void> _loadCandidates() async {
@@ -108,20 +115,21 @@ class _IconPickerSheetState extends ConsumerState<_IconPickerSheet> {
     }
   }
 
-  Future<void> _apply({String? iconPath}) async {
-    if (_busy) return;
+  /// 用指定文件（或自动来源链）换图标；返回是否成功。
+  Future<bool> _apply({String? iconPath}) async {
+    if (_busy) return false;
     setState(() => _busy = true);
     try {
       final result = await ref
           .read(launcherControllerProvider)
           .refreshIcon(widget.item.id, iconPath: iconPath);
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() {
         _busy = false;
-        _changed = true;
         _revision += 1;
         _source = result.source;
       });
+      widget.tracker.changed = true;
       if (result.iconBase64 == null) {
         context.showWarningSnackBar('没有找到可用图标，已保留原来的图标');
       } else if (result.source == 'shell') {
@@ -130,17 +138,13 @@ class _IconPickerSheetState extends ConsumerState<_IconPickerSheet> {
         context.showSuccessSnackBar('图标已更新（${iconSourceLabel(result.source)}）');
       }
       await _loadCandidates();
+      return true;
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() => _busy = false);
       context.showErrorSnackBar('换图标失败: $error');
+      return false;
     }
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes >= 1024 * 1024) return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
-    if (bytes >= 1024) return '${(bytes / 1024).round()} KB';
-    return '$bytes B';
   }
 
   @override
@@ -181,25 +185,20 @@ class _IconPickerSheetState extends ConsumerState<_IconPickerSheet> {
                       )
                     : null,
               ),
-              ..._buildCandidateSection(palette),
-              const SizedBox(height: 8),
-              SectionHeading(title: '手动指定图标文件'),
-              TextField(
-                controller: _manualController,
-                autocorrect: false,
-                enableSuggestions: false,
-                decoration: const InputDecoration(
-                  labelText: '图标文件路径',
-                  hintText: r'例如 D:\Games\Example\icon.png',
-                  isDense: true,
-                ),
+              IconCandidateSection(
+                candidates: _candidates,
+                loading: _loading,
+                busy: _busy,
+                error: _error,
+                onUse: (path) => _apply(iconPath: path),
               ),
-              const SizedBox(height: 8),
-              SecondaryButton(
-                label: '使用该文件',
-                icon: Icons.check_rounded,
-                expand: true,
-                onPressed: _busy ? null : _applyManualPath,
+              const SizedBox(height: 16),
+              SectionHeading(title: '浏览 PC 上的图片'),
+              IconPickerPcSection(
+                pickedPath: _pickedPath,
+                busy: _busy,
+                onBrowse: _browsePcImage,
+                onApply: _applyPickedPath,
               ),
               const SizedBox(height: 20),
             ],
@@ -210,48 +209,26 @@ class _IconPickerSheetState extends ConsumerState<_IconPickerSheet> {
           child: SecondaryButton(
             label: '完成',
             expand: true,
-            onPressed: () => Navigator.of(context).pop(_changed),
+            onPressed: () => Navigator.of(context).pop(),
           ),
         ),
       ],
     );
   }
 
-  /// 使用手动填写的路径换图标；路径为空时提示用户先填写。
-  void _applyManualPath() {
-    final path = _manualController.text.trim();
-    if (path.isEmpty) {
-      context.showWarningSnackBar('请先填写图标文件路径');
-      return;
-    }
-    _apply(iconPath: path);
+  /// 打开 PC 文件浏览器挑一张图片；用户取消时保持原状。
+  Future<void> _browsePcImage() async {
+    final path = await pickIconImage(context, ref);
+    if (!mounted || path == null) return;
+    setState(() => _pickedPath = path);
   }
 
-  /// 候选图标区块：按错误 / 空结果 / 有候选三种情况产出列表子项。
-  List<Widget> _buildCandidateSection(AppPalette palette) {
-    if (_error != null) {
-      return [
-        Text(_error!, style: AppText.meta.copyWith(color: AppColors.red)),
-      ];
-    }
-    if (!_loading && _candidates.isEmpty) {
-      return [
-        Text(
-          '没有找到其他可用的图标文件，可以手动填写路径。',
-          style: AppText.meta.copyWith(color: palette.textSubtle),
-        ),
-      ];
-    }
-    return [
-      for (final candidate in _candidates) ...[
-        _CandidateCard(
-          candidate: candidate,
-          sizeLabel: _formatBytes(candidate.sizeBytes),
-          onUse: _busy ? null : () => _apply(iconPath: candidate.path),
-        ),
-        const SizedBox(height: 8),
-      ],
-    ];
+  /// 用选中的 PC 图片换图标：只把路径交给服务端，由它重新解析并落库。
+  Future<void> _applyPickedPath() async {
+    final path = _pickedPath;
+    if (path == null) return;
+    final ok = await _apply(iconPath: path);
+    if (ok && mounted) setState(() => _pickedPath = null);
   }
 }
 
@@ -302,60 +279,6 @@ class _IconPickerHeader extends StatelessWidget {
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 单条候选图标文件：类型、路径、体积与「使用」按钮。
-class _CandidateCard extends StatelessWidget {
-  const _CandidateCard({
-    required this.candidate,
-    required this.sizeLabel,
-    required this.onUse,
-  });
-
-  final IconCandidate candidate;
-  final String sizeLabel;
-
-  /// 为 null 表示正在忙碌，此时禁用「使用」按钮。
-  final VoidCallback? onUse;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    return AppCard(
-      minHeight: 54,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  candidate.kindLabel,
-                  style: AppText.body.copyWith(color: palette.textPrimary),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  candidate.path,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.meta.copyWith(color: palette.textSubtle),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            sizeLabel,
-            style: AppText.meta.copyWith(color: palette.textSubtle),
-          ),
-          const SizedBox(width: 6),
-          SecondaryButton(label: '使用', height: 34, onPressed: onUse),
         ],
       ),
     );

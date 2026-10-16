@@ -21,15 +21,19 @@ class HomeQuickActionsSection extends ConsumerWidget {
     required this.online,
     required this.ready,
     required this.irReady,
+    required this.shortcuts,
     required this.onUnlock,
     required this.onTvPower,
+    required this.onShortcut,
   });
 
   final bool online;
   final bool ready;
   final bool irReady;
+  final List<String> shortcuts;
   final VoidCallback onUnlock;
   final VoidCallback onTvPower;
+  final ValueChanged<String> onShortcut;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -38,6 +42,15 @@ class HomeQuickActionsSection extends ConsumerWidget {
       items: [
         ..._systemTiles(context, ref),
         if (irReady) ..._tvTiles(context),
+        ...shortcuts.map(
+          (label) => _QuickTile(
+            icon: Icons.keyboard_command_key_rounded,
+            label: label,
+            tone: AppColors.violet,
+            enabled: ready,
+            onTap: () => onShortcut(label),
+          ),
+        ),
         _pointerTile(context),
       ],
     );

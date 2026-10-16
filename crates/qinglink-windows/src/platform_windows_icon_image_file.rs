@@ -1,5 +1,7 @@
 //! 图片文件（png / jpg / bmp / ico）解码为规范化的图标载荷。
 
+use base64::Engine as _;
+
 use super::icon_normalize::encode_icon_payload;
 use super::icon_resource::extract_resource_icon_base64;
 
@@ -36,6 +38,28 @@ fn is_icon_file(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("ico"))
+}
+
+/// Decode a client-uploaded bitmap (base64 of png / jpg / …) into the same
+/// canonical PNG payload the file-based path produces.
+///
+/// The bytes never reach the filesystem, so phones can hand over an image they
+/// picked locally; normalising here keeps the "every stored icon is a bounded
+/// square PNG" invariant true for that path too.
+pub fn base64_image_to_icon_base64(payload: &str) -> Option<String> {
+    // The control channel frame limit is far smaller than this; the ceiling only
+    // stops a pathological payload from being decoded into memory.
+    if payload.is_empty() || payload.len() > 24 * 1024 * 1024 {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .ok()?;
+    if bytes.is_empty() || bytes.len() > 16 * 1024 * 1024 {
+        return None;
+    }
+    let decoded = image::load_from_memory(&bytes).ok()?;
+    encode_icon_payload(&decoded.to_rgba8())
 }
 
 /// A bitmap file we decode ourselves, as opposed to an icon container the shell

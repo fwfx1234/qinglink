@@ -13,7 +13,9 @@ pub(super) fn list_devices(state: &AppState, offset: usize, limit: usize) -> Com
     check_page(offset, limit)?;
     let total = state.token_store.list_active().len();
     let devices = state.token_store.list_devices_offset(offset, limit);
-    let more = devices.len() == limit;
+    // 按"游标之后是否还有"判断，而不是"这一页是否装满"：设备数恰为 limit 的整数倍时，
+    // 后者会在最后一页之后多报一个空页。
+    let more = offset + devices.len() < total;
     let items = devices
         .into_iter()
         .map(|(_, device)| DeviceSummary {

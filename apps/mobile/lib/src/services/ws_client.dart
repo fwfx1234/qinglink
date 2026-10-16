@@ -154,6 +154,9 @@ class WsClient {
       case 'system_resume':
       case 'system_shutdown':
       case 'system_sleep':
+      // 目录扫描完成的唯一推送事件：漏掉它会让连接层把它当成"没有 request_id
+      // 的响应"丢掉，手机端就只能靠用户手动刷新。
+      case 'launcher_catalog_ready':
       case 'session_closed':
         return true;
       default:

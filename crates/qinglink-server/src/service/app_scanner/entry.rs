@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 游戏启动时请求的显示模式，与显示控制协议共用同一类型。
+pub type LaunchDisplayMode = qinglink_protocol::DisplayModeResponse;
+
 /// 启动器目录中的一个条目（软件、游戏或手动添加项）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppEntry {
@@ -36,6 +39,9 @@ pub struct AppEntry {
     /// 置顶到手机首页.
     #[serde(default)]
     pub is_pinned: bool,
+    /// 游戏启动时请求的显示模式；应用条目保持为空。
+    #[serde(default)]
+    pub launch_mode: Option<LaunchDisplayMode>,
 }
 
 /// One executable found by a user-initiated folder scan.
@@ -82,6 +88,9 @@ pub struct ScannerAppEntryResponse {
     pub pinned: bool,
     /// 是否属于常用（“我的库”）。
     pub quick: bool,
+    /// 游戏配置的启动显示模式。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_mode: Option<LaunchDisplayMode>,
 }
 
 impl From<AppEntry> for ScannerAppEntryResponse {
@@ -98,6 +107,7 @@ impl From<AppEntry> for ScannerAppEntryResponse {
             icon_source: entry.icon_source,
             pinned: entry.is_pinned,
             quick: entry.is_favorite,
+            launch_mode: entry.launch_mode,
         }
     }
 }

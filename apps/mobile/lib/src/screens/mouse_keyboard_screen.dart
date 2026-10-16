@@ -60,6 +60,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
   late final KeyboardImeBridge _imeBridge;
   ProviderSubscription<ConnectionConfig>? _settingsSubscription;
   bool _keyboardSheetOpen = false;
+  bool _keyboardSheetClosing = false;
   bool _imeVisible = false;
   bool _connecting = true;
   String? _error;
@@ -150,7 +151,10 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
     }
     // Navigator changes are deferred until the metrics notification finishes.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_keyboardSheetOpen) return;
+      // 用户可能已经用下拉/点外部开始关闭面板：那种情况下退场动画在进行中，
+      // 再 pop 一次会连「控制」页一起弹掉。
+      if (!mounted || !_keyboardSheetOpen || _keyboardSheetClosing) return;
+      _keyboardSheetOpen = false;
       Navigator.of(context).pop();
     });
   }
@@ -221,6 +225,7 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
   Future<void> _showKeyboardSheet() async {
     if (!_isReady) return;
     _keyboardSheetOpen = true;
+    _keyboardSheetClosing = false;
     _imeVisible = false;
     try {
       await showModalBottomSheet<void>(
@@ -236,22 +241,26 @@ class _MouseKeyboardScreenState extends ConsumerState<MouseKeyboardScreen>
             (item) => item.id == settings.activeShortcutPresetId,
             orElse: () => defaultShortcutPresets.first,
           );
-          return KeyboardInputSheet(
-            textController: _textController,
-            focusNode: _keyboardFocusNode,
-            enabled: _isReady,
-            shortcuts: preset.shortcuts,
-            onShortcut: _sendShortcut,
-            onChanged: _handleKeyboardChanged,
-            onSubmitted: () => unawaited(_submitKeyboardDraft()),
-            onBackspace: () => _sendKey('backspace'),
-            onDelete: () => _sendKey('delete'),
-            onSendEnter: () => unawaited(_sendEnterAndClear()),
+          return KeyboardSheetRouteWatcher(
+            onDismissStarted: () => _keyboardSheetClosing = true,
+            child: KeyboardInputSheet(
+              textController: _textController,
+              focusNode: _keyboardFocusNode,
+              enabled: _isReady,
+              shortcuts: preset.shortcuts,
+              onShortcut: _sendShortcut,
+              onChanged: _handleKeyboardChanged,
+              onSubmitted: () => unawaited(_submitKeyboardDraft()),
+              onBackspace: () => _sendKey('backspace'),
+              onDelete: () => _sendKey('delete'),
+              onSendEnter: () => unawaited(_sendEnterAndClear()),
+            ),
           );
         },
       );
     } finally {
       _keyboardSheetOpen = false;
+      _keyboardSheetClosing = false;
       _imeVisible = false;
       if (mounted) _keyboardFocusNode.unfocus();
       _imeBridge.clearDraft();

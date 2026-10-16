@@ -4,7 +4,7 @@ use windows::Win32::System::Threading::{GetExitCodeProcess, INFINITE, WaitForSin
 use windows::Win32::UI::Shell::{
     SEE_MASK_NO_CONSOLE, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW,
 };
-use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 use windows::core::PCWSTR;
 
 /// 通过 UAC 启动提权进程时可能出现的错误。
@@ -30,6 +30,10 @@ fn to_wide(value: &str) -> Vec<u16> {
 
 /// 以管理员权限（触发 UAC）运行指定可执行文件并等待其结束。
 ///
+/// 提权进程以隐藏窗口启动：debug 构建的助手是 console 子系统进程，用
+/// `SW_SHOWNORMAL` 会在安装期间留下一个黑窗口；助手只通过 `--result` 文件回报结论，
+/// 不需要任何可见窗口。UAC 同意框不受此影响。
+///
 /// # Errors
 /// 以下情况返回 [`ElevationError`]：
 /// - `ShellExecuteExW` 调用失败或返回无效进程句柄时返回
@@ -50,7 +54,7 @@ pub fn run_elevated(executable: &str, args: &str) -> Result<()> {
         lpVerb: PCWSTR(verb.as_ptr()),
         lpFile: PCWSTR(file.as_ptr()),
         lpParameters: PCWSTR(params.as_ptr()),
-        nShow: SW_SHOWNORMAL.0,
+        nShow: SW_HIDE.0,
         fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NO_CONSOLE,
         ..Default::default()
     };

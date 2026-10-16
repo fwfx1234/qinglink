@@ -21,6 +21,7 @@ pub(super) fn handle(
             handle_icon_update(state, id, icon_path.as_deref())
         }
         WsClientRequest::ListScannerAppIcons { id } => handle_icon_candidates(state, id),
+        WsClientRequest::GetIconPreview(query) => handle_icon_preview(&query.path),
         // === Blocked entries ===
         //
         // The phone's library shows curated entries; blocked ones stay on the
@@ -95,6 +96,19 @@ fn handle_icon_candidates(state: &AppState, id: &str) -> WsServerMessage {
     }
 }
 
+/// 预览一个图标文件：只解码，不落库，也不改动条目。
+///
+/// 文件不可读、体积异常或格式不是图标管线能解析的类型时回空载荷，由客户端保留占位图。
+fn handle_icon_preview(path: &str) -> WsServerMessage {
+    let icon_base64 = crate::server::icon_service::preview_file(path);
+    WsServerMessage::Response(WsServerResponse::IconPreview(
+        crate::protocol::responses::IconPreviewResponse {
+            path: path.to_string(),
+            icon_base64,
+        },
+    ))
+}
+
 /// 列出被屏蔽的条目，按名称排序后整表返回。
 fn handle_blocked_entries(state: &AppState) -> WsServerMessage {
     let entries = match crate::lock_unpoisoned(&state.app_db).get_all_apps() {
@@ -167,6 +181,7 @@ fn blocked_summary(
         recommended: None,
         favorite: entry.is_favorite,
         pinned: entry.is_pinned,
+        launch_mode: entry.launch_mode,
         icon_base64: None,
     }
 }

@@ -6,9 +6,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/process_info.dart';
 import '../providers/auth_provider.dart';
 import '../providers/process_controller.dart';
+import '../providers/process_icon_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_dialogs.dart';
 import '../widgets/app_ui.dart';
+import '../widgets/process_icon.dart';
 import '../widgets/unconnected_state.dart';
 
 class ProcessesTab extends ConsumerStatefulWidget {
@@ -54,6 +56,8 @@ class _ProcessesTabState extends ConsumerState<ProcessesTab>
   }
 
   void _reload() {
+    // 显式刷新时放掉上一次解析失败的记录，让这些行重新试一次。
+    ref.read(processIconControllerProvider.notifier).clearFailures();
     ref
         .read(processControllerProvider.notifier)
         .refresh(
@@ -358,14 +362,10 @@ class _ProcessItem extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       child: Row(
         children: [
-          TileIcon(
-            icon: Icons.memory_rounded,
+          ProcessIcon(
+            path: process.path,
+            pid: process.pid,
             color: palette.textMuted,
-            size: 32,
-            radius: 9,
-            iconSize: 16,
-            alpha: 0,
-            filled: false,
           ),
           const SizedBox(width: 8),
           Expanded(

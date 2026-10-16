@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/app_info.dart';
@@ -20,8 +22,33 @@ class LibraryState {
 }
 
 class LibraryController extends StateNotifier<LibraryState> {
-  LibraryController(this._bus) : super(const LibraryState());
+  LibraryController(this._bus) : super(const LibraryState()) {
+    _catalogEvents = _bus.events.listen(_onSessionEvent);
+  }
+
   final RemoteCommandBus _bus;
+  StreamSubscription<Map<String, dynamic>>? _catalogEvents;
+
+  /// 扫描由 PC 完成，完成时服务端推 `launcher_catalog_ready`。
+  ///
+  /// 收到后按当前分区重拉一页，用户不必为了看到新扫描到的程序而下拉刷新；
+  /// 事件里的 `kind` 与本机正在看的分区不一致时不动列表（避免"软件"页被游戏刷新打断）。
+  void _onSessionEvent(Map<String, dynamic> event) {
+    if (event['type'] != 'launcher_catalog_ready') return;
+    final current = state.kind;
+    if (current != 'app' && current != 'game') return;
+    final kind = event['kind'];
+    if (kind is String && kind.isNotEmpty && kind != current) return;
+    unawaited(refresh(kind: current));
+  }
+
+  @override
+  void dispose() {
+    final events = _catalogEvents;
+    _catalogEvents = null;
+    if (events != null) unawaited(events.cancel());
+    super.dispose();
+  }
 
   Future<bool> refresh({String? kind, String? query, bool append = false}) async {
     final selectedKind = kind ?? state.kind;

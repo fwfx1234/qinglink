@@ -60,7 +60,7 @@
 
 | 文件 | 当前行数 | 上限 |
 | --- | --- | --- |
-| `crates/qinglink-server/src/protocol/requests_ws.rs` | 566 | 500 |
+| `crates/qinglink-server/src/protocol/requests_ws.rs` | 541 | 500 |
 
 规则：
 
@@ -217,6 +217,6 @@
 | --- | --- |
 | 硬上限 / 警戒线 | 500 行（`.vue` 400）/ 400 行 |
 | §2.3 清单内的超限文件 | 1 |
-| 清单内最大文件 | `crates/qinglink-server/src/protocol/requests_ws.rs`（566 行） |
+| 清单内最大文件 | `crates/qinglink-server/src/protocol/requests_ws.rs`（541 行） |
 
 §2.3 的表格是权威数据；本表是快照，拆分或新增后应同步更新这两行（§3.2）。

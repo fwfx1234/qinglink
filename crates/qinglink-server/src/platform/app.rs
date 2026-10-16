@@ -88,6 +88,16 @@ pub fn resolve_icon(path: &str, explicit: Option<&str>) -> IconResolution {
     platform_impl::resolve_icon(path, explicit)
 }
 
+/// Resolve one running process's icon from its executable.
+///
+/// Unlike [`resolve_icon`] this never falls back to the shell's generic icon:
+/// in a process list that would repeat the same glyph for every program
+/// without artwork of its own. `source` is one of `executable` / `image` /
+/// `none`.
+pub fn resolve_process_icon(path: &str) -> IconResolution {
+    platform_impl::resolve_process_icon(path)
+}
+
 /// Icon sources a user can pick from for one entry, best guess first.
 pub fn list_icon_candidates(path: &str) -> Vec<IconCandidateInfo> {
     platform_impl::list_icon_candidates(path)
@@ -96,6 +106,12 @@ pub fn list_icon_candidates(path: &str) -> Vec<IconCandidateInfo> {
 /// Decode a standalone image file into the bounded PNG payload the catalog stores.
 pub fn image_file_to_icon_base64(path: &str) -> Option<String> {
     platform_impl::image_file_to_icon_base64(path)
+}
+
+/// Decode a client-uploaded image (base64) into the bounded PNG payload the
+/// catalog stores. Phones use this to hand over an icon picked on the device.
+pub fn base64_image_to_icon_base64(payload: &str) -> Option<String> {
+    platform_impl::base64_image_to_icon_base64(payload)
 }
 
 /// Whether a catalog path still resolves to something launchable.

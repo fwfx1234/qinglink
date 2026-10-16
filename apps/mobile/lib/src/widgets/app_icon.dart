@@ -71,9 +71,13 @@ class _AppIconState extends ConsumerState<AppIcon> {
     final id = widget.id;
     if (id == null || id.isEmpty || _loading) return;
     _loading = true;
-    final base64Icon = await ref
-        .read(launcherControllerProvider)
-        .icon(id);
+    String? base64Icon;
+    try {
+      base64Icon = await ref.read(launcherControllerProvider).icon(id);
+    } catch (error) {
+      // 图标只是装饰：断线或服务端拒绝时保留回退图标，不要把异常丢给控制台。
+      debugPrint('app icon load failed: $error');
+    }
     _loading = false;
     if (!mounted || base64Icon == null || base64Icon.isEmpty) return;
     try {

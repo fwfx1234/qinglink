@@ -21,6 +21,7 @@ class SettingsKeys {
   static const String tvFollowPcPowerOff = 'tv_follow_pc_power_off';
   static const String shortcutPresets = 'shortcut_presets';
   static const String activeShortcutPreset = 'active_shortcut_preset';
+  static const String homeShortcuts = 'home_shortcuts';
   static const String lastUsedLauncher = 'last_used_launcher';
   static const String libraryMigrated = 'quick_apps_migrated_v1';
 }

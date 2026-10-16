@@ -1,5 +1,34 @@
 //! `HICON` 到 RGBA 位图的转换；颜色位图没有可用 alpha 时回退到 AND 掩码。
 
+use windows::Win32::Graphics::Gdi::{BITMAPINFO, BITMAPINFOHEADER, RGBQUAD};
+
+/// 带完整调色板空间的 `BITMAPINFO`。
+///
+/// `BITMAPINFO` 只预留一个 `RGBQUAD`，但按索引格式（1bpp 的 AND 掩码）取位时
+/// `GetDIBits` 会把整张调色板写进来：1bpp 是两项。传单项目结构会让那次写入越过
+/// 结构末尾，踩坏编译器紧挨着放的局部变量——release 构建下正是它让所有图标解析
+/// 都返回"没有图标"。
+#[repr(C)]
+struct DibInfo {
+    header: BITMAPINFOHEADER,
+    /// 8bpp 调色板是 256 项；这里只请求 1bpp，空间绰绰有余。
+    colors: [RGBQUAD; 256],
+}
+
+impl DibInfo {
+    fn new(header: BITMAPINFOHEADER) -> Self {
+        Self {
+            header,
+            colors: [RGBQUAD::default(); 256],
+        }
+    }
+
+    /// 交给 `GetDIBits` 的指针：头部在结构首位，布局与 `BITMAPINFO` 一致。
+    fn as_bitmap_info(&mut self) -> *mut BITMAPINFO {
+        std::ptr::addr_of_mut!(self.header).cast::<BITMAPINFO>()
+    }
+}
+
 /// Convert an `HICON` into an RGBA image, applying the monochrome AND mask when
 /// the color bitmap carries no alpha channel of its own.
 #[allow(unsafe_op_in_unsafe_fn, clippy::missing_transmute_annotations)]
@@ -68,9 +97,7 @@ unsafe fn read_color_bitmap(
     icon_info: &windows::Win32::UI::WindowsAndMessaging::ICONINFO,
     hdc_mem: windows::Win32::Graphics::Gdi::HDC,
 ) -> Option<(Vec<u32>, u32, u32, i32)> {
-    use windows::Win32::Graphics::Gdi::{
-        BI_RGB, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, GetDIBits,
-    };
+    use windows::Win32::Graphics::Gdi::{BI_RGB, BITMAPINFOHEADER, DIB_RGB_COLORS, GetDIBits};
 
     let mut bitmap = windows::Win32::Graphics::Gdi::BITMAP::default();
     let bitmap_size = std::mem::size_of::<windows::Win32::Graphics::Gdi::BITMAP>() as i32;
@@ -89,18 +116,15 @@ unsafe fn read_color_bitmap(
         return None;
     }
 
-    let mut color_info = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: bitmap.bmWidth,
-            biHeight: -bitmap.bmHeight, // top-down
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
-            ..Default::default()
-        },
+    let mut color_info = DibInfo::new(BITMAPINFOHEADER {
+        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+        biWidth: bitmap.bmWidth,
+        biHeight: -bitmap.bmHeight, // top-down
+        biPlanes: 1,
+        biBitCount: 32,
+        biCompression: BI_RGB.0,
         ..Default::default()
-    };
+    });
     let mut pixels = vec![0u32; (width * height) as usize];
     // The bitmap must not be selected into a device context for GetDIBits.
     let color_lines = GetDIBits(
@@ -109,7 +133,7 @@ unsafe fn read_color_bitmap(
         0,
         height,
         Some(pixels.as_mut_ptr() as *mut _),
-        &mut color_info as *mut _ as *mut _,
+        color_info.as_bitmap_info(),
         DIB_RGB_COLORS,
     );
 
@@ -132,9 +156,7 @@ unsafe fn read_and_mask(
     width: u32,
     height: u32,
 ) -> Option<AndMask> {
-    use windows::Win32::Graphics::Gdi::{
-        BI_RGB, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, GetDIBits,
-    };
+    use windows::Win32::Graphics::Gdi::{BI_RGB, BITMAPINFOHEADER, DIB_RGB_COLORS, GetDIBits};
 
     // Read the 1bpp AND mask so icons without an alpha channel stay readable.
     if icon_info.hbmMask.is_invalid() {
@@ -142,18 +164,15 @@ unsafe fn read_and_mask(
     }
 
     let mask_stride = (width as usize).div_ceil(32) * 4;
-    let mut mask_info = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: width as i32,
-            biHeight: -(height as i32),
-            biPlanes: 1,
-            biBitCount: 1,
-            biCompression: BI_RGB.0,
-            ..Default::default()
-        },
+    let mut mask_info = DibInfo::new(BITMAPINFOHEADER {
+        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+        biWidth: width as i32,
+        biHeight: -(height as i32),
+        biPlanes: 1,
+        biBitCount: 1,
+        biCompression: BI_RGB.0,
         ..Default::default()
-    };
+    });
     let mut mask_bytes = vec![0u8; mask_stride * height as usize];
     let mask_lines = GetDIBits(
         hdc_mem,
@@ -161,7 +180,7 @@ unsafe fn read_and_mask(
         0,
         height,
         Some(mask_bytes.as_mut_ptr() as *mut _),
-        &mut mask_info as *mut _ as *mut _,
+        mask_info.as_bitmap_info(),
         DIB_RGB_COLORS,
     );
     if mask_lines == height as i32 {

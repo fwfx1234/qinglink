@@ -131,7 +131,16 @@ fn launch_scanner_app(state: &AppState, id: &str) -> WsServerMessage {
         .strip_prefix("steam:")
         .and_then(|value| value.parse().ok())
     {
-        return match crate::platform::launch_steam_game(app_id) {
+        let app = state
+            .app_scanner
+            .get_or_scan()
+            .into_iter()
+            .find(|app| app.id == id);
+        let result = match app.as_ref() {
+            Some(app) if app.launch_mode.is_some() => state.launch_display.launch(state, app),
+            _ => crate::platform::launch_steam_game(app_id),
+        };
+        return match result {
             Ok(()) => WsServerMessage::Response(WsServerResponse::success()),
             Err(error) => WsServerMessage::Response(WsServerResponse::error(
                 "LAUNCH_FAILED",
@@ -147,7 +156,7 @@ fn launch_scanner_app(state: &AppState, id: &str) -> WsServerMessage {
                 "应用文件已不存在，请刷新应用目录",
             ));
         }
-        match crate::platform::launch_app(&app.exe_path, &app.args) {
+        match state.launch_display.launch(state, app) {
             Ok(()) => {
                 let _ = crate::lock_unpoisoned(&state.app_db).record_launch(&app.id);
                 WsServerMessage::Response(WsServerResponse::success())
@@ -211,6 +220,7 @@ fn scan_candidate_summary(
         recommended: Some(candidate.recommended),
         favorite: false,
         pinned: false,
+        launch_mode: None,
         // 扫描阶段不提取图标：数百个 exe 逐个 shell
         // 取图会让请求远超手机端超时。图标改为按需
         // 解析（见 icon_service）。
@@ -314,6 +324,7 @@ fn user_app_entry(
         args: Vec::new(),
         is_favorite: false,
         is_pinned: false,
+        launch_mode: None,
     }
 }
 

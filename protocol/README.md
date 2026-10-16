@@ -8,3 +8,7 @@
 协议共享有意仅限于传输 DTO。领域对象和 Flutter 视图模型保持平台原生，而
 HTTP/WS 载荷由 CI 中的夹具和 Schema 验证。这使得移动应用独立于 Rust
 运行时，并使 IP 变更和重连可观测。
+
+移动端游戏目录的 `launch_mode` 是可选的显示模式对象，包含 `width`、`height` 与
+`refresh_millihz`。配置由 `update_scanner_app` 保存，清除时使用
+`clear_launch_mode: true`；启动和恢复策略见 [`v2.md`](v2.md)「游戏启动显示模式」。

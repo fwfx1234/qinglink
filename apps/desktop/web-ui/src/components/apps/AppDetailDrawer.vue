@@ -51,13 +51,6 @@ const iconSourceLabel = computed(() =>
   props.app?.icon_source ? (ICON_SOURCE_LABELS[props.app.icon_source] ?? props.app.icon_source) : '尚未解析',
 )
 
-const iconSuspect = computed(
-  () =>
-    !props.app?.has_icon ||
-    props.app?.icon_source === 'shell' ||
-    props.app?.icon_source === 'none',
-)
-
 const argsLabel = computed(() =>
   props.app && props.app.args.length > 0 ? props.app.args.join(' ') : '未设置',
 )
@@ -74,7 +67,6 @@ const statusChips = computed(() => {
   if (app.hidden) chips.push({ label: '已隐藏', tone: 'warning' })
   if (app.user_added) chips.push({ label: '手动添加', tone: 'neutral' })
   if (app.renamed) chips.push({ label: '已重命名', tone: 'accent' })
-  if (iconSuspect.value) chips.push({ label: '图标待确认', tone: 'warning' })
   return chips
 })
 

@@ -2,7 +2,7 @@
 mod imp {
     use anyhow::Context;
     use windows::Win32::System::Power::{
-        ES_CONTINUOUS, ES_SYSTEM_REQUIRED, EXECUTION_STATE, SetSuspendState,
+        ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, EXECUTION_STATE, SetSuspendState,
         SetThreadExecutionState,
     };
     use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSLogoffSession};
@@ -94,19 +94,18 @@ mod imp {
         Ok(())
     }
 
-    /// Prevent or allow automatic system sleep for the current process.
+    /// 阻止或允许系统自动休眠与显示器熄屏，即"保持唤醒"。
     ///
-    /// The display is intentionally not kept on: only the system-required
-    /// execution state is requested. Windows automatically clears this state
-    /// when the process exits, while the explicit false path releases it
-    /// immediately when the tray toggle is switched off.
+    /// 系统与显示器都要请求：只请求 `ES_SYSTEM_REQUIRED` 时系统确实不会睡，但显示器仍
+    /// 会在"关闭显示器"超时后熄屏；用户看到黑屏会认为保持唤醒没有生效，而远程控制也
+    /// 失去了可见画面。Windows 在本线程退出时自动清除该状态，显式关闭时用
+    /// `ES_CONTINUOUS` 立刻释放两项请求。
     ///
     /// # Errors
-    /// Returns "SetThreadExecutionState failed" when the returned previous
-    /// execution state is zero (the call did not succeed).
+    /// 返回值为 0（调用失败）时返回 "SetThreadExecutionState failed"。
     pub fn set_keep_awake(enabled: bool) -> anyhow::Result<()> {
         let flags = if enabled {
-            ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+            ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
         } else {
             ES_CONTINUOUS
         };

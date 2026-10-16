@@ -33,10 +33,17 @@ serde_json.workspace = true
 tiny-skia.workspace = true
 usvg.workspace = true
 
-# The tray is implemented directly on the Windows shell APIs, so the Win32
-# surface is declared here rather than pulled in through a tray crate.
+# The tray and the pairing prompt are implemented directly on the Windows shell
+# APIs, so the Win32 surface is declared here rather than pulled in through a
+# tray crate.
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { workspace = true, features = ["Win32_UI_Shell"] }
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [build-dependencies]
 embed-resource = "3.0"

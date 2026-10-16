@@ -125,6 +125,11 @@ pub async fn update_settings(
             enabled,
             state.settings.debug_log(),
         );
+        // 开关跨重启保留。持久化失败只记警告：会话里的开关已经生效，
+        // 不该因为"记不住"把这次请求判成失败。
+        if let Err(error) = state.preferences.set_keep_awake(enabled) {
+            tracing::warn!(%error, enabled, "保存保持唤醒设置失败");
+        }
     }
 
     if let Some(enabled) = request.debug_log {

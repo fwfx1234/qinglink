@@ -6,10 +6,18 @@ use super::{InputOperation, scm};
 
 pub(crate) fn run_elevated(operation: InputOperation) -> Result<String> {
     let result_file = result_path();
+    // 签名校验是显式选择：默认允许安装本机自建的未签名产物，只有桌面端进程带着
+    // `QINGLINK_REQUIRE_SIGNED_INPUT` 启动时才要求服务资源与桌面端自身签名有效。
+    let signature_check = if std::env::var_os("QINGLINK_REQUIRE_SIGNED_INPUT").is_some() {
+        " --require-signature-check"
+    } else {
+        ""
+    };
     let argument = format!(
-        "--input-component {} --result \"{}\" --skip-signature-check",
+        "--input-component {} --result \"{}\"{}",
         operation.argument(),
-        result_file.display()
+        result_file.display(),
+        signature_check
     );
     let result = qinglink_windows::elevation::run_elevated(
         &std::env::current_exe()
@@ -57,23 +65,24 @@ fn read_helper_result(
     result_file: PathBuf,
     success_message: &str,
 ) -> Result<String> {
+    // 提权助手无论成功与否都会把结论写进结果文件，失败时更要读它：只报
+    // `进程执行失败，退出码: 1` 会让界面看上去"点了没反应"。
+    let helper_result = fs::read_to_string(&result_file).unwrap_or_default();
+    let _ = fs::remove_file(&result_file);
     match result {
         Ok(()) => {
-            let helper_result = fs::read_to_string(&result_file).unwrap_or_default();
-            let _ = fs::remove_file(&result_file);
             if let Some(error) = helper_result.strip_prefix("error:") {
                 bail!(error.to_string());
             }
             Ok(success_message.to_string())
         }
         Err(qinglink_windows::elevation::ElevationError::Cancelled) => {
-            let _ = fs::remove_file(result_file);
             bail!("用户取消了 UAC 授权")
         }
-        Err(error) => {
-            let _ = fs::remove_file(result_file);
-            bail!("{error}")
-        }
+        Err(error) => match helper_result.strip_prefix("error:") {
+            Some(reason) => bail!("{reason}"),
+            None => bail!("{error}"),
+        },
     }
 }
 

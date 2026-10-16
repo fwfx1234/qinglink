@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://qinglink.local/protocol/v2/ws",
   "title": "QingLink API v2 WebSocket envelope",
-  "description": "Common envelope shared by the events and input WebSocket channels.",
+  "description": "Common envelope shared by the events and input WebSocket channels. Scanner catalog launch_mode uses the displayMode definition.",
   "oneOf": [
     { "$ref": "#/$defs/request" },
     { "$ref": "#/$defs/response" },
@@ -14,7 +14,9 @@
       "required": ["type", "request_id"],
       "properties": {
         "type": { "type": "string", "minLength": 1 },
-        "request_id": { "type": "string", "minLength": 1 }
+        "request_id": { "type": "string", "minLength": 1 },
+        "launch_mode": { "$ref": "#/$defs/displayMode" },
+        "clear_launch_mode": { "type": "boolean" }
       },
       "additionalProperties": true
     },
@@ -46,6 +48,30 @@
         "message": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
+    },
+    "displayMode": {
+      "type": "object",
+      "required": ["width", "height", "refresh_millihz"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "refresh_millihz": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "launcherItemSummary": {
+      "type": "object",
+      "required": ["id", "name", "original_name", "exe_path", "category", "source"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "original_name": { "type": "string" },
+        "exe_path": { "type": "string" },
+        "category": { "type": "string" },
+        "source": { "type": "string" },
+        "launch_mode": { "$ref": "#/$defs/displayMode" }
+      },
+      "additionalProperties": true
     }
   }
 }

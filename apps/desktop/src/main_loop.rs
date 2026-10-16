@@ -1,4 +1,4 @@
-//! 主循环：HostCommand、托盘事件、状态同步与消息泵。
+//! 主循环：HostCommand、托盘事件、配对弹窗、状态同步与消息泵。
 //!
 //! 循环体必须留在 main 线程：托盘窗口只允许同线程创建/销毁，Windows 消息队列
 //! 属于这个线程，`SetThreadExecutionState` 也是 per-thread 状态。改动前请先读
@@ -14,6 +14,7 @@ use crate::admin_ui::{open_browser, web_url};
 use crate::bootstrap::Desktop;
 use crate::exit::{self, ExitRequest};
 use crate::input_install;
+use crate::pairing::{self, PairingPrompt, PromptEvent};
 use crate::service::ServiceClient;
 use crate::tray::{TrayAction, TrayController, TrayEvent, TrayRetryResult, TrayStatus};
 use crate::web;
@@ -30,6 +31,8 @@ struct Loop<'a> {
     host_rx: &'a mut UnboundedReceiver<HostCommand>,
     tray_rx: &'a mut UnboundedReceiver<TrayEvent>,
     tray: &'a mut Option<TrayController>,
+    prompt: &'a mut Option<PairingPrompt>,
+    prompt_rx: &'a mut UnboundedReceiver<PromptEvent>,
     instance: &'a SingleInstance,
     settings: &'a Arc<SharedSettings>,
     web_state: &'a Arc<WebState>,
@@ -51,6 +54,8 @@ pub fn run(desktop: &mut Desktop) -> ExitRequest {
         host_rx,
         tray_rx,
         tray,
+        prompt,
+        prompt_rx,
         instance,
         settings,
         web_state,
@@ -62,6 +67,8 @@ pub fn run(desktop: &mut Desktop) -> ExitRequest {
         host_rx,
         tray_rx,
         tray,
+        prompt,
+        prompt_rx,
         instance,
         settings,
         web_state,
@@ -74,6 +81,7 @@ pub fn run(desktop: &mut Desktop) -> ExitRequest {
     loop {
         state.drain_host_commands();
         state.drain_tray_events();
+        state.drain_prompt_events();
 
         if let Some(request) = state.exit_request {
             exit::prepare(request, state.web_state);
@@ -81,6 +89,7 @@ pub fn run(desktop: &mut Desktop) -> ExitRequest {
         }
 
         state.sync_tray_status();
+        state.sync_pairing_prompt();
         state.surface_activation();
         pump_messages();
         std::thread::sleep(TICK);
@@ -175,6 +184,78 @@ impl Loop<'_> {
         tracing::info!(?result, "检测到通知区域重建，重新注册托盘图标");
     }
 
+    /// 配对提示弹窗：手机发起配对时出现，配对完成 / 超时 / 取消 / 锁屏 / 服务断开
+    /// 时消失。窗口不自己判断结局，只跟随 `pending_pairing` 这一份事实。
+    fn sync_pairing_prompt(&mut self) {
+        let Some(prompt) = self.prompt.as_mut() else {
+            return;
+        };
+        prompt.sync(self.client.pending_pairing());
+    }
+
+    /// 弹窗事件：取消请求要落到服务上，但只能在后台线程里等答复。
+    fn drain_prompt_events(&mut self) {
+        while let Ok(event) = self.prompt_rx.try_recv() {
+            match event {
+                PromptEvent::CancelRequested { request_id } => {
+                    self.start_pairing_cancel(request_id)
+                }
+                PromptEvent::Dismissed { request_id } => {
+                    if let Some(prompt) = self.prompt.as_mut() {
+                        prompt.dismiss(&request_id);
+                    }
+                }
+                PromptEvent::CancelFinished {
+                    request_id,
+                    outcome,
+                } => self.finish_pairing_cancel(&request_id, outcome),
+            }
+        }
+    }
+
+    /// 把取消请求交给服务；答复由同一个事件通道送回主循环。
+    ///
+    /// 不能在主循环里等：Windows 消息泵就在这条线程上，一次网络往返会把托盘和弹窗
+    /// 一起冻住。实际调用因此跑在专用线程上，主循环继续按 50ms 节拍转。
+    fn start_pairing_cancel(&mut self, request_id: String) {
+        let Some(prompt) = self.prompt.as_ref() else {
+            return;
+        };
+        if let Err(error) = pairing::spawn_cancel(self.client.clone(), prompt.sender(), request_id)
+        {
+            tracing::error!(%error, "无法启动配对取消线程");
+            if let Some(prompt) = self.prompt.as_mut() {
+                prompt.cancel_failed();
+            }
+        }
+    }
+
+    /// 取消的结论：成功就收起弹窗，失败就把按钮交还给用户并给出原因。
+    fn finish_pairing_cancel(&mut self, request_id: &str, outcome: Result<(), String>) {
+        match outcome {
+            Ok(()) => {
+                if let Some(prompt) = self.prompt.as_mut() {
+                    prompt.cancel_succeeded(request_id);
+                }
+                tracing::info!(request_id, "已取消配对请求");
+                self.web_state.publish(ServerEvent::Toast {
+                    level: "info",
+                    message: "已取消配对请求".into(),
+                });
+            }
+            Err(message) => {
+                if let Some(prompt) = self.prompt.as_mut() {
+                    prompt.cancel_failed();
+                }
+                tracing::warn!(request_id, %message, "取消配对请求失败");
+                self.web_state.publish(ServerEvent::Toast {
+                    level: "error",
+                    message: format!("取消配对失败：{message}"),
+                });
+            }
+        }
+    }
+
     /// 托盘菜单动作。
     fn run_tray_action(&mut self, action: TrayAction) {
         match action {
@@ -202,6 +283,13 @@ impl Loop<'_> {
                         // The browser's settings page shares this state.
                         self.web_state
                             .publish(ServerEvent::Settings(Box::new(self.settings.view())));
+                        // 开关跨重启保留；持久化丢给后台线程，main 线程不等同步 IO。
+                        let preferences = self.web_state.preferences.clone();
+                        std::thread::spawn(move || {
+                            if let Err(error) = preferences.set_keep_awake(enabled) {
+                                tracing::warn!(%error, enabled, "保存保持唤醒设置失败");
+                            }
+                        });
                         tracing::info!(enabled, "托盘切换保持唤醒");
                     }
                     Err(error) => tracing::error!(%error, "设置保持唤醒失败"),

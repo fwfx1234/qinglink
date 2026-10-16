@@ -59,6 +59,9 @@ class LibraryScanActions {
     final id = await ref.read(launcherControllerProvider).add(
       name: finalName,
       exePath: path,
+      // 服务端按 category 决定归入软件还是游戏；跟随当前分区，避免刚加的程序
+      // 落在另一个分区里"看起来没加上"。
+      category: serverKind() == 'game' ? 'Game' : 'Application',
     );
     if (!context.mounted) return;
     if (id == null) {

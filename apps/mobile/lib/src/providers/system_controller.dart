@@ -99,6 +99,14 @@ class SystemController extends StateNotifier<SystemState> {
     }
   }
 
+  Future<DisplayInfo?> primaryDisplay() async {
+    await refreshDisplays();
+    for (final display in state.displays) {
+      if (display.primary) return display;
+    }
+    return null;
+  }
+
   Future<void> refreshVolume() async {
     try {
       final response = await _bus.request({'type': 'get_volume'});
@@ -135,42 +143,71 @@ class SystemController extends StateNotifier<SystemState> {
     await refreshAudioOutputs();
   }
 
+  /// 切分辨率/刷新率。服务端要的是扁平三字段，不是嵌套的 `mode` 对象。
   Future<void> setDisplayMode(String displayId, DisplayModeInfo mode) async {
     await _bus.request({
       'type': 'set_display_mode',
       'display_id': displayId,
-      'mode': mode.toJson(),
+      'width': mode.width,
+      'height': mode.height,
+      'refresh_millihz': mode.refreshMillihz,
     });
     await refreshDisplays();
   }
 
+  /// 读取 PC 主网卡 MAC。
+  ///
+  /// 服务端把它放在信封的 `data.mac_address` 里；取不到（`MAC_ERROR`）或传输失败时
+  /// 返回 `null`——调用方在连接成功后做的是"补齐本地 MAC"，不应因此抛异常。
   Future<String?> getMacAddress() async {
-    final response = await _bus.request({'type': 'get_mac_address'});
-    return response['mac_address'] as String?;
+    try {
+      final response = await _bus.request({'type': 'get_mac_address'});
+      final data = response['data'];
+      final mac = data is Map ? data['mac_address'] : null;
+      return mac is String && mac.isNotEmpty ? mac : null;
+    } catch (error) {
+      debugPrint('getMacAddress failed: $error');
+      return null;
+    }
   }
 
+  /// 读取支持网络唤醒的网卡列表（信封路径同上是 `data.networks`）。
   Future<List<WakeNetwork>> getWakeNetworks() async {
-    final response = await _bus.request({'type': 'get_wake_networks'});
-    final values = response['wake_networks'];
-    if (values is! List) return const [];
-    return values
-        .whereType<Map>()
-        .map((item) => WakeNetwork.fromJson(Map<String, dynamic>.from(item)))
-        .toList(growable: false);
+    try {
+      final response = await _bus.request({'type': 'get_wake_networks'});
+      final data = response['data'];
+      final values = data is Map ? data['networks'] : null;
+      if (values is! List) return const [];
+      return values
+          .whereType<Map>()
+          .map((item) => WakeNetwork.fromJson(Map<String, dynamic>.from(item)))
+          .toList(growable: false);
+    } catch (error) {
+      debugPrint('getWakeNetworks failed: $error');
+      return const [];
+    }
   }
 
+  /// 读取锁屏输入通道状态；服务端拒绝或连接异常时返回 `null`。
+  ///
+  /// 调用点（控制页的首帧回调）不兜异常，失败逃逸会变成未捕获异步异常。
   Future<LockInputStatus?> refreshLockInput() async {
-    final response = await _bus.request({'type': 'get_lock_input_status'});
-    final value = response['data'];
-    if (value is! Map) return null;
-    return LockInputStatus.fromJson(Map<String, dynamic>.from(value));
+    try {
+      final response = await _bus.request({'type': 'get_lock_input_status'});
+      final value = response['data'];
+      if (value is! Map) return null;
+      return LockInputStatus.fromJson(Map<String, dynamic>.from(value));
+    } catch (error, stackTrace) {
+      debugPrint('refreshLockInput failed: $error\n$stackTrace');
+      return null;
+    }
   }
 
   Future<void> sendSecureAttention() =>
       _bus.request({'type': 'secure_attention'}).then((_) {});
 
   Future<void> sendSecureAscii(String text) =>
-      _bus.request({'type': 'secure_ascii', 'text': text}).then((_) {});
+      _bus.request({'type': 'send_secure_ascii', 'text': text}).then((_) {});
 }
 
 final systemControllerProvider =

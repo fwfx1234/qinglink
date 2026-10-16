@@ -28,10 +28,10 @@ impl AppDatabase {
             .connection(&self.db_key)
             .map_err(|e| e.to_string())?;
         let sql = if visible_only {
-            "SELECT id, COALESCE(NULLIF(display_name, ''), name), original_name, exe_path, icon_base64, category, source, is_hidden, is_user_added, args, icon_path, icon_source, icon_updated_at, is_favorite, is_pinned
+            "SELECT id, COALESCE(NULLIF(display_name, ''), name), original_name, exe_path, icon_base64, category, source, is_hidden, is_user_added, args, icon_path, icon_source, icon_updated_at, is_favorite, is_pinned, launch_width, launch_height, launch_refresh_millihz
              FROM scanner_apps WHERE is_hidden = 0 AND is_deleted = 0 ORDER BY COALESCE(NULLIF(display_name, ''), name)"
         } else {
-            "SELECT id, COALESCE(NULLIF(display_name, ''), name), original_name, exe_path, icon_base64, category, source, is_hidden, is_user_added, args, icon_path, icon_source, icon_updated_at, is_favorite, is_pinned
+            "SELECT id, COALESCE(NULLIF(display_name, ''), name), original_name, exe_path, icon_base64, category, source, is_hidden, is_user_added, args, icon_path, icon_source, icon_updated_at, is_favorite, is_pinned, launch_width, launch_height, launch_refresh_millihz
              FROM scanner_apps WHERE is_deleted = 0 ORDER BY COALESCE(NULLIF(display_name, ''), name)"
         };
         let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
@@ -54,12 +54,49 @@ impl AppDatabase {
                     icon_updated_at: row.get(12)?,
                     is_favorite: row.get::<_, i64>(13)? != 0,
                     is_pinned: row.get::<_, i64>(14)? != 0,
+                    launch_mode: read_launch_mode(row, 15)?,
                 })
             })
             .map_err(|e| e.to_string())?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())
+    }
+
+    /// Set or clear one game's launch display mode.
+    pub fn set_launch_mode(
+        &self,
+        id: &str,
+        mode: Option<&crate::service::app_scanner::LaunchDisplayMode>,
+    ) -> Result<(), String> {
+        let connection = self
+            .database
+            .connection(&self.db_key)
+            .map_err(|error| error.to_string())?;
+        let updated = connection
+            .execute(
+                "UPDATE scanner_apps SET launch_width = ?1, launch_height = ?2,
+             launch_refresh_millihz = ?3, updated_at = ?4
+             WHERE id = ?5 AND lower(category) = 'game' AND is_deleted = 0",
+                rusqlite::params![
+                    mode.map(|value| value.width),
+                    mode.map(|value| value.height),
+                    mode.map(|value| value.refresh_millihz),
+                    time::OffsetDateTime::now_utc().unix_timestamp(),
+                    id,
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        if updated == 0 {
+            return Err("游戏条目不存在".to_string());
+        }
+        Ok(())
+    }
+
+    /// Load one game record for launch coordination.
+    pub fn get_app(&self, id: &str) -> Result<Option<DbAppEntry>, String> {
+        self.get_apps(false)
+            .map(|entries| entries.into_iter().find(|entry| entry.id == id))
     }
 
     /// 新增或覆盖一个条目；`is_user_added` 标记它是否为手动添加。
@@ -135,6 +172,12 @@ impl AppDatabase {
 
     /// 更新条目的显示名、路径、图标与启动参数；传 `None` 表示该项保持不变。
     ///
+    /// `icon_source` 与 `icon_base64` 分开传：客户端上传图标时要同时把来源记成
+    /// `manual`，否则条目会保留旧的来源（例如 `shell`），详情里显示的图标来源
+    /// 就与实际插图不符。
+    /// 上传的图标没有对应的磁盘文件，因此同一次写入会清空 `icon_path`，避免图标回填
+    /// 时又按旧路径把它覆盖回去。
+    ///
     /// # Errors
     /// 取不到数据库连接或更新条目的语句执行失败时返回 `Err`。
     pub fn update_app(
@@ -143,6 +186,7 @@ impl AppDatabase {
         name: &str,
         exe_path: &str,
         icon_base64: Option<&str>,
+        icon_source: Option<&str>,
         args: Option<&[String]>,
     ) -> Result<(), String> {
         let conn = self
@@ -156,10 +200,12 @@ impl AppDatabase {
         let encoded_args = args.map(encode_args);
         conn.execute(
             "UPDATE scanner_apps SET display_name = ?1, exe_path = ?2, icon_base64 = COALESCE(?3, icon_base64),
+             icon_source = COALESCE(?7, icon_source),
+             icon_path = CASE WHEN ?3 IS NOT NULL THEN NULL ELSE icon_path END,
              args = COALESCE(?4, args),
              icon_updated_at = CASE WHEN ?3 IS NOT NULL THEN ?5 ELSE icon_updated_at END,
              updated_at = ?5 WHERE id = ?6",
-            rusqlite::params![name, exe_path, icon_base64, encoded_args, now, id],
+            rusqlite::params![name, exe_path, icon_base64, encoded_args, now, id, icon_source],
         )
         .map_err(|e| e.to_string())?;
         Ok(())
@@ -234,4 +280,23 @@ impl AppDatabase {
         .map_err(|e| e.to_string())?;
         Ok(())
     }
+}
+
+fn read_launch_mode(
+    row: &rusqlite::Row<'_>,
+    first_column: usize,
+) -> rusqlite::Result<Option<crate::service::app_scanner::LaunchDisplayMode>> {
+    let width = row.get::<_, Option<u32>>(first_column)?;
+    let height = row.get::<_, Option<u32>>(first_column + 1)?;
+    let refresh_millihz = row.get::<_, Option<u32>>(first_column + 2)?;
+    Ok(match (width, height, refresh_millihz) {
+        (Some(width), Some(height), Some(refresh_millihz)) => {
+            Some(crate::service::app_scanner::LaunchDisplayMode {
+                width,
+                height,
+                refresh_millihz,
+            })
+        }
+        _ => None,
+    })
 }

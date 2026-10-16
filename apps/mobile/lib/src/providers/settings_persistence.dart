@@ -74,6 +74,9 @@ ConnectionConfig readConnectionConfig(
     ),
     activeShortcutPresetId:
         prefs.getString(SettingsKeys.activeShortcutPreset) ?? 'common',
+    homeShortcuts: parseStoredHomeShortcuts(
+      prefs.getString(SettingsKeys.homeShortcuts),
+    ),
     lastUsedLauncherId: prefs.getString(SettingsKeys.lastUsedLauncher),
     mouseSensitivity: ConnectionConfig.normalizeMouseSensitivity(
       prefs.getDouble(SettingsKeys.mouseSensitivity),
@@ -108,6 +111,18 @@ List<ShortcutPreset> parseStoredShortcutPresets(String? jsonStr) {
     return parseShortcutPresets(jsonDecode(jsonStr));
   } catch (_) {
     return defaultShortcutPresets;
+  }
+}
+
+/// 解析首页快捷键；缺失或损坏时返回空列表。
+List<String> parseStoredHomeShortcuts(String? jsonStr) {
+  if (jsonStr == null || jsonStr.isEmpty) return const [];
+  try {
+    final decoded = jsonDecode(jsonStr);
+    if (decoded is! List) return const [];
+    return normalizeHomeShortcuts(decoded.map((item) => item.toString()));
+  } catch (_) {
+    return const [];
   }
 }
 

@@ -3,6 +3,7 @@
 use serde::Deserialize;
 
 use super::{
+    IconPreviewQuery, ProcessIconQuery, ProcessListQuery, UpdateScannerAppQuery,
     WindowSwitchDirection, default_bool_true, default_page, default_page_size,
     default_process_filter, default_process_sort,
 };
@@ -195,6 +196,8 @@ pub enum WsClientRequest {
         /// 目标进程 ID。
         pid: u32,
     },
+    /// 获取指定进程的图标；负载类型见 `requests_process_apps.rs`。
+    GetProcessIcon(ProcessIconQuery),
 
     // === Apps ===
     /// 按关键字搜索已扫描到的应用。
@@ -258,6 +261,8 @@ pub enum WsClientRequest {
         #[serde(default)]
         icon_path: Option<String>,
     },
+    /// 预览 PC 上某个图标文件，供手机在文件浏览器里挑选时显示缩略图。
+    GetIconPreview(IconPreviewQuery),
     /// List the entries the user blocked, so they can be restored.
     ListBlockedScannerApps,
     /// 手动触发一次启动器目录扫描。
@@ -382,21 +387,8 @@ pub enum WsClientRequest {
     },
 
     // === Tasks ===
-    /// 分页查询任务（进程）列表。
-    GetTasks {
-        /// 按进程名过滤的关键字，缺省表示不过滤。
-        #[serde(default)]
-        search: Option<String>,
-        /// 页码，从 0 开始，默认 0。
-        #[serde(default = "default_page")]
-        page: usize,
-        /// 每页条数，默认 50。
-        #[serde(default = "default_page_size")]
-        page_size: usize,
-        /// 过滤范围，默认 `user` 表示仅返回用户进程。
-        #[serde(default = "default_process_filter")]
-        filter: String,
-    },
+    /// 分页查询任务（进程）列表；负载类型与 `get_processes` 共用。
+    GetTasks(ProcessListQuery),
     /// 获取系统资源占用统计。
     GetTasksStats,
     /// 结束指定的任务。
@@ -519,19 +511,7 @@ pub enum WsClientRequest {
         args: Vec<String>,
     },
     /// 更新用户添加的应用条目。
-    UpdateScannerApp {
-        /// 目标条目 ID。
-        id: String,
-        /// 新的显示名称。
-        name: String,
-        /// 新的可执行文件路径。
-        exe_path: String,
-        /// 新的 Base64 图标，`None` 表示保留原图标。
-        icon_base64: Option<String>,
-        /// 新的启动参数，`None` 表示保留原参数。
-        #[serde(default)]
-        args: Option<Vec<String>>,
-    },
+    UpdateScannerApp(UpdateScannerAppQuery),
     /// 从目录中删除一个应用条目。
     DeleteScannerApp {
         /// 目标条目 ID。
@@ -559,8 +539,3 @@ pub enum WsClientRequest {
         pinned: bool,
     },
 }
-
-/// 序列化测试独立成文件，避免本文件超出 AGENTS.md §2.1 的规模上限。
-#[cfg(test)]
-#[path = "requests_ws_test.rs"]
-mod requests_ws_test;

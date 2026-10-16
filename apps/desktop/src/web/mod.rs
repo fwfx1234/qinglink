@@ -38,6 +38,18 @@ const LOG_BATCH_MAX: usize = 200;
 /// Path prefix of the admin API.
 const API_PREFIX: &str = "/api/admin/v1";
 
+/// 替换实例重绑管理端口的重试次数与间隔（合计约 3 秒的窗口）。
+///
+/// 真正的修复是 [`make_listener_non_inheritable`]（不再让替换实例继承旧监听套接字）；
+/// 这里只是兜底：旧实例的端口在内核里彻底释放可能还差一两个调度周期，先重试几次，
+/// 窗口内仍占用才按真实端口冲突报错。
+const BIND_RETRIES: u32 = 30;
+const BIND_RETRY_DELAY: Duration = Duration::from_millis(100);
+
+/// 重试到这里之后补一条 WARN：正常重启不需要重试，重试到这个数说明可能真有别的
+/// 程序占着端口，日志里该看得出来。
+const BIND_RETRY_WARN_AT: u32 = 10;
+
 /// Start the web server on a dedicated thread.
 ///
 /// The router is built here, on the calling thread, before the worker starts.
@@ -100,9 +112,69 @@ pub fn run_on_thread(port: u16, state: Arc<WebState>) -> Result<std::thread::Joi
 
 async fn bind(port: u16) -> Result<tokio::net::TcpListener> {
     let address = SocketAddr::from(([127, 0, 0, 1], port));
-    tokio::net::TcpListener::bind(address)
-        .await
-        .with_context(|| format!("无法绑定 {address}，端口可能已被占用"))
+    let mut attempt = 0_u32;
+    loop {
+        match tokio::net::TcpListener::bind(address).await {
+            Ok(listener) => {
+                if let Err(error) = make_listener_non_inheritable(&listener) {
+                    // 端口本身能用，只是句柄继承位没清掉；重启桌面端可能因此拿不回端口。
+                    tracing::warn!(%error, "管理端口句柄继承位未能清除");
+                }
+                return Ok(listener);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                if attempt >= BIND_RETRIES {
+                    return Err(error)
+                        .with_context(|| format!("无法绑定 {address}，端口可能已被占用"));
+                }
+                attempt += 1;
+                if attempt == BIND_RETRY_WARN_AT {
+                    tracing::warn!("管理端口持续被占用，继续重试绑定");
+                } else {
+                    tracing::debug!(attempt, "管理端口仍被上一个实例占用，稍后重试绑定");
+                }
+                tokio::time::sleep(BIND_RETRY_DELAY).await;
+            }
+            Err(error) => {
+                return Err(error).with_context(|| format!("无法绑定 {address}，端口可能已被占用"));
+            }
+        }
+    }
+}
+
+/// 清掉管理监听套接字的句柄继承位。
+///
+/// tokio/mio 在 Windows 上用 Winsock 的 `socket()` 建监听套接字（mio 的 `new_socket`），
+/// 这个句柄是**可继承**的；而桌面端会派生替换实例（`--restart-parent`）、浏览器与提权
+/// 助手，`CreateProcess` 默认把可继承句柄复制给子进程。替换实例一旦继承旧监听套接字，
+/// 端口就由它自己继续占着，它自己的 `bind` 会以 `WSAEADDRINUSE` 失败——现象是
+/// 「重启桌面端之后应用再也没起来」，`netstat` 里那条 `LISTEN` 还挂在**已死**的父进程
+/// PID 上，直到子进程退出才消失。这里显式清位，不依赖上游是否设了
+/// `WSA_FLAG_NO_HANDLE_INHERIT`。
+#[cfg(target_os = "windows")]
+fn make_listener_non_inheritable(listener: &tokio::net::TcpListener) -> Result<()> {
+    use std::os::windows::io::AsRawSocket;
+
+    use windows::Win32::Foundation::{
+        HANDLE, HANDLE_FLAG_INHERIT, HANDLE_FLAGS, SetHandleInformation,
+    };
+
+    // SAFETY: the listener owns a live socket handle for as long as it stays bound,
+    // and clearing the inherit bit does not change the binding itself.
+    unsafe {
+        SetHandleInformation(
+            HANDLE(listener.as_raw_socket() as *mut core::ffi::c_void),
+            HANDLE_FLAG_INHERIT.0,
+            HANDLE_FLAGS(0),
+        )
+    }
+    .context("无法清掉管理端口的句柄继承位")
+}
+
+/// 非 Windows 平台没有句柄继承问题。
+#[cfg(not(target_os = "windows"))]
+fn make_listener_non_inheritable(_listener: &tokio::net::TcpListener) -> Result<()> {
+    Ok(())
 }
 
 /// Build the complete router.

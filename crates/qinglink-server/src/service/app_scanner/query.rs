@@ -152,6 +152,7 @@ impl AppScanner {
             recommended: None,
             favorite: app.is_favorite,
             pinned: app.is_pinned,
+            launch_mode: app.launch_mode.clone(),
         }
     }
 }

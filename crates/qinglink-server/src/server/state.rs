@@ -16,7 +16,9 @@ use crate::server::auth;
 use crate::server::connection_registry;
 use crate::server::control;
 use crate::server::held_input;
+use crate::server::launch_display::LaunchDisplayCoordinator;
 use crate::server::pairing;
+use crate::server::process_icon::ProcessIconCache;
 use crate::service::RemoteControlService;
 use crate::service::app_scanner::AppScanner;
 use crate::service::process::ProcessManager;
@@ -68,8 +70,12 @@ pub struct AppState {
     pub scan_gate: Arc<Mutex<()>>,
     /// 窗口列表的短期缓存，避免频繁枚举系统窗口。
     pub window_list_cache: Arc<Mutex<WindowListCache>>,
+    /// 进程图标的路径级缓存：同一程序只解析一次。
+    pub process_icon_cache: Arc<Mutex<ProcessIconCache>>,
     /// 配对请求状态机，由互斥锁保护。
     pub pairing: Arc<Mutex<PairingManager>>,
+    /// 游戏启动显示模式协调器，负责切换、进程跟踪与恢复。
+    pub launch_display: LaunchDisplayCoordinator,
     /// 向桌面端广播配对请求变化的发送端。
     pub pairing_events: broadcast::Sender<pairing::PairingNotification>,
 }
@@ -130,7 +136,7 @@ impl AppState {
             .and_then(|db| db.get_setting("service.paused").ok().flatten())
             .is_some_and(|value| value == "true");
         control.set_paused(paused);
-        Self {
+        let state = Self {
             control,
             held_input: Arc::new(Mutex::new(held_input::HeldInput::default())),
             service: Arc::new(service),
@@ -148,8 +154,12 @@ impl AppState {
             app_db,
             scan_gate: Arc::new(Mutex::new(())),
             window_list_cache: Arc::new(Mutex::new(None)),
+            process_icon_cache: Arc::new(Mutex::new(ProcessIconCache::default())),
             pairing: Arc::new(Mutex::new(PairingManager::default())),
             pairing_events,
-        }
+            launch_display: LaunchDisplayCoordinator::default(),
+        };
+        state.launch_display.recover(&state);
+        state
     }
 }

@@ -90,7 +90,10 @@ impl AppDatabase {
                 icon_source TEXT,
                 icon_updated_at INTEGER,
                 is_favorite INTEGER NOT NULL DEFAULT 0,
-                is_pinned INTEGER NOT NULL DEFAULT 0
+                is_pinned INTEGER NOT NULL DEFAULT 0,
+                launch_width INTEGER,
+                launch_height INTEGER,
+                launch_refresh_millihz INTEGER
             );
             CREATE TABLE IF NOT EXISTS launcher_usage (
                 item_id TEXT PRIMARY KEY,
@@ -141,6 +144,18 @@ impl AppDatabase {
         );
         let _ = connection.execute(
             "ALTER TABLE scanner_apps ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = connection.execute(
+            "ALTER TABLE scanner_apps ADD COLUMN launch_width INTEGER",
+            [],
+        );
+        let _ = connection.execute(
+            "ALTER TABLE scanner_apps ADD COLUMN launch_height INTEGER",
+            [],
+        );
+        let _ = connection.execute(
+            "ALTER TABLE scanner_apps ADD COLUMN launch_refresh_millihz INTEGER",
             [],
         );
         // Older builds wrote a renamed label into `name`. Preserve it as the

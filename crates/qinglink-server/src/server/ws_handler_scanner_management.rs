@@ -23,20 +23,7 @@ pub(super) fn handle(
             source.as_deref(),
             args,
         ),
-        WsClientRequest::UpdateScannerApp {
-            id,
-            name,
-            exe_path,
-            icon_base64,
-            args,
-        } => handle_update_app(
-            state,
-            id,
-            name,
-            exe_path,
-            icon_base64.as_deref(),
-            args.as_deref(),
-        ),
+        WsClientRequest::UpdateScannerApp(query) => handle_update_app(state, query),
         WsClientRequest::DeleteScannerApp { id } => handle_delete_app(state, id),
         WsClientRequest::SetScannerAppHidden { id, hidden } => {
             handle_set_hidden(state, id, *hidden)
@@ -70,7 +57,12 @@ fn handle_add_app(
     // longer extracts icons in bulk, so this is the one entry the user
     // just added and the extra work is invisible.
     let (icon_base64, icon_source) = match icon_base64 {
-        Some(explicit) => (Some(explicit.to_string()), Some("manual".to_string())),
+        // A client-supplied bitmap (phone picking one from its gallery) is
+        // normalised to the same canonical PNG every other source produces.
+        Some(explicit) => match normalized_icon(explicit) {
+            Some(normalized) => (Some(normalized), Some("manual".to_string())),
+            None => return invalid_icon(),
+        },
         None => {
             let resolution = crate::platform::resolve_icon(exe_path, None);
             let source = (resolution.icon_base64.is_some()).then(|| resolution.source.clone());
@@ -90,6 +82,7 @@ fn handle_add_app(
         args: args.to_vec(),
         is_favorite: false,
         is_pinned: false,
+        launch_mode: None,
     };
     let db = crate::lock_unpoisoned(&state.app_db);
     match db.add_app(&app, true) {
@@ -102,24 +95,99 @@ fn handle_add_app(
     }
 }
 
-/// 更新用户添加的条目，成功后刷新可见目录。
+/// 更新条目，成功后刷新可见目录。
 fn handle_update_app(
     state: &AppState,
-    id: &str,
-    name: &str,
-    exe_path: &str,
-    icon_base64: Option<&str>,
-    args: Option<&[String]>,
+    query: &crate::protocol::requests::UpdateScannerAppQuery,
 ) -> WsServerMessage {
+    if let Some(mode) = query.launch_mode.as_ref()
+        && !launch_mode_is_supported(mode)
+    {
+        return WsServerMessage::Response(WsServerResponse::error(
+            "INVALID_DISPLAY_MODE",
+            "主显示器当前不支持该分辨率或刷新率，请重新选择",
+        ));
+    }
+    // 客户端上传的图标先规范化，再把来源记成 `manual`；只更新其他字段时两者都为
+    // `None`，SQL 的 COALESCE 会保留原值。
+    let (icon_payload, icon_source) = match query.icon_base64.as_deref() {
+        Some(explicit) => match normalized_icon(explicit) {
+            Some(normalized) => (Some(normalized), Some("manual")),
+            None => return invalid_icon(),
+        },
+        None => (None, None),
+    };
     let db = crate::lock_unpoisoned(&state.app_db);
-    match db.update_app(id, name, exe_path, icon_base64, args) {
+    if query.launch_mode.is_some() || query.clear_launch_mode {
+        let is_game = db
+            .get_app(&query.id)
+            .ok()
+            .flatten()
+            .is_some_and(|entry| entry.category.eq_ignore_ascii_case("game"));
+        if !is_game {
+            return WsServerMessage::Response(WsServerResponse::error(
+                "INVALID_DISPLAY_MODE",
+                "启动显示模式只能配置到游戏条目",
+            ));
+        }
+    }
+    let result = db
+        .update_app(
+            &query.id,
+            &query.name,
+            &query.exe_path,
+            icon_payload.as_deref(),
+            icon_source,
+            query.args.as_deref(),
+        )
+        .and_then(|()| {
+            if query.clear_launch_mode {
+                db.set_launch_mode(&query.id, None)
+            } else if let Some(mode) = query.launch_mode.as_ref() {
+                db.set_launch_mode(&query.id, Some(mode))
+            } else {
+                Ok(())
+            }
+        });
+    match result {
         Ok(()) => {
             drop(db);
             reload_visible_catalog(state);
-            WsServerMessage::Response(WsServerResponse::ScannerAppUpdated { id: id.to_string() })
+            WsServerMessage::Response(WsServerResponse::ScannerAppUpdated {
+                id: query.id.clone(),
+            })
         }
         Err(e) => WsServerMessage::Response(WsServerResponse::error("UPDATE_FAILED", &e)),
     }
+}
+
+fn launch_mode_is_supported(mode: &crate::service::app_scanner::LaunchDisplayMode) -> bool {
+    if mode.width == 0 || mode.height == 0 || mode.refresh_millihz == 0 {
+        return false;
+    }
+    crate::platform::get_displays()
+        .ok()
+        .and_then(|displays| displays.into_iter().find(|display| display.primary))
+        .is_some_and(|display| {
+            display.modes.iter().any(|candidate| {
+                candidate.width == mode.width
+                    && candidate.height == mode.height
+                    && candidate.refresh_millihz == mode.refresh_millihz
+            })
+        })
+}
+
+/// 把客户端上传的位图规范化为目录存储的 PNG 载荷；无法解码时返回 `None`。
+fn normalized_icon(payload: &str) -> Option<String> {
+    crate::platform::base64_image_to_icon_base64(payload)
+}
+
+/// 客户端上传的图标无法解码时的统一应答。
+fn invalid_icon() -> WsServerMessage {
+    WsServerMessage::Response(WsServerResponse::error(
+        "INVALID_ICON",
+        "图标图片无法解析，请换一张 png/jpg 图片",
+    ))
 }
 
 /// 删除一个条目，成功后刷新可见目录。

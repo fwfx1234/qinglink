@@ -7,11 +7,18 @@ class WindowController {
   WindowController(this._bus);
   final RemoteCommandBus _bus;
 
+  /// 拉取 PC 上的可见窗口列表。
+  ///
+  /// 服务端的响应信封是 `{"type":"window_list","data":[{...}]}`（`WsServerResponse::WindowList`
+  /// 承载 `Vec<WindowInfo>`）；列表为空或响应类型不符时返回空列表，由调用方给出提示。
   Future<List<WindowInfo>> list({bool forceRefresh = false}) async {
     final response = await _bus.request({'type': 'list_windows', 'force_refresh': forceRefresh});
     final data = response['data'];
-    if (response['type'] != 'windows' || data is! Map<String, dynamic> || data['windows'] is! List) return const [];
-    return (data['windows'] as List).map((item) => WindowInfo.fromJson(item as Map<String, dynamic>)).toList(growable: false);
+    if (response['type'] != 'window_list' || data is! List) return const [];
+    return data
+        .whereType<Map>()
+        .map((item) => WindowInfo.fromJson(Map<String, dynamic>.from(item)))
+        .toList(growable: false);
   }
 
   Future<void> focus(int hwnd) => _bus.request({'type': 'focus_window', 'hwnd': hwnd}).then((_) {});

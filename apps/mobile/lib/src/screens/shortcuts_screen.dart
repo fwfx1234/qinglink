@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
+import '../utils/snackbar_extension.dart';
 import '../widgets/app_ui.dart';
+import 'shortcut_preset_sheet.dart';
 
 class ShortcutsScreen extends ConsumerStatefulWidget {
   const ShortcutsScreen({super.key});
@@ -20,114 +22,60 @@ class _ShortcutsScreenState extends ConsumerState<ShortcutsScreen> {
   };
 
   Future<void> _addPreset() async {
-    final nameController = TextEditingController();
-    final keysController = TextEditingController(text: 'Tab, Esc, Enter');
-    final result = await showDialog<ShortcutPreset>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('新增快捷键方案'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: '方案名称'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: keysController,
-              decoration: const InputDecoration(labelText: '快捷键（逗号分隔）'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final name = nameController.text.trim();
-              final keys = keysController.text
-                  .split(',')
-                  .map((e) => e.trim())
-                  .where((e) => e.isNotEmpty)
-                  .toList();
-              if (name.isNotEmpty && keys.isNotEmpty) {
-                Navigator.pop(
-                  context,
-                  ShortcutPreset(
-                    id: 'custom_${DateTime.now().millisecondsSinceEpoch}',
-                    name: name,
-                    shortcuts: keys,
-                  ),
-                );
-              }
-            },
-            child: const Text('添加'),
-          ),
-        ],
-      ),
-    );
-    nameController.dispose();
-    keysController.dispose();
-    if (result == null || !mounted) return;
     final settings = ref.read(settingsProvider);
-    await ref.read(settingsProvider.notifier).saveShortcutPresets([
-      ...settings.shortcutPresets,
-      result,
-    ]);
+    final result = await showShortcutPresetSheet(
+      context,
+      homeShortcuts: settings.homeShortcuts,
+    );
+    if (result == null || !mounted) return;
+    final updated = [...settings.shortcutPresets, result.preset];
+    await ref.read(settingsProvider.notifier).saveShortcutPresets(updated);
+    await ref
+        .read(settingsProvider.notifier)
+        .saveHomeShortcuts(_pruneHomeShortcuts(updated, result.homeShortcuts));
   }
 
   Future<void> _editPreset(ShortcutPreset preset) async {
-    final controller = TextEditingController(text: preset.shortcuts.join('\n'));
-    final saved = await showDialog<List<String>>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('编辑 ${preset.name}'),
-        content: TextField(
-          controller: controller,
-          maxLines: 5,
-          decoration: const InputDecoration(
-            hintText: '每行一个快捷键，例如：Ctrl + Enter',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final keys = controller.text
-                  .split(RegExp(r'[\n,]'))
-                  .map((e) => e.trim())
-                  .where((e) => e.isNotEmpty)
-                  .take(8)
-                  .toList();
-              Navigator.pop(context, keys);
-            },
-            child: const Text('保存'),
-          ),
-        ],
-      ),
+    final result = await showShortcutPresetSheet(
+      context,
+      preset: preset,
+      homeShortcuts: ref.read(settingsProvider).homeShortcuts,
     );
-    controller.dispose();
-    if (saved == null || saved.isEmpty || !mounted) return;
+    if (result == null || !mounted) return;
     final settings = ref.read(settingsProvider);
     final updated = settings.shortcutPresets
-        .map(
-          (item) => item.id == preset.id
-              ? ShortcutPreset(
-                  id: item.id,
-                  name: item.name,
-                  shortcuts: saved,
-                  builtin: item.builtin,
-                )
-              : item,
-        )
+        .map((item) => item.id == preset.id ? result.preset : item)
         .toList();
     await ref.read(settingsProvider.notifier).saveShortcutPresets(updated);
+    await ref
+        .read(settingsProvider.notifier)
+        .saveHomeShortcuts(_pruneHomeShortcuts(updated, result.homeShortcuts));
+  }
+
+  List<String> _pruneHomeShortcuts(
+    List<ShortcutPreset> presets,
+    List<String> homeShortcuts,
+  ) {
+    final available = presets.expand((item) => item.shortcuts).toSet();
+    return homeShortcuts.where(available.contains).toList(growable: false);
+  }
+
+  Future<void> _toggleHomeShortcut(String label) async {
+    final notifier = ref.read(settingsProvider.notifier);
+    final current = ref.read(settingsProvider).homeShortcuts;
+    final updated = [...current];
+    if (!updated.remove(label)) {
+      if (updated.length >= 12) {
+        context.showInfoSnackBar('首页最多固定 12 个快捷键');
+        return;
+      }
+      updated.add(label);
+    }
+    try {
+      await notifier.saveHomeShortcuts(updated);
+    } catch (error) {
+      if (mounted) context.showErrorSnackBar('保存首页快捷键失败: $error');
+    }
   }
 
   @override
@@ -154,10 +102,12 @@ class _ShortcutsScreenState extends ConsumerState<ShortcutsScreen> {
                   preset: preset,
                   active: preset.id == settings.activeShortcutPresetId,
                   description: _descriptions[preset.id] ?? '自定义工作流',
+                  homeShortcuts: settings.homeShortcuts,
                   onSelect: () => ref
                       .read(settingsProvider.notifier)
                       .setActiveShortcutPreset(preset.id),
                   onEdit: () => _editPreset(preset),
+                  onToggleHome: _toggleHomeShortcut,
                 ),
               ),
             ),
@@ -170,7 +120,7 @@ class _ShortcutsScreenState extends ConsumerState<ShortcutsScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              '在输入面板上方显示这里启用的快捷键。',
+              '输入面板显示当前方案的快捷键；点按方案中的快捷键标签可固定或取消固定首页按钮。',
               style: AppText.meta.copyWith(color: palette.textSubtle),
             ),
           ],
@@ -185,15 +135,19 @@ class _ShortcutSetCard extends StatelessWidget {
     required this.preset,
     required this.active,
     required this.description,
+    required this.homeShortcuts,
     required this.onSelect,
     required this.onEdit,
+    required this.onToggleHome,
   });
 
   final ShortcutPreset preset;
   final bool active;
   final String description;
+  final List<String> homeShortcuts;
   final VoidCallback onSelect;
   final VoidCallback onEdit;
+  final ValueChanged<String> onToggleHome;
 
   @override
   Widget build(BuildContext context) {
@@ -202,59 +156,88 @@ class _ShortcutSetCard extends StatelessWidget {
       minHeight: 66,
       radius: AppRadius.lg,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      color: active ? AppColors.primary.withValues(alpha: 0.06) : palette.surface,
+      color: active
+          ? AppColors.primary.withValues(alpha: 0.06)
+          : palette.surface,
       borderColor: active ? AppColors.primaryDark : palette.line,
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: InkWell(
-              onTap: onSelect,
-              child: Row(
-                children: [
-                  TileIcon(
-                    icon: preset.id == 'codex'
-                        ? Icons.terminal_rounded
-                        : Icons.keyboard_command_key_rounded,
-                    color: AppColors.violet,
-                    size: 34,
-                    radius: 9,
-                    iconSize: 17,
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: onSelect,
+                  child: Row(
+                    children: [
+                      TileIcon(
+                        icon: preset.id == 'codex'
+                            ? Icons.terminal_rounded
+                            : Icons.keyboard_command_key_rounded,
+                        color: AppColors.violet,
+                        size: 34,
+                        radius: 9,
+                        iconSize: 17,
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              preset.name,
+                              style: AppText.body.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: palette.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              description,
+                              style: AppText.meta.copyWith(
+                                color: palette.textSubtle,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (active) const StatusTag('使用中'),
+                    ],
                   ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          preset.name,
-                          style: AppText.body.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: palette.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          description,
-                          style: AppText.meta.copyWith(
-                            color: palette.textSubtle,
-                          ),
-                        ),
-                      ],
+                ),
+              ),
+              IconBtn(
+                icon: Icons.edit_outlined,
+                tooltip: '编辑',
+                size: 34,
+                iconSize: 16,
+                onPressed: onEdit,
+              ),
+            ],
+          ),
+          if (preset.shortcuts.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                for (final shortcut in preset.shortcuts)
+                  FilterChip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text(shortcut),
+                    selected: homeShortcuts.contains(shortcut),
+                    onSelected: (_) => onToggleHome(shortcut),
+                    avatar: Icon(
+                      homeShortcuts.contains(shortcut)
+                          ? Icons.home_rounded
+                          : Icons.home_outlined,
+                      size: 15,
                     ),
                   ),
-                  if (active) const StatusTag('使用中'),
-                ],
-              ),
+              ],
             ),
-          ),
-          IconBtn(
-            icon: Icons.edit_outlined,
-            tooltip: '编辑',
-            size: 34,
-            iconSize: 16,
-            onPressed: onEdit,
-          ),
+          ],
         ],
       ),
     );

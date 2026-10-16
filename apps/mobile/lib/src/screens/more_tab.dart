@@ -125,6 +125,7 @@ class MoreTab extends ConsumerWidget {
 
   void _push(BuildContext context, Widget page) {
     final route = switch (page.runtimeType) {
+      const (ControlCenterScreen) => AppRoutes.controlCenter,
       const (ProcessesTab) => AppRoutes.processes,
       const (SettingsTab) => AppRoutes.settings,
       const (ShortcutsScreen) => AppRoutes.shortcuts,

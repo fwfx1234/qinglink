@@ -58,6 +58,7 @@ pub(super) fn add_app(
         args: sanitize_args(args),
         is_favorite: false,
         is_pinned: false,
+        launch_mode: None,
     };
     {
         let db = state
@@ -88,7 +89,10 @@ pub(super) fn launch_app(state: &AppState, id: &str) -> CommandResult {
     // `platform::launch_app` forwards to the interactive session when
     // this process runs as the Session 0 service, so the program is not
     // started invisibly.
-    qinglink_server::platform::launch_app(&entry.exe_path, &entry.args)
+    let launch_entry: AppEntry = entry.clone().into();
+    state
+        .launch_display
+        .launch(state, &launch_entry)
         .map_err(CommandError::internal)?;
     if let Ok(db) = state.app_db.lock() {
         let _ = db.record_launch(&entry.id);

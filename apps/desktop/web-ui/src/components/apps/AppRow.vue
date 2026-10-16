@@ -46,14 +46,6 @@ const metaLabel = computed(() => {
   return parts.join(' · ')
 })
 
-/**
- * 图标可能不对的条目：要么根本没有图标，要么只拿到了系统默认图标。
- * 这类条目的图标必须支持单独重扫，否则用户只能被错误图标一直误导。
- */
-const iconSuspect = computed(
-  () => !props.app.has_icon || props.app.icon_source === 'shell' || props.app.icon_source === 'none',
-)
-
 /** 低频动作收进「⋯」，行上只留启动、常用与详情。 */
 const menuItems = computed<RowMenuItem[]>(() => {
   const items: RowMenuItem[] = [
@@ -124,9 +116,6 @@ function onMenuSelect(id: string): void {
       <Chip v-if="props.app.hidden" size="sm" tone="warning">已隐藏</Chip>
       <Chip v-if="props.app.renamed" size="sm" tone="accent">已重命名</Chip>
       <Chip v-if="props.app.user_added" size="sm" tone="neutral">手动添加</Chip>
-      <Chip v-if="iconSuspect" size="sm" tone="warning" title="图标可能不准确，可在详情里单独重扫">
-        图标待确认
-      </Chip>
     </div>
 
     <p class="sub">

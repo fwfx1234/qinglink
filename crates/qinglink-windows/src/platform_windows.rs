@@ -70,11 +70,12 @@ pub use app_catalog::search_installed_apps;
 pub use auto_unlock::auto_unlock;
 pub use display_modes::{get_displays, set_display_mode};
 pub use icon_candidates::list_icon_candidates;
-pub use icon_image_file::image_file_to_icon_base64;
+pub use icon_image_file::{base64_image_to_icon_base64, image_file_to_icon_base64};
 pub use icon_normalize::ICON_EDGE;
 pub use icon_resolve::{
     ICON_SOURCE_EXECUTABLE, ICON_SOURCE_IMAGE, ICON_SOURCE_MANUAL, ICON_SOURCE_NONE,
     ICON_SOURCE_SHELL, ICON_SOURCE_SHORTCUT, IconCandidateInfo, IconResolution, resolve_icon,
+    resolve_process_icon,
 };
 pub use icon_resource::{extract_icon_base64, extract_resource_icon_base64};
 pub use icon_shell::extract_shell_icon_base64;

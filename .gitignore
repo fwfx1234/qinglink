@@ -15,3 +15,7 @@ androguard.db
 tv_ir_data.csv
 elevated-install-result.txt
 .DS_Store
+# 安全输入服务是 services/qinglink-service 的构建产物，只放源代码、不入库。
+# 构建桌面端之前按 apps/desktop/assets/input/README.md 生成它。缺它时 build.rs 静默
+# （仅 QINGLINK_REQUIRE_INPUT_ASSETS=1 会让构建失败），症状是桌面端提示资源缺失。
+/apps/desktop/assets/input/*.exe

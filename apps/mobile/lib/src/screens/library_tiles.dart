@@ -144,23 +144,13 @@ class LibraryCatalogTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        item.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppText.cardTitle.copyWith(
-                          color: palette.textPrimary,
-                        ),
-                      ),
-                    ),
-                    if (item.iconLooksWrong) ...[
-                      const SizedBox(width: 6),
-                      const StatusTag('图标待确认', color: AppColors.amber),
-                    ],
-                  ],
+                Text(
+                  item.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.cardTitle.copyWith(
+                    color: palette.textPrimary,
+                  ),
                 ),
                 const SizedBox(height: 3),
                 Text(

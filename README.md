@@ -22,8 +22,9 @@ QingLink 是独立项目，不依赖 QingQi crate，也不向 QingQi 主程序�
                     ┌───────┴────────────┐   ┌──────┴─────────────┐
                     │ QingLink.exe        │   │ Flutter 手机端      │
                     │ · 托盘图标           │   │ · 控制端            │
-                    │ · 本地 Web 服务 3722 │   │ · 不持有业务数据     │
-                    │ · 日志采集与查询     │   └────────────────────┘
+                    │ · 配对提示弹窗       │   │ · 不持有业务数据     │
+                    │ · 本地 Web 服务 3722 │   └────────────────────┘
+                    │ · 日志采集与查询     │
                     └───────┬────────────┘
                             │ HTTP + WS /api/admin/v1/*
                     ┌───────┴────────────┐
@@ -66,6 +67,7 @@ QingLink 是独立项目，不依赖 QingQi crate，也不向 QingQi 主程序�
   长期令牌存放在手机平台安全存储中。
 - 应用库、Steam 游戏与自定义目录扫描、启动、进程查看与管理；扫描按"每个目录一个主程序"
   给出推荐项，手机可逐个屏蔽并在「已屏蔽」里恢复。
+- 游戏可保存主显示器启动分辨率；启动前尝试切换，跟踪游戏进程退出后恢复原模式。
 - **图标按条目管理**：可逐条重扫或指定图标文件，来源会一并记录（`shell` 表示只拿到默认
   图标），落库前统一规范为 128×128；换图标立即对所有客户端生效。
 - **常用（我的库）归服务端**：手机「库 → 常用」、手机首页置顶与管理端「常用」是同一份
@@ -76,6 +78,8 @@ QingLink 是独立项目，不依赖 QingQi crate，也不向 QingQi 主程序�
   日志查看与下载、诊断包导出、桌面端设置；长说明收进 `?` tooltip，不占版面。
 - **系统托盘**：打开 QingLink、重启服务、保持唤醒、退出；直接注册 Win32 通知区域图标，
   explorer 重启后自动重新注册。
+- **配对提示弹窗**：手机发起配对时桌面端弹出置顶窗口显示 6 位配对码（可取消），
+  配对成功 / 超时 / 锁屏后自动关闭；浏览器没打开也能完成配对。
 - **日志子系统**：内存环形缓冲（5000 条，供界面查询与实时推送）+ 按天轮转的文本日志；
   **日志不写数据库**。
 - 文件浏览、系统与电源控制、显示/音频设置、鼠标键盘与触控板输入。
@@ -90,14 +94,23 @@ QingLink 是独立项目，不依赖 QingQi crate，也不向 QingQi 主程序�
 - Windows SDK / Visual C++ 构建工具（`rusqlite` 使用 `bundled`，需要 C 编译器）。
 - Flutter/Dart（约束见 [`apps/mobile/pubspec.yaml`](apps/mobile/pubspec.yaml)）；
   Android 或 iOS 构建还需对应平台 SDK。
-- 发布构建需准备签名后的 `QingLinkService.exe`（建议 Authenticode 签名）。
+- 发布构建需准备 `QingLinkService.exe`（建议 Authenticode 签名；安装默认不校验，见「发布构建」）。
 
 ## 快速开始
 
 ```powershell
-# 仓库根目录；会自动构建并内嵌 Web 界面
+# 仓库根目录
+# 1. 先生成安全输入服务资源（构建产物，不在版本控制里，全新 clone 必须做一次）
+cargo build -p qinglink-service --bin QingLinkService
+Copy-Item .\target\debug\QingLinkService.exe .\apps\desktop\assets\input\QingLinkService.exe -Force
+
+# 2. 构建并运行桌面端；会自动构建并内嵌 Web 界面
 cargo run --bin QingLink
 ```
+
+跳过第 1 步桌面端照样能跑，但"安装服务"会提示「未内嵌安全输入服务」：
+`apps/desktop/assets/input/QingLinkService.exe` 是 `services/qinglink-service` 的产物，
+本仓库只放源代码与资源，不跟踪任何构建产物。
 
 debug 构建是 console 子系统进程，日志默认按 `info` 输出到运行它的终端，同时写入
 `%LOCALAPPDATA%\QingLink\logs\`；release 构建是无控制台的纯托盘形态。启动后监听
@@ -151,7 +164,7 @@ cd apps\mobile; flutter analyze
 [`docs/development.md`](docs/development.md)。
 
 **改了 `services/` 或 `crates/` 之后，桌面端不会自动带上新的服务端。** `QingLinkService.exe`
-是内嵌资源，必须重建并刷新它，"修复服务"才会真正升级：
+是内嵌资源（构建产物，不入库），必须重建并刷新它，"修复服务"才会真正升级：
 
 ```powershell
 # 1. 退出正在运行的桌面端（它占着 target\debug\QingLink.exe）
@@ -174,7 +187,7 @@ cargo build -p qinglink-desktop --bin QingLink
 # 1. 构建服务
 cargo build --release -p qinglink-service --bin QingLinkService
 
-# 2. 对服务做 Authenticode 签名，并复核结果（Status 必须是 Valid）
+# 2.（建议）对服务做 Authenticode 签名，并复核结果（Status 必须是 Valid）
 signtool sign /fd SHA256 /tr <时间戳服务器> /td SHA256 /a .\target\release\QingLinkService.exe
 Get-AuthenticodeSignature .\target\release\QingLinkService.exe
 
@@ -189,6 +202,9 @@ cargo build --release -p qinglink-desktop --bin QingLink
 产物 `target\release\QingLink.exe` 已内嵌 Web 界面，单文件即可分发；服务安装到
 `%ProgramFiles%\QingLink\Input`，安装时会请求 UAC。签名状态可用
 `Get-AuthenticodeSignature .\apps\desktop\assets\input\QingLinkService.exe` 检查。
+安装与「修复服务」**默认不校验** Authenticode 签名，debug 与 release 都能安装本机自建产物
+（内嵌资源的 SHA256 始终核对）；要强制签名，在启动桌面端之前设置
+`$env:QINGLINK_REQUIRE_SIGNED_INPUT = '1'`，此时提权助手会拒绝未签名的服务资源或桌面端。
 
 ## 文档索引
 

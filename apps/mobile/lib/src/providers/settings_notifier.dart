@@ -87,6 +87,13 @@ class SettingsNotifier extends StateNotifier<ConnectionConfig> {
     _setState(state.copyWith(activeShortcutPresetId: id));
   }
 
+  /// 保存首页快捷操作区中的组合键，去重并限制数量。
+  Future<void> saveHomeShortcuts(Iterable<String> shortcuts) async {
+    final normalized = normalizeHomeShortcuts(shortcuts);
+    await _writeString(SettingsKeys.homeShortcuts, jsonEncode(normalized));
+    _setState(state.copyWith(homeShortcuts: normalized));
+  }
+
   Future<void> setLastUsedLauncher(String id) async {
     await _writeString(SettingsKeys.lastUsedLauncher, id);
     _setState(state.copyWith(lastUsedLauncherId: id));

@@ -3,14 +3,14 @@ use super::*;
 pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Option<&str>) -> WsServerMessage {
     match req {
         // === Tasks ===
-        WsClientRequest::GetTasks {
-            search,
-            page,
-            page_size,
-            filter,
-        } => {
+        WsClientRequest::GetTasks(query) => {
             let mut pm = crate::lock_unpoisoned(&state.process_manager);
-            let list = pm.list_processes(search.as_deref(), *page, *page_size, Some(filter));
+            let list = pm.list_processes(
+                query.search.as_deref(),
+                query.page,
+                query.page_size,
+                Some(&query.filter),
+            );
             WsServerMessage::Response(WsServerResponse::Tasks(list))
         }
         WsClientRequest::GetTasksStats => {

@@ -17,7 +17,7 @@
    换一台手机、换一个浏览器、甚至换一台 PC 上的另一个用户会话，只要连的是
    同一台 PC，看到的就是同一份数据。这是"数据跟随 PC"的字面含义。
 3. **桌面端是薄壳。**
-   它只做四件事：托盘图标、本地 Web 服务、日志采集、把管理请求代理给服务。
+   它只做五件事：托盘图标、配对提示窗口、本地 Web 服务、日志采集、把管理请求代理给服务。
    它**不**直接读写业务数据——它对业务数据（`qinglink.db`、`config\`）没有权限，
    这正是结构上强制这条原则的原因。唯一例外是 `%ProgramData%\QingLink\logs\`：
    那里 ACL 额外给 `BUILTIN\Users` 授予只读，界面因此能直接读服务日志（见第 3 节）。
@@ -33,6 +33,7 @@
 │ QingLinkService.exe          LocalSystem，开机自启 Windows 服务│
 │                                                              │
 │  · SQLite 数据所有者（应用目录、令牌、设备）                    │
+│  · 游戏启动模式协调与进程监视；退出后恢复显示模式                │
 │  · 局域网协议：TCP 3721（HTTP + WS /api/v2/*）                 │
 │  · 局域网发现：UDP 3723                                       │
 │  · 命名管道服务端 \\.\pipe\QingLinkControlV2（桌面管理通道）     │
@@ -45,6 +46,7 @@
 │ 普通用户权限                  │   │ · 控制端，不持有业务数据     │
 │                              │   └───────────────────────────┘
 │  · 系统托盘图标               │
+│  · 配对提示弹窗（不依赖浏览器） │
 │  · 本地 Web 服务 :3722        │
 │  · 日志采集/查询/持久化        │
 │  · 与服务的租约心跳            │
@@ -73,15 +75,17 @@
 
 | 数据 | 位置 | 所有者 | 说明 |
 | --- | --- | --- | --- |
-| 应用目录、重命名、隐藏、删除标记、常用/置顶 | `%ProgramData%\QingLink\qinglink.db` → `scanner_apps` | 服务 | 全部客户端共享 |
+| 应用目录、重命名、隐藏、删除标记、常用/置顶、游戏启动显示模式 | `%ProgramData%\QingLink\qinglink.db` → `scanner_apps` | 服务 | 全部客户端共享 |
+| 游戏运行期间的显示器恢复快照 | 同上 → `settings` 的 `launch_display.snapshot` | 服务 | 服务启动或游戏退出时恢复 |
 | 最近启动时间与次数 | 同上 → `launcher_usage` | 服务 | `item_id` → `last_launched_at`、`launch_count`，"最近/最常用"排序用 |
 | 每类扫描完成时间 | 同上 → `scanner_scan_state` | 服务 | `kind` → `completed_at`；快照的 `scan` 字段由它而来 |
 | Steam 游戏 | 同上 → `steam_games` | 服务 | |
 | 已配对设备与令牌 | 同上 → `tokens_v2` | 服务 | |
 | PC 身份、配对 PIN | `%ProgramData%\QingLink\config\` | 服务 | |
-| 桌面端设置（调试日志） | `%LOCALAPPDATA%\QingLink\qinglink.db` → `settings` | 桌面端 | 每用户 |
+| 桌面端设置（调试日志、保持唤醒） | `%LOCALAPPDATA%\QingLink\qinglink.db` → `settings` | 桌面端 | 每用户 |
 | 桌面端日志文本（可读，也是唯一的历史） | `%LOCALAPPDATA%\QingLink\logs\qinglink.<日期>.log` | 桌面端 | 按天轮转，长期保留 |
 | 服务端日志文本 | `%ProgramData%\QingLink\logs\QingLinkService.log.<日期>` | 服务 | 桌面端**只读**直读，不经命名管道 |
+| 移动端首页快捷键 | 手机 `SharedPreferences` → `home_shortcuts` | 移动端 | 最多保存 12 个组合及加入顺序；方案页可直接固定或移除，触发仍通过服务端 `key_event` |
 
 `%ProgramData%\QingLink` 的 ACL 只给 SYSTEM 与内置管理员完全权限
 （`crates/qinglink-storage/src/paths.rs` 里用 `icacls` 强制），业务数据
@@ -113,6 +117,9 @@ is_deleted      INTEGER            -- 软删除：可被后续扫描重新发现
 is_user_added   INTEGER
 is_favorite     INTEGER            -- 常用（"我的库"）
 is_pinned       INTEGER            -- 置顶到手机首页；置顶会自动加入常用
+launch_width    INTEGER            -- 可选的游戏启动分辨率宽度
+launch_height   INTEGER            -- 可选的游戏启动分辨率高度
+launch_refresh_millihz INTEGER     -- 可选的刷新率，单位毫赫兹
 created_at      INTEGER NOT NULL
 updated_at      INTEGER NOT NULL
 ```
@@ -133,8 +140,9 @@ steam/software/other 等更细的标签，管理面不暴露这些。
 ```text
 main 线程（也是唯一拥有 Windows 消息队列的线程）
 ├─ 托盘图标：创建、持有、销毁都必须在这个线程
-├─ Windows 消息泵：每 50ms 抽一次，托盘事件依赖它
-├─ 主循环：处理 HostCommand / TrayAction / 状态同步
+├─ 配对提示弹窗：手机发起配对时显示，配对成功 / 超时 / 取消后自动隐藏
+├─ Windows 消息泵：每 50ms 抽一次，托盘与弹窗事件都依赖它
+├─ 主循环：处理 HostCommand / TrayAction / PromptEvent / 状态同步
 └─ 退出序列（`exit.rs`）：停 IPC worker → 服务租约 → 数据库 → 日志 flush（最后）
 
 qinglink-service-ipc 线程（1 个）
@@ -152,6 +160,7 @@ qinglink-web 线程（1 个，内含多线程 Tokio runtime）
 临时线程
 ├─ 提权服务操作（阻塞在 UAC 辅助进程上）
 ├─ 服务安装状态体检
+├─ 配对取消（`qinglink-pairing-cancel`）：主线程不能等的那次管道往返
 └─ 文件选择对话框（`qinglink-file-picker`，Shell 选择器要求单线程套间）
 ```
 
@@ -163,6 +172,8 @@ qinglink-web 线程（1 个，内含多线程 Tokio runtime）
 
 - **不要把托盘或 `SetThreadExecutionState` 移出 main 线程。**
   前者要求同线程创建/销毁，后者是 per-thread 状态。
+- **不要在 main 线程上等同步 IO。** 管道调用会阻塞最多 3 秒；配对弹窗的
+  「取消配对」因此走 `pairing/cancel.rs` 的专用线程，结论经事件通道回到主循环。
 - **不要在主循环里做阻塞 IO。** 管道调用会阻塞最多 3 秒。
 - **Web 层不能直接调用只属于 main 线程的东西**，必须走 `HostCommand` 通道。
 
@@ -176,7 +187,7 @@ apps/desktop/src/
 ├── startup.rs           命令行参数（--startup / --restart-parent / --self-check / --check-service）
 ├── cli.rs               命令行模式分发：提权辅助进程 / 服务探针 / 正常启动的分流
 ├── bootstrap.rs         启动装配：数据目录 → 日志 → 数据库 → Web → 托盘 → 服务租约
-├── main_loop.rs         主循环：HostCommand、托盘事件、tooltip 同步、Windows 消息泵
+├── main_loop.rs         主循环：HostCommand、托盘事件、配对弹窗、tooltip 同步、Windows 消息泵
 ├── exit.rs              退出序列：通知浏览器 → 停 IPC worker → 服务租约 → 数据库 → 日志 flush
 ├── startup_trace.rs     QINGLINK_STARTUP_TRACE 面包屑（`trace_step`）
 ├── admin_ui.rs          管理界面端口 / URL 与"交给默认浏览器"
@@ -200,6 +211,13 @@ apps/desktop/src/
 │   ├── report.rs        注册报告/状态模型、blocked_reason 分类、tooltip 文本
 │   ├── menu.rs          菜单定义与 TrayAction 映射
 │   └── icon.rs          SVG 光栅化（**必须保留颜色**，见第 6 节）
+├── pairing/             配对提示弹窗（见 9.4）
+│   ├── mod.rs           PairingPrompt 状态机 + PromptEvent
+│   ├── window.rs        可见窗口与窗口过程（点击 → 事件）
+│   ├── layout.rs        窗口几何、DPI 换算、子控件创建
+│   ├── fonts.rs         由系统消息字体派生的两套字体
+│   ├── cancel.rs        「取消配对」的专用线程
+│   └── text.rs          弹窗文案
 └── web/                 本地 Web 服务
     ├── mod.rs           路由 + 静态资源 + 两个事件泵
     ├── state.rs         WebState / HostCommand / ServerEvent / SharedSettings
@@ -222,6 +240,9 @@ apps/desktop/src/
 - 能力协商：`Capabilities` 的每个字段都带 `#[serde(default)]`，所以新桌面端连旧
   服务时会得到 `catalog_management: false` 而不是解码失败。桌面端据此对不可用
   命令返回 `UNSUPPORTED`。
+- **主线程不能 await。** 配对弹窗的「取消配对」走 `ServiceClient::call_blocking`：
+  前置检查、`oneshot` 回执与队列都和 `call` 完全一致，只是改在专用线程上轮询回执，
+  不依赖 Tokio 运行时；界面更新仍旧只在主线程发生。
 
 ### 5.2 服务端管理命令
 
@@ -323,14 +344,15 @@ apps/desktop/src/
 | 单元 | 目录 | 构建器 | 产物 | 约束 |
 | --- | --- | --- | --- | --- |
 | Rust 库 | `crates/` | Cargo | 无独立产物 | 依赖方向见 §5.3 与 [`.opencode/rules/architecture.md`](../.opencode/rules/architecture.md) §1 |
-| Rust 服务 | `services/qinglink-service` | Cargo | `target\*\QingLinkService.exe` | sidecar：签名后进 `apps/desktop/assets/input/`，由桌面端内嵌安装 |
+| Rust 服务 | `services/qinglink-service` | Cargo | `target\*\QingLinkService.exe` | sidecar：签名后进 `apps/desktop/assets/input/`，由桌面端内嵌安装；该副本是构建产物，**不入库** |
 | Rust 桌面端 | `apps/desktop` | Cargo + `build.rs` | `target\*\QingLink.exe` | 内嵌 web 产物与服务 exe；**不依赖** `qinglink-server` |
 | Vue 前端 | `apps/desktop/web-ui` | npm / Vite | `apps/desktop/web-ui/dist` | **没有独立交付物**，被 `build.rs` 内嵌；`dist/` 不入库 |
 | Flutter | `apps/mobile` | Flutter | `apps/mobile/build/**` | android / ios 是交付目标；`windows/` 仅本地调试 |
 
 **构建编排的位置。** 跨语言编排全部在 [`apps/desktop/build.rs`](../apps/desktop/build.rs)：
 它相当于 Tauri 的 `tauri.conf.json` 加 CLI——`web-ui/dist` 缺失或过旧时自动构建前端并内嵌，
-服务二进制按约定从 `apps/desktop/assets/input/` 或 `target/{debug,release}/` 取用；
+服务二进制按约定从 `apps/desktop/assets/input/` 或 `target/{debug,release}/` 取用（前者是构建
+产物，不入库，见上表）；
 两者都可能打 `cargo:warning` 提醒内嵌内容已经过期。**因此本项目不设脚手架脚本**，
 构建、运行、校验、发布一律用语言原生命令，规则见 [`AGENTS.md`](../AGENTS.md) §7。
 
@@ -434,7 +456,7 @@ QingLink.exe --check-service     # 单独探一次服务命名管道
 | --- | --- |
 | 打开 QingLink | 用默认浏览器打开 `http://127.0.0.1:3722` |
 | 重启服务 | 提权重启 `QingLinkService`，结果通过 install-state 事件回流 |
-| 保持唤醒 | 勾选项，`SetThreadExecutionState`，在 main 线程执行 |
+| 保持唤醒 | 勾选项，`SetThreadExecutionState`（系统 + 显示器），在 main 线程执行；开关落偏好并在启动时恢复 |
 | 退出 | 退出桌面端（并请求服务停止，见 6.4） |
 
 左键单击等同于"打开 QingLink"：左键 `WM_LBUTTONUP` 直接打开界面，右键才
@@ -450,6 +472,13 @@ QingLink.exe --check-service     # 单独探一次服务命名管道
 
 先回包再退出是刻意的：退出是由 API 调用触发的，那个响应必须先离开 socket。
 等待窗口见 `exit.rs` 的 `RESPONSE_FLUSH`。
+
+重启有个句柄细节：tokio/mio 在 Windows 上用 Winsock 的 `socket()` 建监听套接字，这个句柄是
+**可继承**的，而 `CreateProcess`（`--restart-parent` 的替换实例，以及浏览器、提权助手）默认会
+复制可继承句柄。替换实例一旦继承旧监听套接字，端口就由它自己继续占着，它自己的 `bind` 会以
+`WSAEADDRINUSE` 失败——`netstat` 里那条 `LISTEN` 还挂在**已死**的父进程 PID 上，直到子进程退出
+才消失，现象就是「重启桌面端之后应用再也没起来」。`web::bind` 因此在绑定成功后显式清掉
+`HANDLE_FLAG_INHERIT`（`make_listener_non_inheritable`），并保留一个约 3 秒的重试窗口兜底。
 
 ---
 
@@ -624,10 +653,12 @@ fallback 返回并带 1 小时缓存，`index.html` 与未知路径返回外壳�
 → 单实例互斥体（已存在则激活对方并退出）
 → 会话检查（判定当前会话是否受支持）
 → 数据库迁移 → 注册 qinglink/data
-→ Preferences 读取 → 应用调试日志级别
+→ Preferences 读取 → 应用调试日志级别（同时读出保持唤醒意图）
 → ServiceRuntime（IPC 线程）
+→ 设置镜像（autostart 读注册表；保持唤醒按偏好恢复并在 main 线程应用）
 → WebState 装配 + 路由构建 + Web 线程（端口占用则硬失败）
 → 托盘创建（NIM_ADD 被拒后：可恢复则定时重试，完整性级别不匹配则立刻报错并打开浏览器兜底）
+→ 配对提示窗口创建（失败只降级为"配对码仅在管理界面显示"，不影响启动）
 → 服务租约线程（准备服务并开始心跳，不提权；管道被环境拒绝时明确说明原因）
 → 主循环
 ```
@@ -642,7 +673,7 @@ fallback 返回并带 1 小时缓存，`index.html` 与未知路径返回外壳�
 
 设 `QINGLINK_STARTUP_TRACE=1` 时每个阶段都会往 stderr 打一条带耗时的面包屑，
 "进程活着但什么都没发生"因此可以定位到具体一行而不需要调试器。单条格式是
-`[qinglink-startup] +{:>7.3}s pid={} {step}`（`startup_trace.rs` 的 `trace_step`），正常启动路径共 16 条；
+`[qinglink-startup] +{:>7.3}s pid={} {step}`（`startup_trace.rs` 的 `trace_step`），正常启动路径共 17 条；
 耗时随机器变化，下面是形状示例：
 
 ```text
@@ -660,13 +691,14 @@ fallback 返回并带 1 小时缓存，`index.html` 与未知路径返回外壳�
 [qinglink-startup] +  0.084s pid=12345 web state assembled
 [qinglink-startup] +  0.126s pid=12345 web listener reporting ready
 [qinglink-startup] +  0.128s pid=12345 tray registration attempted
+[qinglink-startup] +  0.128s pid=12345 pairing prompt created
 [qinglink-startup] +  0.129s pid=12345 service lease thread started
 [qinglink-startup] +  0.129s pid=12345 entering the main loop
 ```
 
 `--restart-parent`、`--check-service`、`--self-check` 与提权辅助进程会各插入一条
 自己的面包屑（`restart parent exited` / `running the service probe` /
-`running the self check` / `helper command dispatched`），所以实测条数可能多于 16。
+`running the self check` / `helper command dispatched`），所以实测条数可能多于 17。
 
 ### 9.2 重命名一个应用
 
@@ -693,6 +725,36 @@ POST /apps/scan {kind}
 → 扫描完成后 reload_visible_catalog + 广播
 → 浏览器收到 catalog_changed(reason=scan_finished) → 刷新列表与统计
 ```
+
+### 9.4 配对弹窗
+
+```text
+手机 POST /api/v2/pairing/requests
+→ 服务生成 6 位配对码（crates/qinglink-server/src/server/pairing.rs）
+→ 桌面端每 500ms 的快照轮询读到 pending_pairing（含码与 expires_at_unix）
+→ 主循环 sync_pairing_prompt：出现新请求 → pairing/window.rs 弹出置顶窗口
+
+手机输入配对码并 confirm，或请求到期（60 秒）
+→ 服务快照里 pending_pairing 变 None
+→ 主循环的下一次 sync 隐藏窗口（最迟一次轮询 + 一个 50ms 节拍）
+
+窗口上的「取消配对」
+→ WM_COMMAND → PromptEvent::CancelRequested
+→ 主循环起 qinglink-pairing-cancel 线程 → ServiceClient::call_blocking(CancelPairing)
+→ 结论经 PromptEvent::CancelFinished 回到主循环 → Toast + 隐藏窗口
+```
+
+要点：
+
+- **窗口不自己判断结局。** 配对成功、超时、被取消、桌面锁屏、服务断开，最终都表现为
+  `pending_pairing == None`，所以只有一条隐藏路径；新增结束条件不必再改窗口。
+- **取消后不能被迟到快照弹回来。** 取消是异步的，而快照最多滞后 500ms；控制器记下被
+  压住的 `request_id`，直到它真正从快照里消失。
+- **锁屏不下发 PIN。** 服务在 `desktop_unlocked == false` 时把 `pending_pairing` 清空，
+  因此锁屏时既不会弹窗也不会有可用的配对码（与 §10 一致）。
+- **PIN 不进日志。** `PendingPairing` 没有 `Debug`，`PairingPrompt` 的手写 `Debug`
+  只打印 `request_id`（与 §8.6 同一约定）。
+- 窗口创建失败不是启动失败：弹窗为 `None` 时配对码仍可在管理界面里看到。
 
 ---
 

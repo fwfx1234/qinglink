@@ -17,9 +17,15 @@ class DisplayModeInfo {
       );
 
   String get resolution => '${width}x$height';
-  String get refreshText => refreshMillihz == 0
-      ? ''
-      : '${(refreshMillihz / 1000).toStringAsFixed(0)} Hz';
+  String get refreshText {
+    if (refreshMillihz == 0) return '';
+    final precision = refreshMillihz % 1000 == 0 ? 0 : 2;
+    return '${(refreshMillihz / 1000).toStringAsFixed(precision)} Hz';
+  }
+
+  String get label => refreshText.isEmpty
+      ? resolution
+      : '$resolution · $refreshText';
 
   Map<String, dynamic> toJson() => {
     'width': width,

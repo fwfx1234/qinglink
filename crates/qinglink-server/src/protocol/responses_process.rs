@@ -70,6 +70,9 @@ pub struct LauncherItemSummary {
     /// 置顶到手机首页.
     #[serde(default)]
     pub pinned: bool,
+    /// Configured game display mode applied before launch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_mode: Option<crate::service::app_scanner::LaunchDisplayMode>,
     /// Only populated for explicit folder-scan candidates. Keeping this out
     /// of normal catalog responses avoids inflating every library request.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,6 +113,36 @@ pub struct IconUpdateResponse {
     /// 图标来源文件的路径。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_path: Option<String>,
+}
+
+/// 单个图标文件的预览结果。
+///
+/// 手机在 PC 文件浏览器里挑图标时按路径预览：只回图片本身，不落库、不改动条目。
+#[derive(Debug, Serialize)]
+pub struct IconPreviewResponse {
+    /// 被预览文件的路径（回显请求）。
+    pub path: String,
+    /// 预览图 PNG 数据（Base64）；文件不可读或不是可解析的图标时省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_base64: Option<String>,
+}
+
+/// 单个进程的图标查询结果。
+///
+/// 解析不到图标不是错误：`source` 为 `none` 且不带载荷，客户端保留自己的
+/// 占位图标即可。
+#[derive(Debug, Serialize)]
+pub struct ProcessIconResponse {
+    /// 目标进程 PID（回显请求）。
+    pub pid: u32,
+    /// 图标来源标识：`executable` | `image` | `none`。
+    pub source: String,
+    /// 图标来源文件的路径（程序本身或随附素材），无图标时省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_path: Option<String>,
+    /// 图标 PNG 数据（Base64），无图标时省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_base64: Option<String>,
 }
 
 /// Blocked (hidden) catalog entries, listed so a user can unblock them.

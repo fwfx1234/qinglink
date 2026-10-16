@@ -15,6 +15,7 @@ fn app(id: &str, name: &str, category: &str) -> AppEntry {
         args: Vec::new(),
         is_favorite: false,
         is_pinned: false,
+        launch_mode: None,
     }
 }
 

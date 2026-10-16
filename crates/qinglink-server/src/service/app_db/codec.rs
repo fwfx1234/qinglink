@@ -45,6 +45,8 @@ pub struct DbAppEntry {
     pub is_favorite: bool,
     /// 置顶到手机首页.
     pub is_pinned: bool,
+    /// 游戏启动时请求的显示模式。
+    pub launch_mode: Option<crate::service::app_scanner::LaunchDisplayMode>,
 }
 
 impl From<DbAppEntry> for AppEntry {
@@ -62,6 +64,7 @@ impl From<DbAppEntry> for AppEntry {
             args: db.args,
             is_favorite: db.is_favorite,
             is_pinned: db.is_pinned,
+            launch_mode: db.launch_mode,
         }
     }
 }

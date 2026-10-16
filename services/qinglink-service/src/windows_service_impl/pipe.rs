@@ -48,7 +48,10 @@ impl Reply {
     pub(super) fn send(&mut self, value: &impl Serialize) -> Result<()> {
         let mut value = serde_json::to_value(value).context("serialize service response")?;
         if let Some(map) = value.as_object_mut() {
-            map.insert("version".into(), 2.into());
+            map.insert(
+                "version".into(),
+                qinglink_protocol::service_ipc::SERVICE_IPC_VERSION.into(),
+            );
             if let Some(id) = &self.request_id {
                 map.insert("request_id".into(), id.clone().into());
             }

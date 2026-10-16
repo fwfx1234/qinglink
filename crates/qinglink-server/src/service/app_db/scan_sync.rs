@@ -89,8 +89,8 @@ impl AppDatabase {
                 "INSERT OR REPLACE INTO scanner_apps
                  (id, name, original_name, display_name, exe_path, icon_base64, args, category, source,
                   is_hidden, is_deleted, is_user_added, created_at, updated_at, icon_path, icon_source, icon_updated_at,
-                  is_favorite, is_pinned)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                  is_favorite, is_pinned, launch_width, launch_height, launch_refresh_millihz)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
                 rusqlite::params![
                     app.id,
                     app.name,
@@ -111,6 +111,9 @@ impl AppDatabase {
                     icon_updated_at,
                     keep.map(|keep| keep.is_favorite).unwrap_or(0),
                     keep.map(|keep| keep.is_pinned).unwrap_or(0),
+                    keep.and_then(|keep| keep.launch_width),
+                    keep.and_then(|keep| keep.launch_height),
+                    keep.and_then(|keep| keep.launch_refresh_millihz),
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -134,6 +137,9 @@ struct AppOverrides {
     is_pinned: i64,
     created_at: i64,
     is_deleted: bool,
+    launch_width: Option<i64>,
+    launch_height: Option<i64>,
+    launch_refresh_millihz: Option<i64>,
 }
 
 /// Snapshot every row's user-owned fields, keyed by catalog id.
@@ -143,7 +149,8 @@ fn load_overrides(
     let mut statement = conn
         .prepare(
             "SELECT id, display_name, icon_base64, icon_path, icon_source, icon_updated_at, args,
-                    is_hidden, is_user_added, created_at, is_deleted, is_favorite, is_pinned
+                    is_hidden, is_user_added, created_at, is_deleted, is_favorite, is_pinned,
+                    launch_width, launch_height, launch_refresh_millihz
              FROM scanner_apps",
         )
         .map_err(|e| e.to_string())?;
@@ -164,6 +171,9 @@ fn load_overrides(
                     is_deleted: row.get::<_, i64>(10)? != 0,
                     is_favorite: row.get(11)?,
                     is_pinned: row.get(12)?,
+                    launch_width: row.get(13)?,
+                    launch_height: row.get(14)?,
+                    launch_refresh_millihz: row.get(15)?,
                 },
             ))
         })

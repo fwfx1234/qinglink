@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub use crate::platform::set_priority;
-pub use entry::{AppEntry, ScanCandidate, ScannerAppEntryResponse};
+pub use entry::{AppEntry, LaunchDisplayMode, ScanCandidate, ScannerAppEntryResponse};
 pub(crate) use scan::lower_scan_thread_priority;
 
 /// 应用扫描器：维护启动器目录缓存、重命名表与 Steam 扫描状态。

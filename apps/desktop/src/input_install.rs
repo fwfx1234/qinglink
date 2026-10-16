@@ -2,6 +2,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, ensure};
@@ -17,6 +18,14 @@ mod signature;
 
 const SERVICE_NAME: &str = "QingLinkService";
 const SERVICE_EXE: &str = "QingLinkService.exe";
+
+/// 内嵌服务资源缺失时的统一提示。
+///
+/// 资源是 `services/qinglink-service` 的构建产物、不入库（见 `.gitignore`），因此全新
+/// clone 一定会先撞到它；只说"用 QINGLINK_REQUIRE_INPUT_ASSETS=1 重新构建"会把人引向
+/// 发布打包，而不是先去生成这个文件。
+const MISSING_ASSET_HINT: &str = "未内嵌安全输入服务：先构建 services/qinglink-service，\
+把 QingLinkService.exe 放到 apps/desktop/assets/input/ 再重建桌面端";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputOperation {
@@ -80,7 +89,7 @@ pub fn inspect() -> InputInstallStatus {
     let detail = if available {
         "QingLink 安全桌面输入服务可用".to_string()
     } else if !package_available() {
-        "发布包未内嵌安全输入服务，请使用 QINGLINK_REQUIRE_INPUT_ASSETS=1 重新构建".to_string()
+        MISSING_ASSET_HINT.to_string()
     } else if !service_installed {
         "安全输入组件尚未安装".to_string()
     } else if !image_path_ok {
@@ -105,11 +114,15 @@ pub fn inspect() -> InputInstallStatus {
     }
 }
 
+/// 只重新探测 SCM / 健康状态，**不**碰 `result_message`。
+///
+/// `result` 的语义是"上一次提权操作的结论"，见 `InstallHealthCard`；链路每次
+/// 连接/断开跳变都会调这里，若顺手写一句"状态已刷新"，前端会把它当结论弹 toast，
+/// 并把上一次真实结论（安装成功/失败原因）覆写掉。
 pub fn refresh(shared: &SharedInputInstallState) {
     let status = inspect();
     if let Ok(mut state) = shared.lock() {
         state.status = status;
-        state.result_message = Some("安全输入状态已刷新".into());
     }
 }
 
@@ -119,10 +132,7 @@ pub fn start_elevated(shared: &SharedInputInstallState, operation: InputOperatio
             return;
         }
         if operation == InputOperation::Install && !package_available() {
-            state.result_message = Some(
-                "发布包未内嵌安全输入服务，请使用 QINGLINK_REQUIRE_INPUT_ASSETS=1 构建后安装"
-                    .into(),
-            );
+            state.result_message = Some(MISSING_ASSET_HINT.into());
             return;
         }
         state.busy = true;
@@ -177,12 +187,10 @@ pub fn handle_helper_command(args: &[String]) -> Option<Result<()>> {
     let result_path = args
         .windows(2)
         .find_map(|pair| (pair[0] == "--result").then(|| PathBuf::from(&pair[1])));
-    if args.iter().any(|arg| arg == "--skip-signature-check") {
-        // This flag is accepted only by the elevated helper process.
-        unsafe { std::env::set_var("QINGLINK_SKIP_SIGNATURE_CHECK", "1") };
-    }
+    // 只有桌面端显式要求时才校验 Authenticode 签名；默认安装本机自建产物。
+    let require_signature = args.iter().any(|arg| arg == "--require-signature-check");
     let result = match operation {
-        InputOperation::Install => install(),
+        InputOperation::Install => install(require_signature),
         InputOperation::Uninstall => uninstall(),
     };
     if let Some(path) = result_path {
@@ -195,13 +203,12 @@ pub fn handle_helper_command(args: &[String]) -> Option<Result<()>> {
     Some(result)
 }
 
-fn install() -> Result<()> {
+fn install(require_signature: bool) -> Result<()> {
     ensure!(package_available(), "程序未内嵌安全输入服务");
     ensure!(is_elevated(), "安装助手未获得管理员权限");
+    // 内嵌资源的 SHA256 始终核对：它挡住的是产物损坏与投放后被替换。
     signature::verify_embedded_assets()?;
-    let development_identity =
-        cfg!(debug_assertions) && std::env::var_os("QINGLINK_SKIP_SIGNATURE_CHECK").is_some();
-    if !development_identity {
+    if require_signature {
         signature::verify_embedded_signatures()?;
         signature::verify_signature(&std::env::current_exe()?)?;
     }
@@ -224,7 +231,7 @@ fn install() -> Result<()> {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::copy(&source, &target).with_context(|| format!("无法安装 {}", asset.relative_path))?;
+        copy_asset(&source, &target, asset.relative_path)?;
     }
     let _ = fs::remove_dir_all(&staging);
     acl::secure_install_directory(&install_directory)?;
@@ -253,6 +260,32 @@ fn uninstall() -> Result<()> {
         fs::remove_dir_all(directory).context("无法删除安全输入安装目录")?;
     }
     Ok(())
+}
+
+/// 把暂存目录里的一份资源覆盖到安装目录。
+///
+/// 服务被停掉之后，它的会话代理子进程可能还在退出中并继续映射服务镜像，此时立即覆盖会
+/// 得到 `ERROR_SHARING_VIOLATION`。升级必须容忍这个窗口：重试等到代理退出，否则一次
+/// 失败会把服务留在停止状态，界面看上去就是"服务起不来"。
+fn copy_asset(source: &Path, target: &Path, relative: &str) -> Result<()> {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const ATTEMPTS: u32 = 30;
+    let mut last_error = None;
+    for attempt in 0..ATTEMPTS {
+        match fs::copy(source, target) {
+            Ok(_) => return Ok(()),
+            Err(error) if error.raw_os_error() == Some(ERROR_SHARING_VIOLATION) => {
+                if attempt == 0 {
+                    tracing::info!(file = relative, "文件仍被占用，等待占位进程退出");
+                }
+                last_error = Some(error);
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            Err(error) => return Err(error).with_context(|| format!("无法安装 {relative}")),
+        }
+    }
+    Err(last_error.expect("at least one attempt failed"))
+        .with_context(|| format!("无法安装 {relative}：文件长时间被占用"))
 }
 
 fn write_trusted_desktop(install_directory: &Path) -> Result<()> {

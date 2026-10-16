@@ -93,6 +93,16 @@ class ShortcutPreset {
   );
 }
 
+/// 首页快捷操作区中显示的快捷键标签，按用户加入顺序保存。
+List<String> normalizeHomeShortcuts(Iterable<String> shortcuts) {
+  final seen = <String>{};
+  return shortcuts
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty && seen.add(item))
+      .take(12)
+      .toList(growable: false);
+}
+
 const defaultShortcutPresets = <ShortcutPreset>[
   ShortcutPreset(
     id: 'common',
@@ -166,6 +176,9 @@ class ConnectionConfig {
   /// 当前启用的快捷键方案标识。
   final String activeShortcutPresetId;
 
+  /// 首页快捷操作区中的自定义组合键。
+  final List<String> homeShortcuts;
+
   /// 上次启动的启动器条目标识。
   final String? lastUsedLauncherId;
 
@@ -205,6 +218,7 @@ class ConnectionConfig {
     this.quickApps = const [],
     this.shortcutPresets = defaultShortcutPresets,
     this.activeShortcutPresetId = 'common',
+    this.homeShortcuts = const [],
     this.lastUsedLauncherId,
     this.mouseSensitivity = defaultMouseSensitivity,
     this.reversePhoneScrollBar = false,
@@ -233,6 +247,7 @@ class ConnectionConfig {
     List<QuickApp>? quickApps,
     List<ShortcutPreset>? shortcutPresets,
     String? activeShortcutPresetId,
+    List<String>? homeShortcuts,
     Object? lastUsedLauncherId = _unset,
     double? mouseSensitivity,
     bool? reversePhoneScrollBar,
@@ -257,6 +272,7 @@ class ConnectionConfig {
       shortcutPresets: shortcutPresets ?? this.shortcutPresets,
       activeShortcutPresetId:
           activeShortcutPresetId ?? this.activeShortcutPresetId,
+      homeShortcuts: homeShortcuts ?? this.homeShortcuts,
       lastUsedLauncherId: identical(lastUsedLauncherId, _unset)
           ? this.lastUsedLauncherId
           : lastUsedLauncherId as String?,
@@ -291,6 +307,7 @@ class ConnectionConfig {
         .map((preset) => preset.toJson())
         .toList(),
     'activeShortcutPresetId': activeShortcutPresetId,
+    'homeShortcuts': homeShortcuts,
     'lastUsedLauncherId': lastUsedLauncherId,
     'mouseSensitivity': mouseSensitivity,
     'reversePhoneScrollBar': reversePhoneScrollBar,
@@ -322,6 +339,11 @@ class ConnectionConfig {
       shortcutPresets: parseShortcutPresets(json['shortcutPresets']),
       activeShortcutPresetId:
           json['activeShortcutPresetId'] as String? ?? 'common',
+      homeShortcuts: normalizeHomeShortcuts(
+        (json['homeShortcuts'] as List<dynamic>? ?? const []).map(
+          (item) => item.toString(),
+        ),
+      ),
       lastUsedLauncherId: json['lastUsedLauncherId'] as String?,
       mouseSensitivity: normalizeMouseSensitivity(
         (json['mouseSensitivity'] as num?)?.toDouble(),

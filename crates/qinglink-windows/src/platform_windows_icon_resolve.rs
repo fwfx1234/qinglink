@@ -167,3 +167,28 @@ pub fn resolve_icon(path: &str, explicit: Option<&str>) -> IconResolution {
     }
     IconResolution::missing()
 }
+
+/// Icon for one running process, resolved from its executable only.
+///
+/// The difference from [`resolve_icon`] is that this never asks the shell for
+/// its default icon: every process without artwork of its own would otherwise
+/// be served the same generic glyph, which is noise in a process list of a few
+/// hundred rows. When nothing is found the caller keeps its own placeholder.
+pub fn resolve_process_icon(path: &str) -> IconResolution {
+    let anchor = std::path::Path::new(path);
+    if anchor.is_file()
+        && is_executable(anchor)
+        && let Some(icon) = extract_icon_base64(path)
+    {
+        return IconResolution::found(icon, ICON_SOURCE_EXECUTABLE, path);
+    }
+
+    // Artwork shipped next to the executable, the same source the launcher
+    // catalog uses for portable builds.
+    for candidate in sibling_icon_paths(anchor) {
+        if let Some(icon) = image_file_to_icon_base64(&candidate.to_string_lossy()) {
+            return IconResolution::found(icon, ICON_SOURCE_IMAGE, &candidate.to_string_lossy());
+        }
+    }
+    IconResolution::missing()
+}

@@ -13,6 +13,9 @@ class RemoteCommandBus {
 
   bool get isReady => _session.isReady;
 
+  /// 主通道推送的服务端事件流（`foreground_changed`、`launcher_catalog_ready` 等）。
+  Stream<Map<String, dynamic>> get events => _session.events;
+
   WsConnectionState get connectionState => _session.isReady
       ? WsConnectionState.connected
       : WsConnectionState.disconnected;

@@ -12,12 +12,13 @@
 
 //! QingLink 桌面端伴随程序。
 //!
-//! 进程只做四件事，别的都不做：
+//! 进程只做五件事，别的都不做：
 //!
 //! 1. 持有通知区域图标——没有打开浏览器时，这是触达它的唯一入口；
-//! 2. 在 `127.0.0.1:3722` 上提供管理界面及其 API；
-//! 3. 采集、推流并持久化日志；
-//! 4. 保持 `QingLinkService` 运行，并通过已授权的本地命名管道把管理命令转发给它。
+//! 2. 在手机发起配对时弹出配对提示窗口（同样不依赖浏览器）；
+//! 3. 在 `127.0.0.1:3722` 上提供管理界面及其 API；
+//! 4. 采集、推流并持久化日志；
+//! 5. 保持 `QingLinkService` 运行，并通过已授权的本地命名管道把管理命令转发给它。
 //!
 //! 所有业务数据都在服务里。见 `docs/architecture.md`。
 //!
@@ -27,10 +28,11 @@
 //! 子模块里：
 //!
 //! - [`cli`]：命令行模式分发（提权辅助进程、`--check-service` 与正常启动）；
-//! - [`bootstrap`]：启动装配（数据目录 → 日志 → 数据库 → Web → 托盘 → 租约）；
-//! - [`main_loop`]：主循环（HostCommand、托盘事件、tooltip 同步、消息泵）；
+//! - [`bootstrap`]：启动装配（数据目录 → 日志 → 数据库 → Web → 托盘 → 弹窗 → 租约）；
+//! - [`main_loop`]：主循环（HostCommand、托盘事件、配对弹窗、tooltip 同步、消息泵）；
 //! - [`exit`]：退出序列（通知浏览器 → 停 IPC → 租约 → 数据库 → 日志 flush）；
 //! - [`startup_trace`]：`QINGLINK_STARTUP_TRACE` 面包屑；
+//! - [`pairing`]：手机发起配对时的桌面端弹窗（Win32 窗口 + 状态机）；
 //! - [`admin_ui`]：管理界面端口 / URL 与"交给默认浏览器"。
 
 mod admin_ui;
@@ -40,6 +42,7 @@ mod exit;
 mod input_install;
 mod logging;
 mod main_loop;
+mod pairing;
 mod preferences;
 mod self_check;
 mod service;

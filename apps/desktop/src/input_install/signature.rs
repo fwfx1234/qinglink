@@ -22,12 +22,17 @@ pub(crate) fn verify_embedded_signatures() -> Result<()> {
 pub(crate) fn verify_signature(path: &Path) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+
+        // 别让 powershell.exe 在安装期间闪一个控制台窗口。
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let literal = powershell_literal(&path.to_string_lossy());
         let script = format!(
             "if ((Get-AuthenticodeSignature -LiteralPath '{literal}').Status -ne 'Valid') {{ exit 1 }}"
         );
         let status = Command::new("powershell.exe")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
             .status()
             .context("无法验证 Windows Authenticode 签名")?;
         ensure!(status.success(), "签名无效：{}", path.display());

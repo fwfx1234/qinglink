@@ -117,9 +117,17 @@ Future<void> showWindowListSheet(BuildContext context, WidgetRef ref) async {
                     tooltip: '关闭',
                     icon: const Icon(Icons.close_rounded),
                     onPressed: () async {
-                      await ref.read(windowControllerProvider).close(window.hwnd);
-                      await ref.read(systemControllerProvider.notifier).refreshForeground();
-                      if (sheet.mounted) Navigator.pop(sheet);
+                      // 与上面的「切换窗口」一样必须自己兜住异常：PC 侧窗口可能
+                      // 已经被关掉/拒绝，异常逃逸会打断弹层的关闭流程。
+                      try {
+                        await ref.read(windowControllerProvider).close(window.hwnd);
+                        await ref.read(systemControllerProvider.notifier).refreshForeground();
+                        if (sheet.mounted) Navigator.pop(sheet);
+                      } catch (error) {
+                        if (sheet.mounted) {
+                          sheet.showErrorSnackBar('关闭窗口失败: $error');
+                        }
+                      }
                     },
                   ),
                 ),

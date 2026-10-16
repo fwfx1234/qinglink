@@ -24,7 +24,7 @@ interface SettingRow {
 
 const rows: SettingRow[] = [
   { key: 'autostart', label: '开机启动', description: '随 Windows 启动自动运行桌面端' },
-  { key: 'keep_awake', label: '保持唤醒', description: '阻止系统休眠；托盘菜单与这里共享同一状态' },
+  { key: 'keep_awake', label: '保持唤醒', description: '阻止系统休眠与息屏；托盘菜单与这里共享同一状态' },
   { key: 'debug_log', label: '调试日志', description: '日志级别切到 debug，日志量会显著增加' },
 ]
 

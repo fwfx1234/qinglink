@@ -1,7 +1,7 @@
 //! WebSocket 协议帧的序列化测试（自 `requests_ws.rs` 原样搬运，未新增或删除用例）。
 //!
-//! 独立成文件是为了让源码文件保持在 AGENTS.md §2.1 的规模上限以内；
-//! 由于本文件挂在 `requests_ws` 子模块下，测试改用绝对路径引用被测类型。
+//! 独立成文件、并挂到 `requests` 模块下，是为了让受 AGENTS.md §2.3 棘轮约束的
+//! `requests_ws.rs` 不再承载这段内容；测试因此一律用绝对路径引用被测类型。
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

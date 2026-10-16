@@ -13,3 +13,9 @@ mod requests_ws;
 
 pub use crate::protocol::responses_ws::{WsServerMessage, WsServerResponse};
 pub use requests_ws::WsClientRequest;
+
+/// 上行请求帧的序列化测试。挂在本模块而不是 `requests_ws.rs`，以免那个受
+/// AGENTS.md §2.3 约束的文件继续变长（测试内部一律用绝对路径引用被测类型）。
+#[cfg(test)]
+#[path = "requests_ws_test.rs"]
+mod requests_ws_test;

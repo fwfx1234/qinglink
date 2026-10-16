@@ -42,10 +42,16 @@ const WEB_TRACKED_INPUTS: &[&str] = &[
 /// that `assets/input/QingLinkService.exe` predates the management protocol the
 /// desktop speaks. Shipping a stale asset produces a running service that the
 /// interface reports as "未连接", which is expensive to diagnose from outside.
+///
+/// `crates/qinglink-windows` is part of that surface even though it is not the
+/// protocol: the icon pipeline the management interface (and the phone) depends
+/// on lives there, so a service binary older than it silently resolves no icons.
 const SERVICE_ASSET_SOURCES: &[&str] = &[
     "../../services/qinglink-service/src",
     "../../services/qinglink-service/Cargo.toml",
     "../../crates/qinglink-protocol/src",
+    "../../crates/qinglink-windows/src",
+    "../../crates/qinglink-windows/Cargo.toml",
 ];
 
 fn find_asset(name: &str) -> Option<PathBuf> {
@@ -64,7 +70,15 @@ fn find_asset(name: &str) -> Option<PathBuf> {
     let target_dir = env::var_os("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| manifest_dir.join("../../../target"));
-    for profile in &["release", "debug"] {
+    // 优先当前 profile：固定 release 优先会让 debug 桌面端在两种产物都存在时静默内嵌
+    // 上一次的 release 服务（"改了 services/ 却没生效"的常见来源）。
+    let current_profile = env::var("PROFILE").unwrap_or_default();
+    let profiles: [&str; 2] = if current_profile == "release" {
+        ["release", "debug"]
+    } else {
+        ["debug", "release"]
+    };
+    for profile in profiles {
         let path = target_dir.join(profile).join(name);
         if path.is_file() {
             return Some(path);

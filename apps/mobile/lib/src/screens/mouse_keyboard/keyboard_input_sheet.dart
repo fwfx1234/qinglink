@@ -93,6 +93,58 @@ class KeyboardInputSheet extends StatelessWidget {
   }
 }
 
+/// 监听弹层自身路由的退场动画。
+///
+/// 宿主用「输入法收起」判断用户想关掉键盘面板，但用户也可能直接下拉或点外部关闭；
+/// 后一种情况下面板的退场动画已经开始，宿主若再 pop 一次就会把整页弹掉。这个监听器
+/// 在面板开始退场时通知宿主取消那次延迟 pop。
+class KeyboardSheetRouteWatcher extends StatefulWidget {
+  const KeyboardSheetRouteWatcher({
+    super.key,
+    required this.onDismissStarted,
+    required this.child,
+  });
+
+  /// 弹层开始退场（反向动画或已消失）时回调，可能被调用多次。
+  final VoidCallback onDismissStarted;
+
+  final Widget child;
+
+  @override
+  State<KeyboardSheetRouteWatcher> createState() =>
+      _KeyboardSheetRouteWatcherState();
+}
+
+class _KeyboardSheetRouteWatcherState extends State<KeyboardSheetRouteWatcher> {
+  ModalRoute<dynamic>? _route;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (identical(route, _route)) return;
+    _route?.animation?.removeStatusListener(_handleStatus);
+    _route = route;
+    _route?.animation?.addStatusListener(_handleStatus);
+  }
+
+  void _handleStatus(AnimationStatus status) {
+    if (status == AnimationStatus.reverse ||
+        status == AnimationStatus.dismissed) {
+      widget.onDismissStarted();
+    }
+  }
+
+  @override
+  void dispose() {
+    _route?.animation?.removeStatusListener(_handleStatus);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
 /// 面板顶部的横向快捷键条。
 class _ShortcutChipBar extends StatelessWidget {
   const _ShortcutChipBar({

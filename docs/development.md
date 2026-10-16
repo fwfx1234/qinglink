@@ -48,7 +48,14 @@ $env:QINGLINK_SKIP_WEB_BUILD = '1'
 `build.rs` 在两种"内嵌的东西已经过期"的情况下会打 `cargo:warning`，都不阻断构建：
 
 - **服务资源旧于服务源码**：`apps/desktop/assets/input/QingLinkService.exe` 比
-  `services/qinglink-service` 的源码旧——按第 5 节「改了服务端代码」的步骤刷新。
+  `services/qinglink-service` 或 `crates/qinglink-windows` 的源码旧——按第 5 节
+  「改了服务端代码」的步骤刷新。这两个源码树都在服务二进制里：管理协议在
+  `services/`，图标管线在 `crates/qinglink-windows`，任何一处改动没重装服务，
+  手机端和桌面端都会看到"没有图标"。
+  该文件是构建产物、**不入库**（`.gitignore` 的 `/apps/desktop/assets/input/*.exe`）。
+  全新 clone 里它根本不存在，这种情况 `build.rs` **不报警**（只有
+  `QINGLINK_REQUIRE_INPUT_ASSETS=1` 才会让构建失败），症状出现在运行时：桌面端
+  「安装服务」提示资源缺失，先按 §2.3 生成它。
 - **内嵌界面旧于前端源码**：`web-ui/dist/index.html` 落后于 `web-ui/src`。这发生在
   `QINGLINK_SKIP_WEB_BUILD=1` 或两条 npm 构建都失败时——此时内嵌的是**上一次的 `dist`**，
   不是占位页。所以**"构建成功"不等于"界面是新的"**；占位页只在 `dist/index.html`
@@ -137,8 +144,13 @@ cargo build --release -p qinglink-service --bin QingLinkService
 cd apps\mobile; flutter pub get; flutter run
 ```
 
-发布时服务需 Authenticode 签名后放到 `apps/desktop/assets/input/QingLinkService.exe`，
-再以 `QINGLINK_REQUIRE_INPUT_ASSETS=1` 构建桌面端。
+发布时把服务放到 `apps/desktop/assets/input/QingLinkService.exe`，再以
+`QINGLINK_REQUIRE_INPUT_ASSETS=1` 构建桌面端。该文件是 `services/` 的**构建产物，不入库**：
+全新 clone 必须先按上面的 `cargo build -p qinglink-service` 加 `Copy-Item` 生成它。
+服务建议做 Authenticode 签名，但安装**默认不校验**
+签名——本机自建的未签名产物可以直接通过界面「修复服务」安装。要强制签名，在启动桌面端之前设置
+`QINGLINK_REQUIRE_SIGNED_INPUT=1`，此时提权助手会拒绝未签名的服务资源或桌面端。无论哪种模式，
+内嵌资源的 SHA256 都会核对。
 
 ---
 
@@ -177,7 +189,9 @@ cargo run --bin QingLink              # 同一终端里追加 DEBUG 记录
 
 - 托盘出现 QingLink 图标（Windows 11 可能先放进折叠区，可拖到任务栏固定）；
 - 管理界面在 <http://127.0.0.1:3722>；
-- 托盘左键单击 = 打开界面，右键 = 菜单。
+- 托盘左键单击 = 打开界面，右键 = 菜单；
+- 手机发起配对时弹出置顶窗口显示配对码，配对成功 / 超时 / 取消后自动关闭
+  （时序见 `docs/architecture.md` 9.4）；窗口没弹出来时，配对码仍在管理界面概览页。
 
 **`Shell_NotifyIcon(NIM_ADD)` 被拒绝时会自动打开浏览器**；拒绝后仍会按定时器重试一段
 时间（覆盖"Explorer 刚重启"这类可恢复情况）。若是**重试无法修复**的拒绝——最常见的是
@@ -254,9 +268,11 @@ target\debug\QingLink.exe --check-service
 
 | `probe.ok` | `probe.code` | 含义与处理 |
 | --- | --- | --- |
-| `true` | `READY`/`CAPABILITIES` | 管理通道可用，桌面端能完整工作 |
-| `false` | `PIPE_UNREACHABLE` | 连不上管道，`probe.error` 含完整错误链与 OS 错误码；结合 `install_state` 判断是"服务没装"还是"环境禁止" |
-| `false` | `UNSUPPORTED_VERSION` | 管道通了但服务协议版本过旧，需要修复/升级服务 |
+| `true` | 服务端返回的结论码（`capabilities` 为 `OK`） | 管理通道可用，桌面端能完整工作 |
+| `false` | `PIPE_UNREACHABLE` | 连不上管道、请求失败，或管道通了但服务协议版本与桌面端不匹配；`probe.error` 含完整错误链与 OS 错误码 |
+
+`probe.outcome` 会按 `install_state` 把 `PIPE_UNREACHABLE` 再分成"服务没装 / 未运行"与
+"环境禁止管道"两种处理建议；`probe.code` 本身不区分。
 
 ---
 
@@ -383,7 +399,7 @@ Access is denied. (os error 5)`）。**"服务在运行 + 管道被拒"时不要
 ### 改了服务端代码，界面却仍显示"服务未连接"
 
 `QingLinkService.exe` **不由桌面端的构建流程编译**，而是作为资源内嵌在
-`apps/desktop/assets/input/` 并由"安装 / 修复"释放到
+`apps/desktop/assets/input/`（构建产物，不入库）并由"安装 / 修复"释放到
 `C:\Program Files\QingLink\Input`。因此只改 `services/` 或 `crates/` 是不会生效的，
 "修复服务"也只会重新装回同一个旧二进制。
 
@@ -409,6 +425,18 @@ target\debug\QingLink.exe --check-service   # 期望 probe.ok = true
 桌面端可执行文件的 SHA256，服务的每次安装都会重新登记它。任何一次 `cargo build` 都会让
 哈希失效，此时 `/api/admin/v1/service` 的 `state` 变成 `unauthorized`，界面会提示重新登记；
 再点一次"修复服务"即可。
+
+### 退出桌面端后服务也没了
+
+这是设计行为，不是故障：桌面端的**显式退出**会向服务下发 `shutdown`，服务连同它的会话代理
+一起停止（`service_lifecycle::shutdown(true)`）；托盘"重启桌面端"只释放租约，不停服务。
+下次启动桌面端时 `prepare_service()` 会走免提权的 `start_service_direct()` 把服务拉回来
+（服务 ACL 授予交互用户 `SERVICE_START`），所以正常流程**不会**再弹 UAC——`sc.exe query
+QingLinkService` 显示 STOPPED 时不必急着"修复服务"。
+
+修复服务时若报 `无法安装 QingLinkService.exe: 另一个程序正在使用此文件 (os error 32)`，
+说明停服务之后仍有 `QingLinkService.exe --session-agent` 子进程在退出中、继续映射着服务镜像。
+安装已按 500ms 间隔重试最多 15 秒，正常情况下几秒内就会成功；只有超过重试窗口才会报这个错。
 
 ### 日志页只有最近 5000 条
 

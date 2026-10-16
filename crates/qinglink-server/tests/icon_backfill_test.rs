@@ -55,6 +55,7 @@ fn entry(id: &str, exe_path: &str, icon_source: Option<&str>, icon_path: Option<
         args: Vec::new(),
         is_favorite: false,
         is_pinned: false,
+        launch_mode: None,
     }
 }
 

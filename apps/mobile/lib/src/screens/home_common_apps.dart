@@ -10,19 +10,17 @@ import '../theme/app_theme.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/app_ui.dart';
 
-/// 常用（置顶）应用区：最多展示 4 个，空态引导去库里添加。
+/// 首页应用区：最近启动项优先，最多展示 12 个，空态引导去库里添加。
 class HomeCommonAppsSection extends StatelessWidget {
   const HomeCommonAppsSection({
     super.key,
     required this.apps,
-    required this.lastUsedId,
     required this.online,
     required this.onLaunch,
     this.onOpenLibrary,
   });
 
   final List<LauncherItem> apps;
-  final String? lastUsedId;
   final bool online;
   final ValueChanged<LauncherItem> onLaunch;
   final VoidCallback? onOpenLibrary;
@@ -38,7 +36,7 @@ class HomeCommonAppsSection extends StatelessWidget {
           child: Row(
             children: [
               Text(
-                '常用应用',
+                '应用',
                 style: AppText.sectionTitle.copyWith(
                   color: palette.textPrimary,
                 ),
@@ -67,11 +65,11 @@ class HomeCommonAppsSection extends StatelessWidget {
             crossAxisSpacing: 8,
             childAspectRatio: 2.7,
             children: apps
-                .take(4)
+                .take(12)
                 .map(
                   (item) => _PinnedApp(
                     item: item,
-                    lastUsed: lastUsedId == item.id,
+                    lastUsed: apps.first.id == item.id,
                     enabled: online,
                     onTap: () => onLaunch(item),
                   ),
@@ -143,7 +141,7 @@ class _PinnedApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    final meta = lastUsed ? '上次使用' : '程序';
+    final meta = lastUsed ? '上次使用' : '置顶应用';
     return Opacity(
       opacity: enabled ? 1 : 0.5,
       child: PressableScale(

@@ -12,8 +12,12 @@ use qinglink_storage::AppPaths;
 use serde::Serialize;
 
 /// Stem of the rotating text log files. `tracing_appender` inserts the rotation
-/// date before the suffix, producing names such as `qinglink.log.2026-02-01`
+/// date before the suffix, producing names such as `qinglink.2026-10-04.log`
 /// that sort chronologically as strings.
+///
+/// 历史版本产出的是 `qinglink.log.2026-09-04` 这种"后缀在前"的名字；两种命名会同时留在
+/// 磁盘上，且旧的按名字排在新版之后，因此"最新文件"必须按修改时间挑（见
+/// [`newest_log_name`]），不能按名字。
 pub(crate) const LOG_FILE_STEM: &str = "qinglink";
 
 /// Suffix of the rotating text log files.

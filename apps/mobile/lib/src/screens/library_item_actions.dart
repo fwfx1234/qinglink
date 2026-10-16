@@ -11,9 +11,11 @@ import '../models/app_info.dart';
 import '../providers/favorites_controller.dart';
 import '../providers/launcher_controller.dart';
 import '../providers/library_controller.dart';
+import '../providers/system_controller.dart';
 import '../utils/snackbar_extension.dart';
 import 'library_dialogs.dart';
 import 'library_entry_utils.dart';
+import 'library_launch_mode_sheet.dart';
 
 /// 条目管理动作的执行者，由 `LibraryTab` 注入 [`WidgetRef`] 与刷新回调后使用。
 class LibraryItemActions {
@@ -118,17 +120,16 @@ class LibraryItemActions {
   Future<void> renameItem(BuildContext context, LauncherItem item) async {
     final newName = await promptLibraryRename(context, item.name);
     if (newName == null) return;
-    try {
-      await ref.read(launcherControllerProvider).rename(
-            item.id,
-            item.originalName,
-            newName,
-          );
-    } catch (error) {
-      if (context.mounted) context.showErrorSnackBar('重命名失败: $error');
+    final ok = await ref.read(launcherControllerProvider).rename(
+          item.id,
+          item.originalName,
+          newName,
+        );
+    if (!context.mounted) return;
+    if (!ok) {
+      context.showErrorSnackBar('重命名失败');
       return;
     }
-    if (!context.mounted) return;
     context.showSuccessSnackBar('已重命名为 $newName');
     await reload();
   }
@@ -159,6 +160,32 @@ class LibraryItemActions {
     }
     if (!context.mounted) return;
     context.showSuccessSnackBar(args.isEmpty ? '已清除启动参数' : '已保存启动参数');
+    await reload();
+  }
+
+  /// 配置游戏启动前使用的主显示器模式。
+  Future<void> editLaunchMode(BuildContext context, LauncherItem item) async {
+    final selection = await showLibraryLaunchModeSheet(
+      context,
+      item: item,
+      controller: ref.read(systemControllerProvider.notifier),
+    );
+    if (selection == null) return;
+    final ok = await ref.read(launcherControllerProvider).update(
+      id: item.id,
+      name: item.name,
+      exePath: item.executablePath,
+      launchMode: selection.mode,
+      clearLaunchMode: selection.clear,
+    );
+    if (!context.mounted) return;
+    if (!ok) {
+      context.showErrorSnackBar('保存启动分辨率失败');
+      return;
+    }
+    context.showSuccessSnackBar(
+      selection.clear ? '已清除启动分辨率' : '已保存启动分辨率',
+    );
     await reload();
   }
 }

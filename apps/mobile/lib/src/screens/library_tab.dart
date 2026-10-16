@@ -175,6 +175,8 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
         return actions.renameItem(context, item);
       case LibraryCatalogAction.args:
         return actions.editLaunchArgs(context, item);
+      case LibraryCatalogAction.launchMode:
+        return actions.editLaunchMode(context, item);
       case LibraryCatalogAction.block:
         return actions.blockItem(
           context,
@@ -199,6 +201,8 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
         return actions.renameItem(context, item);
       case LibraryFavoriteAction.args:
         return actions.editLaunchArgs(context, item);
+      case LibraryFavoriteAction.launchMode:
+        return actions.editLaunchMode(context, item);
       case LibraryFavoriteAction.remove:
         return actions.removeFromFavorites(context, item, confirm: true);
       case LibraryFavoriteAction.icon:
@@ -206,13 +210,16 @@ class _LibraryTabState extends ConsumerState<LibraryTab>
     }
   }
 
-  /// 打开图标修复面板：自动重扫 + 候选文件 + 手动路径。
+  /// 打开图标修复面板：自动重扫 + 候选文件 + 手机相册。
   Future<void> _openIconPicker(LauncherItem item) async {
     final changed = await showIconPickerSheet(context, item: item);
     if (!mounted || !changed) return;
     setState(() {
       _iconRevisions[item.id] = (_iconRevisions[item.id] ?? 0) + 1;
     });
+    // 图标来源（icon_source）也在列表数据里：只换图不重新同步，条目上显示的
+    // 图标来源会与实际不符。
+    await _load();
   }
 
   // ========== 添加 / 扫描 ==========

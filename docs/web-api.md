@@ -326,9 +326,13 @@ Content-Type: application/json
 ```
 
 响应返回修改后的完整设置。`autostart` 写注册表 Run 项；`keep_awake` 调用
-`SetThreadExecutionState` 阻止休眠；`debug_log` 切换日志级别并持久化到桌面端偏好。
+`SetThreadExecutionState`（`ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED`），
+同时阻止系统休眠与显示器熄屏；`debug_log` 切换日志级别。`keep_awake` 与 `debug_log`
+都持久化在桌面端偏好里（偏好键 `power.keep_awake` / `logging.debug`）。
 
 > `keep_awake` 也可由托盘菜单切换，两者共享同一状态。
+> 该开关跨重启保留：桌面端启动时在主线程按偏好恢复 `SetThreadExecutionState`，
+> 因此托盘「重启桌面端」、更新与崩溃重拉之后仍然保持唤醒（退出桌面端会释放请求）。
 
 ### 4.5 `GET /service`
 
@@ -529,7 +533,7 @@ Content-Type: application/json
   `null`（从未解析过图标、或旧版服务没有这两个键），客户端必须按
   `string | null | undefined` 处理，不能因为它们不在就认为响应不合法。
 - `icon_source` 说明图标是从哪里来的（见 4.33），`shell` / `none` / 缺失都表示
-  这个条目的图标很可能不对，界面应提示可以单独重扫。
+  这个条目的图标很可能不对，客户端应提供单独重扫（更换图标）的入口。
 - `icon_updated_at` 是图标最后一次解析的 Unix 秒，用作图标 URL 的 `v=` 参数；
   为 `null` / 缺失时退回不带 `v` 的 URL。
 - `has_icon` 只表示服务端**已经缓存**了图标。图标接口本身会按需解析，所以即使
@@ -663,9 +667,9 @@ base64 长度上限为 128 KiB（解码后 96 KiB）；提取侧会降档重编�
 } }
 ```
 
-`items` 按**时间倒序**（最新在前）返回，排序键是 `timestamp_ms`（`id` 仅作同毫秒内的
-次序）。`id` 在当前进程内单调递增，可用于增量拉取；**它每个进程都从 1 重新开始**，
-因此跨重启比较 `id` 没有意义。
+`items` 按**写入顺序倒序**（最新在前）返回（实现是 `entries.iter().rev()`，顺序由进程内
+单调递增的 `id` 决定，**并不按 `timestamp_ms` 排序**）。`id` 在当前进程内单调递增，可用于
+增量拉取；**它每个进程都从 1 重新开始**，因此跨重启比较 `id` 没有意义。
 
 `thread_name` / `file` / `line` 三个键在无值时**整个键缺失**（不是 `null`），
 客户端必须按可选字段处理。
@@ -906,6 +910,10 @@ base64 长度上限为 128 KiB（解码后 96 KiB）；提取侧会降档重编�
 > （`settings` 表里的 `icon.pipeline` 记版本，每个数据库只跑一次；
 > 用户手动指定的 `manual` 图标只按原文件重新编码，不会被自动结果顶替）。
 > 因此升级后不需要用户逐个点「重新扫描图标」。
+>
+> 客户端也可以直接提交一张位图作为图标（v2 协议的 `update_scanner_app` 带 `icon_base64`）：
+> 服务端把它规范化为同样的 128×128 PNG，并把 `icon_source` 记成 `manual`；这种图标没有
+> 对应的磁盘文件，同一次写入会清空 `icon_path`，图标回填时按"没有原文件就不动"处理。
 
 `GET /apps` 的每一项**可选**带 `icon_source` 与 `icon_updated_at`（二者可缺失或为
 `null`，见 4.14）：前者用于解释图标来源，后者用于图标 URL 的缓存版本
@@ -940,6 +948,21 @@ base64 长度上限为 128 KiB（解码后 96 KiB）；提取侧会降档重编�
   MTA 的线程池线程），因此请求会一直阻塞到用户作答；前端超时设为 5 分钟
   （`FILE_DIALOG_TIMEOUT_MS`）。该线程无法启动或异常退出时返回 `500 INTERNAL`。
 - 返回的路径可直接作为 4.29 的 `exe_path` 或 4.33 的 `icon_path` 使用。
+
+### 4.35 移动端游戏启动显示模式
+
+该能力通过移动端 `WS /api/v2/events` 使用，不新增桌面管理 HTTP 接口。游戏目录摘要可返回
+可选的 `launch_mode`（`width`、`height`、`refresh_millihz`）。客户端用已有的 `get_displays`
+读取主显示器模式，并在 `update_scanner_app` 请求中发送 `launch_mode` 保存，或发送
+`clear_launch_mode: true` 清除；省略两个字段表示保持原配置。服务端拒绝主显示器当前不支持的模式，
+返回 `INVALID_DISPLAY_MODE`。
+
+启动时服务端先持久化主显示器原模式，再尝试切换并启动游戏。显示切换失败时仍启动游戏；手机端
+`launch_scanner_app` 与本机 `POST /apps/launch` 共用同一协调器。进程监视器按启动前后的 PID 差异
+识别游戏可执行文件，并跟踪子进程；最后一个已配置游戏进程退出后恢复快照。
+并行运行的已配置游戏采用首个游戏的模式。服务重启时会用已保存的游戏路径重新接管进程监视；
+若 180 秒内未发现游戏进程则恢复模式。快照保存在服务数据库的 `settings.launch_display.snapshot`，
+恢复失败时保留以供下次启动重试。
 
 ---
 

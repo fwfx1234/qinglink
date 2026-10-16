@@ -180,6 +180,7 @@ impl AppScanner {
                 args: Vec::new(),
                 is_favorite: false,
                 is_pinned: false,
+                launch_mode: None,
             };
             if Self::is_auxiliary_game_executable(&entry) || !path.starts_with(root) {
                 continue;

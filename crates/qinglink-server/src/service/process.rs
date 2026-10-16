@@ -80,6 +80,19 @@ impl ProcessManager {
         ));
     }
 
+    /// 查询指定 PID 的可执行文件路径；结果取自快照，避免为一次查询重新枚举系统。
+    ///
+    /// 进程已退出、被保护或快照里没有该 PID 时返回 `None`。
+    pub fn exe_path(&mut self, pid: u32) -> Option<String> {
+        self.refresh_snapshot_if_stale();
+        let (_, snapshot) = self.snapshot.as_ref()?;
+        snapshot
+            .processes
+            .iter()
+            .find(|process| process.pid == pid)
+            .and_then(|process| process.path.clone())
+    }
+
     /// 查询进程列表：支持关键词搜索、用户/全部过滤与分页。
     pub fn list_processes(
         &mut self,

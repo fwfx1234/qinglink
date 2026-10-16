@@ -3,15 +3,23 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::TrySendError;
+use std::time::{Duration, Instant};
 
 use qinglink_protocol::service_ipc::{DesktopCommand, SERVICE_IPC_VERSION};
 use serde::de::DeserializeOwned;
+use tokio::sync::oneshot::error::TryRecvError;
 use tokio::sync::{broadcast, oneshot};
 
 use super::envelope::disconnected_message;
 use super::inner::{Inner, Job};
 use super::{ServiceEvent, ServiceLinkState, ServiceStatus};
 use crate::service::{CALL_TIMEOUT, ServiceError, UPGRADE_HINT};
+
+/// How often the blocking caller re-checks its reply channel.
+///
+/// Small enough that the answer is not delayed noticeably, large enough that a
+/// thread waiting out a slow service costs almost nothing.
+const CALL_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// Handle used by the web layer to talk to the service.
 #[derive(Clone, Debug)]
@@ -92,23 +100,80 @@ impl ServiceClient {
     ///
     /// Fails immediately when the command is unsupported or the queue is full;
     /// the caller never waits on a service that is known to be down.
+    ///
+    /// # Errors
+    /// [`ServiceError::Unavailable`] while the link is down or the queue is
+    /// full, [`ServiceError::Unsupported`] for a command the service does not
+    /// advertise, [`ServiceError::Timeout`] when the service misses the budget,
+    /// and whatever the service itself refused with.
     pub async fn call(&self, command: DesktopCommand) -> Result<serde_json::Value, ServiceError> {
-        {
-            let state = self
-                .inner
-                .state
-                .lock()
-                .map_err(|_| ServiceError::Internal("服务状态不可用".into()))?;
-            if !state.connected {
-                return Err(ServiceError::Unavailable(disconnected_message(
-                    state.link_state,
-                )));
-            }
-            if !state.supports(&command) {
-                return Err(ServiceError::Unsupported(UPGRADE_HINT.into()));
-            }
+        self.ensure_callable(&command)?;
+        let receiver = self.enqueue(command)?;
+        match tokio::time::timeout(CALL_TIMEOUT, receiver).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(ServiceError::Internal("服务 worker 未返回结果".into())),
+            Err(_) => Err(ServiceError::Timeout),
         }
+    }
 
+    /// Send a command and wait for its answer **without a Tokio runtime**.
+    ///
+    /// The main thread owns the Windows message pump and cannot await, but a
+    /// prompt button still has to reach the same worker over the same bounded
+    /// queue as every other caller — so the pre-checks, the reply channel and the
+    /// answer semantics are identical to [`Self::call`], and only the waiting
+    /// differs. Callers must not run this on a thread that has to stay
+    /// responsive; the pairing prompt runs it on a worker thread of its own.
+    ///
+    /// # Errors
+    /// Same classification as [`Self::call`], with `timeout` replacing the
+    /// shared per-call budget.
+    pub fn call_blocking(
+        &self,
+        command: DesktopCommand,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, ServiceError> {
+        self.ensure_callable(&command)?;
+        let mut receiver = self.enqueue(command)?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            match receiver.try_recv() {
+                Ok(result) => return result,
+                Err(TryRecvError::Closed) => {
+                    return Err(ServiceError::Internal("服务 worker 未返回结果".into()));
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+            if Instant::now() >= deadline {
+                return Err(ServiceError::Timeout);
+            }
+            std::thread::sleep(CALL_POLL_INTERVAL);
+        }
+    }
+
+    /// Whether a command may be attempted right now.
+    fn ensure_callable(&self, command: &DesktopCommand) -> Result<(), ServiceError> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| ServiceError::Internal("服务状态不可用".into()))?;
+        if !state.connected {
+            return Err(ServiceError::Unavailable(disconnected_message(
+                state.link_state,
+            )));
+        }
+        if !state.supports(command) {
+            return Err(ServiceError::Unsupported(UPGRADE_HINT.into()));
+        }
+        Ok(())
+    }
+
+    /// Put one command on the worker queue and return its private reply channel.
+    fn enqueue(
+        &self,
+        command: DesktopCommand,
+    ) -> Result<oneshot::Receiver<Result<serde_json::Value, ServiceError>>, ServiceError> {
         let (reply, receiver) = oneshot::channel();
         self.inner
             .jobs
@@ -121,12 +186,7 @@ impl ServiceClient {
                     ServiceError::Unavailable("服务命令通道已关闭".into())
                 }
             })?;
-
-        match tokio::time::timeout(CALL_TIMEOUT, receiver).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err(ServiceError::Internal("服务 worker 未返回结果".into())),
-            Err(_) => Err(ServiceError::Timeout),
-        }
+        Ok(receiver)
     }
 
     /// Send a command and decode its typed payload.

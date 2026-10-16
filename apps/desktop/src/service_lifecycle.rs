@@ -48,7 +48,7 @@ pub(crate) struct PipeResponse {
 /// the read-only negotiation the desktop performs on every connect.
 pub(crate) fn probe_management_pipe() -> Result<PipeResponse> {
     let request = PipeRequest {
-        version: 2,
+        version: SERVICE_IPC_VERSION,
         request_id: format!(
             "check-service-{}-{}",
             std::process::id(),
@@ -224,7 +224,7 @@ impl ServiceLifecycleManager {
 
     fn send(command: &'static str, stop: &AtomicBool) -> Result<()> {
         let request = PipeRequest {
-            version: 2,
+            version: SERVICE_IPC_VERSION,
             request_id: format!(
                 "desktop-{}-{}",
                 std::process::id(),

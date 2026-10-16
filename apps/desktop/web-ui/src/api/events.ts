@@ -267,8 +267,12 @@ export class EventClient {
     this.awaitingPongSince = null
     this.pingTimer = window.setInterval(() => {
       const pending = this.awaitingPongSince
-      if (pending !== null && Date.now() - pending > PONG_DEADLINE_MS) {
-        this.forceReconnect('实时通道长时间无响应，正在重连')
+      if (pending !== null) {
+        // 上一轮 ping 之后一个帧都没到：保持起点不变，等真正的超时。
+        // （每轮重置起点会让判定永远达不到 PONG_DEADLINE_MS。）
+        if (Date.now() - pending > PONG_DEADLINE_MS) {
+          this.forceReconnect('实时通道长时间无响应，正在重连')
+        }
         return
       }
       this.awaitingPongSince = Date.now()

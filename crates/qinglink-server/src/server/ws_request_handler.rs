@@ -206,7 +206,8 @@ fn route_catalog_request(
         | WsClientRequest::GetForeground
         | WsClientRequest::KillProcess { .. }
         | WsClientRequest::SuspendProcess { .. }
-        | WsClientRequest::ResumeProcess { .. } => process::handle(state, req, session_token),
+        | WsClientRequest::ResumeProcess { .. }
+        | WsClientRequest::GetProcessIcon(..) => process::handle(state, req, session_token),
         WsClientRequest::SearchApps { .. } | WsClientRequest::LaunchApp { .. } => {
             apps::handle(state, req, session_token)
         }
@@ -216,6 +217,7 @@ fn route_catalog_request(
         | WsClientRequest::RefreshScannerAppIcon { .. }
         | WsClientRequest::ListScannerAppIcons { .. }
         | WsClientRequest::SetScannerAppIcon { .. }
+        | WsClientRequest::GetIconPreview(..)
         | WsClientRequest::ListBlockedScannerApps
         | WsClientRequest::RefreshLauncherCatalog { .. } => {
             mobile_catalog::handle(state, req, session_token)
@@ -249,7 +251,7 @@ fn route_host_request(
         | WsClientRequest::UpdateCustomDir { .. }
         | WsClientRequest::DeleteCustomDir { .. }
         | WsClientRequest::ValidateDir { .. } => custom_dirs::handle(state, req, session_token),
-        WsClientRequest::GetTasks { .. }
+        WsClientRequest::GetTasks(..)
         | WsClientRequest::GetTasksStats
         | WsClientRequest::KillTask { .. }
         | WsClientRequest::SetTaskPriority { .. } => tasks::handle(state, req, session_token),

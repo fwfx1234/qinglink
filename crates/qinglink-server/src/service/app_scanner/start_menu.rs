@@ -72,6 +72,7 @@ impl AppScanner {
                         args: Vec::new(),
                         is_favorite: false,
                         is_pinned: false,
+                        launch_mode: None,
                     });
                 }
             }

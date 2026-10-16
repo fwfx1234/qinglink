@@ -3,7 +3,9 @@
 use std::mem;
 
 use windows::Win32::Graphics::Gdi::{
-    CDS_FULLSCREEN, ChangeDisplaySettingsExW, DEVMODEW, DISP_CHANGE_SUCCESSFUL,
+    CDS_TYPE, ChangeDisplaySettingsExW, DEVMODEW, DISP_CHANGE, DISP_CHANGE_BADDUALVIEW,
+    DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED,
+    DISP_CHANGE_NOTUPDATED, DISP_CHANGE_RESTART, DISP_CHANGE_SUCCESSFUL,
     DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICE_PRIMARY_DEVICE, DISPLAY_DEVICEW,
     DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH, ENUM_CURRENT_SETTINGS,
     ENUM_DISPLAY_SETTINGS_FLAGS, ENUM_DISPLAY_SETTINGS_MODE, EnumDisplayDevicesW,
@@ -32,6 +34,18 @@ fn display_mode(_device_name: &str, mode: &DEVMODEW) -> DisplayModeResponse {
 
 const COMMON_DISPLAY_RESOLUTIONS: &[(u32, u32)] = &[(1920, 1080), (2560, 1440), (3840, 2160)];
 const PREFERRED_REFRESH_MILLIHZ: u32 = 60_000;
+
+fn display_change_error(result: DISP_CHANGE) -> &'static str {
+    match result {
+        DISP_CHANGE_RESTART => "切换显示模式需要重启 Windows",
+        DISP_CHANGE_BADMODE => "显示器或显卡不支持此分辨率与刷新率",
+        DISP_CHANGE_NOTUPDATED => "Windows 未能保存显示模式",
+        DISP_CHANGE_BADFLAGS | DISP_CHANGE_BADPARAM => "Windows 显示 API 参数无效",
+        DISP_CHANGE_BADDUALVIEW => "当前双屏模式不支持该显示模式",
+        DISP_CHANGE_FAILED => "Windows 显示驱动未能应用该模式",
+        _ => "Windows 拒绝了该显示模式",
+    }
+}
 
 fn enumerate_supported_display_modes(device_name: &str) -> Vec<DisplayModeResponse> {
     let device = to_wide_z(device_name);
@@ -165,7 +179,7 @@ pub fn get_displays() -> anyhow::Result<Vec<DisplayInfoResponse>> {
 /// # Errors
 /// 读不到当前显示模式（“无法读取当前显示模式”）；目标模式不在常用分辨率候选列表中
 /// （“该显示模式不在常用分辨率候选列表中”）；或 `ChangeDisplaySettingsExW` 未返回
-/// `DISP_CHANGE_SUCCESSFUL`（“Windows 拒绝了该显示模式”）时返回错误。
+/// `ChangeDisplaySettingsExW` 未能应用目标模式时返回错误。
 pub fn set_display_mode(
     display_id: &str,
     width: u32,
@@ -207,11 +221,15 @@ pub fn set_display_mode(
             windows::core::PCWSTR(device.as_ptr()),
             Some(&mode),
             None,
-            CDS_FULLSCREEN,
+            CDS_TYPE(0),
             None,
         )
     };
-    anyhow::ensure!(result == DISP_CHANGE_SUCCESSFUL, "Windows 拒绝了该显示模式");
+    anyhow::ensure!(
+        result == DISP_CHANGE_SUCCESSFUL,
+        "{}",
+        display_change_error(result)
+    );
     Ok(())
 }
 

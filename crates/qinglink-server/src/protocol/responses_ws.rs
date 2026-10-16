@@ -51,6 +51,8 @@ pub enum WsServerResponse {
     // === Processes ===
     /// 进程分页列表。
     ProcessList(crate::protocol::responses::ProcessListResponse),
+    /// 单个进程的图标。
+    ProcessIcon(crate::protocol::responses::ProcessIconResponse),
     /// 当前前台窗口信息。
     Foreground(crate::protocol::responses::ForegroundResponse),
 
@@ -71,6 +73,8 @@ pub enum WsServerResponse {
     IconCandidates(crate::protocol::responses::IconCandidatesResponse),
     /// 图标解析或更新的结果。
     IconUpdate(crate::protocol::responses::IconUpdateResponse),
+    /// 单个图标文件的预览（不落库、不改条目）。
+    IconPreview(crate::protocol::responses::IconPreviewResponse),
     /// 被屏蔽的启动器条目列表。
     BlockedLauncherItems(crate::protocol::responses::BlockedLauncherItemsResponse),
     /// 目录扫描得到的候选条目。

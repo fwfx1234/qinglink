@@ -89,6 +89,16 @@ function frameworkFailure(status: number): ApiError {
   }
 }
 
+/** 从信封的 `error` 字段构造 ApiError；字段不全时退回按状态码判断。 */
+function failureFromError(error: Partial<ApiErrorBody> | undefined, status: number): ApiError {
+  const code = error?.code
+  const message = error?.message
+  if (typeof code === 'string' && typeof message === 'string') {
+    return new ApiError(code as ApiErrorCode, message, status)
+  }
+  return frameworkFailure(status)
+}
+
 async function parseFailure(response: Response): Promise<ApiError> {
   let body: unknown = null
   try {
@@ -97,12 +107,10 @@ async function parseFailure(response: Response): Promise<ApiError> {
     body = null
   }
   if (body && typeof body === 'object' && 'error' in body) {
-    const envelope = body as { error?: Partial<ApiErrorBody> }
-    const code = envelope.error?.code
-    const message = envelope.error?.message
-    if (typeof code === 'string' && typeof message === 'string') {
-      return new ApiError(code as ApiErrorCode, message, response.status)
-    }
+    return failureFromError(
+      (body as { error?: Partial<ApiErrorBody> }).error,
+      response.status,
+    )
   }
   return frameworkFailure(response.status)
 }
@@ -146,7 +154,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     throw new ApiError('INTERNAL', `响应信封缺少 ok 字段（HTTP ${response.status}）`, response.status)
   }
   if (envelope.ok === false) {
-    throw await parseFailure(response)
+    // 响应体已经解析成信封，不能再调 parseFailure：Fetch 的 body 是一次性流。
+    throw failureFromError(envelope.error, response.status)
   }
   return (envelope.data ?? null) as T
 }

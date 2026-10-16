@@ -103,6 +103,30 @@ pub fn candidates(
     Ok((entry.id, candidates))
 }
 
+/// Preview one icon file the user is browsing for.
+///
+/// Read-only: nothing is persisted and no entry is touched. Only formats the
+/// icon pipeline can actually decode are accepted, so a preview never claims
+/// that an arbitrary file would work as an icon.
+pub fn preview_file(path: &str) -> Option<String> {
+    let file = std::path::Path::new(path);
+    if !file.is_file() {
+        return None;
+    }
+    let size = std::fs::metadata(file).ok()?.len();
+    if size == 0 || size > 16 * 1024 * 1024 {
+        return None;
+    }
+    let extension = file.extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        // 位图与图标容器：走与"手动指定图标"相同的解码链。
+        "png" | "jpg" | "jpeg" | "bmp" | "ico" => crate::platform::image_file_to_icon_base64(path),
+        // 程序与快捷方式：预览它们的图标资源，便于用户在候选列表里辨认。
+        "exe" | "lnk" => crate::platform::resolve_icon(path, Some(path)).icon_base64,
+        _ => None,
+    }
+}
+
 fn persist(
     state: &AppState,
     id: &str,

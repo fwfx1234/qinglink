@@ -17,6 +17,7 @@ import '../models/system_status.dart';
 import '../providers/auth_provider.dart';
 import '../providers/favorites_controller.dart';
 import '../providers/ir_remote_provider.dart';
+import '../providers/input_controller.dart';
 import '../providers/launcher_controller.dart';
 import '../providers/feature_facades.dart';
 import '../providers/system_controller.dart';
@@ -66,7 +67,10 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   Future<void> _syncFavorites() async {
     if (!mounted) return;
     if (!ref.read(connectionProvider.select((s) => s.isAuthenticated))) return;
-    await ref.read(favoritesProvider.notifier).refresh();
+    await Future.wait([
+      ref.read(favoritesProvider.notifier).refresh(),
+      ref.read(libraryControllerProvider.notifier).refreshRecent(),
+    ]);
   }
 
   @override
@@ -81,9 +85,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     final online = ref.watch(connectionReadyProvider) && authenticated;
     final system = ref.watch(systemControllerProvider);
     final settings = ref.watch(settingsProvider);
-    final uac =
-        online &&
-        system.unlock?.uacDetected == true;
+    final uac = online && system.unlock?.uacDetected == true;
     final locked = online && system.unlock?.locked == true;
     final ready = online && !locked;
     final irState = ref.watch(irRemoteProvider);
@@ -101,6 +103,12 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     final pinnedApps = _sortedPinnedApps(
       ref.watch(favoritesProvider).pinned,
       settings.lastUsedLauncherId,
+    );
+    final recentApps = ref.watch(libraryControllerProvider).recent;
+    final homeApps = _homeApps(
+      recentApps: recentApps,
+      pinnedApps: pinnedApps,
+      fallbackLastUsedId: settings.lastUsedLauncherId,
     );
 
     return RefreshIndicator(
@@ -124,15 +132,16 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                 online: online,
                 ready: ready,
                 irReady: irReady,
+                shortcuts: settings.homeShortcuts,
                 onUnlock: () => _unlock(context, ref),
                 onTvPower: () => _tvPower(context, ref),
+                onShortcut: (label) => _sendShortcut(context, ref, label),
               ),
               const SizedBox(height: 14),
               const ActiveWindowSection(sectionTitle: '当前窗口'),
               const SizedBox(height: 22),
               HomeCommonAppsSection(
-                apps: pinnedApps,
-                lastUsedId: settings.lastUsedLauncherId,
+                apps: homeApps,
                 online: online,
                 onOpenLibrary: widget.onGoToLibrary,
                 onLaunch: (app) => _launchQuickApp(context, ref, app),
@@ -154,6 +163,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       ref.read(systemControllerProvider.notifier).refreshForeground(),
       ref.read(favoritesProvider.notifier).refresh(),
       ref.read(libraryControllerProvider.notifier).refresh(),
+      ref.read(libraryControllerProvider.notifier).refreshRecent(),
     ]);
   }
 
@@ -162,20 +172,35 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     List<LauncherItem> pinned,
     String? lastUsedId,
   ) {
-    return pinned.toList()
-      ..sort((a, b) {
-        if (a.id == lastUsedId) return -1;
-        if (b.id == lastUsedId) return 1;
-        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-      });
+    return pinned.toList()..sort((a, b) {
+      if (a.id == lastUsedId) return -1;
+      if (b.id == lastUsedId) return 1;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+  }
+
+  /// 首页固定把最近启动项放在第一张，其余位置再补置顶项并去重。
+  List<LauncherItem> _homeApps({
+    required List<LauncherItem> recentApps,
+    required List<LauncherItem> pinnedApps,
+    required String? fallbackLastUsedId,
+  }) {
+    final recent = recentApps.isNotEmpty
+        ? recentApps.first
+        : pinnedApps.where((item) => item.id == fallbackLastUsedId).firstOrNull;
+    final result = <LauncherItem>[];
+    if (recent != null) result.add(recent);
+    for (final item in pinnedApps) {
+      if (result.length >= 12) break;
+      if (result.every((existing) => existing.id != item.id)) result.add(item);
+    }
+    return result;
   }
 
   /// 状态卡主按钮的动作：唤醒、解锁，或没有动作时不可点击。
   VoidCallback? _statusPrimaryAction(HomeStatusView status, bool canWake) {
     if (status.action == HomeStatusAction.wake) {
-      return canWake
-          ? (widget.onWake ?? widget.onGoToMore)
-          : widget.onGoToMore;
+      return canWake ? (widget.onWake ?? widget.onGoToMore) : widget.onGoToMore;
     }
     if (status.action == HomeStatusAction.unlock) {
       return () => _unlock(context, ref);
@@ -191,10 +216,19 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     try {
       await ref.read(launcherControllerProvider).launch(app.id);
       await ref.read(settingsProvider.notifier).setLastUsedLauncher(app.id);
+      await ref.read(libraryControllerProvider.notifier).refreshRecent();
       if (context.mounted) context.showSuccessSnackBar('正在启动 ${app.name}');
     } catch (error) {
       if (context.mounted) context.showErrorSnackBar('启动失败: $error');
     }
+  }
+
+  void _sendShortcut(BuildContext context, WidgetRef ref, String label) {
+    unawaited(
+      ref.read(inputControllerProvider).sendShortcut(label).catchError((error) {
+        if (context.mounted) context.showErrorSnackBar('快捷键发送失败: $error');
+      }),
+    );
   }
 
   /// Sends the configured unlock action immediately. Lock state is refreshed
