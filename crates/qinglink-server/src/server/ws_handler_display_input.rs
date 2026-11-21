@@ -46,7 +46,7 @@ pub(super) fn handle(
             pressed,
         } => handle_key_event(state, *usage, *modifiers, *pressed),
 
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
 }
 

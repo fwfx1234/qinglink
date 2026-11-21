@@ -18,13 +18,10 @@ pub enum WsClientRequest {
         /// 认证方式，目前支持 `token`（配对 v2 已改为 HTTP 接口）。
         method: String,
         /// 待校验的设备令牌，`method` 为 `token` 时必需。
-        #[serde(default)]
         token: Option<String>,
         /// 旧版配对 PIN 码，仅为兼容老客户端保留。
-        #[serde(default)]
         pin: Option<String>,
         /// 客户端设备名，用于在管理端标识该设备。
-        #[serde(default)]
         device_name: Option<String>,
     },
     /// 心跳探测，服务端以 `Pong` 应答。
@@ -69,6 +66,13 @@ pub enum WsClientRequest {
     Logoff,
     /// 锁定当前 Windows 会话。
     Lock,
+    /// 读取服务进程当前的保持唤醒状态。
+    GetKeepAwake,
+    /// 开启或关闭保持唤醒（阻止系统自动休眠与显示器熄屏）。
+    SetKeepAwake {
+        /// 是否开启；开启时同时阻止系统自动休眠与显示器熄屏。
+        enabled: bool,
+    },
     /// 查询锁屏状态以及是否具备自动解锁条件。
     GetUnlockStatus,
     /// 请求自动解锁当前的锁屏会话。
@@ -272,10 +276,6 @@ pub enum WsClientRequest {
         #[serde(default)]
         kind: String,
     },
-    /// 获取应用扫描结果（旧版接口）。
-    GetScannerApps,
-    /// 强制重新扫描并同步应用目录（旧版接口）。
-    RefreshScannerApps,
     /// 重命名某个已扫描到的应用。
     RenameScannerApp {
         /// 启动器条目 ID。
@@ -294,8 +294,10 @@ pub enum WsClientRequest {
     ScanGameDirectory {
         /// 待扫描的目录路径。
         path: String,
-        /// `game` (default) or `app`; decides the category of the entries that
-        /// the user later confirms.
+        /// `game` 或 `app`，决定用户稍后确认的条目归入哪一类。
+        ///
+        /// **缺省时归 `app` 而不是 `game`**：历史上"一律当作游戏"会让一次
+        /// 误扫把游戏列表撑爆，故缺省取更保守的一侧。手机端始终显式传值。
         #[serde(default)]
         kind: String,
     },
@@ -337,7 +339,6 @@ pub enum WsClientRequest {
         /// 目录的绝对路径。
         path: String,
         /// 显示名称，缺省时使用目录名。
-        #[serde(default)]
         name: Option<String>,
         /// 是否启用该目录的扫描，默认为启用。
         #[serde(default = "default_bool_true")]
@@ -346,7 +347,6 @@ pub enum WsClientRequest {
         #[serde(default)]
         max_depth: u32,
         /// 限定扫描的文件扩展名，缺省表示使用默认集合。
-        #[serde(default)]
         extensions: Option<Vec<String>>,
         /// 是否递归扫描子目录，默认为递归。
         #[serde(default = "default_bool_true")]
@@ -357,22 +357,16 @@ pub enum WsClientRequest {
         /// 目标目录 ID。
         id: String,
         /// 新的目录路径，`None` 表示不修改。
-        #[serde(default)]
         path: Option<String>,
         /// 新的显示名称，`None` 表示不修改。
-        #[serde(default)]
         name: Option<String>,
         /// 新的启用状态，`None` 表示不修改。
-        #[serde(default)]
         enabled: Option<bool>,
         /// 新的最大递归深度，`None` 表示不修改。
-        #[serde(default)]
         max_depth: Option<u32>,
         /// 新的扩展名过滤集合，`None` 表示不修改。
-        #[serde(default)]
         extensions: Option<Vec<String>>,
         /// 新的递归开关，`None` 表示不修改。
-        #[serde(default)]
         recursive: Option<bool>,
     },
     /// 删除指定的自定义扫描目录。

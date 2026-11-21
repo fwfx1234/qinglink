@@ -188,7 +188,10 @@ impl InputSession {
                 if !authenticated && method == "token" =>
             {
                 match token {
-                    Some(token) if self.state.token_store.validate(&token) => {
+                    // `check_valid` 返回 `None` 表示数据库不可用。这里刻意不把它
+                    // 当成"令牌无效"：连接会被关掉，但客户端重连后会重新认证，
+                    // 而认证一次被误判成失效的代价远小于直接清掉本地凭据。
+                    Some(token) if self.state.token_store.check_valid(&token) == Some(true) => {
                         let mut guard = self.conn_state.lock().await;
                         guard.authenticated = true;
                         guard.token = Some(token.clone());
@@ -235,7 +238,7 @@ impl InputSession {
         let token = self.conn_state.lock().await.token.clone();
         if token
             .as_deref()
-            .is_some_and(|token| !self.state.token_store.validate(token))
+            .is_some_and(|token| self.state.token_store.check_valid(token) == Some(false))
         {
             let _ = socket
                 .send(Message::Close(Some(CloseFrame {

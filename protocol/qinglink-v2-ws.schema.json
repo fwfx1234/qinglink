@@ -26,10 +26,22 @@
       "properties": {
         "type": { "type": "string", "minLength": 1 },
         "request_id": { "type": "string", "minLength": 1 },
-        "data": { "type": "object" },
-        "error": { "$ref": "#/$defs/error" }
+        "data": { "type": "object" }
       },
-      "additionalProperties": true
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "description": "错误帧把 {code, message} 放在 data 里，不存在顶层 error 键。服务端的 WsServerResponse 用 #[serde(tag = \"type\", content = \"data\")]，线格式由此固定；HTTP 契约用的是 {ok:false, error:{...}}，两者不可互换。",
+          "if": {
+            "required": ["type"],
+            "properties": { "type": { "const": "error" } }
+          },
+          "then": {
+            "required": ["data"],
+            "properties": { "data": { "$ref": "#/$defs/error" } }
+          }
+        }
+      ]
     },
     "event": {
       "type": "object",
@@ -56,6 +68,43 @@
         "width": { "type": "integer", "minimum": 1 },
         "height": { "type": "integer", "minimum": 1 },
         "refresh_millihz": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "displayInfo": {
+      "type": "object",
+      "required": ["id", "name", "primary", "current_mode", "modes"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "primary": { "type": "boolean" },
+        "current_mode": { "$ref": "#/$defs/displayMode" },
+        "modes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/displayMode" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "displaysResponse": {
+      "type": "object",
+      "required": ["displays"],
+      "properties": {
+        "displays": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/displayInfo" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "inputState": {
+      "type": "object",
+      "required": ["type", "left", "right", "middle"],
+      "properties": {
+        "type": { "const": "input_state" },
+        "left": { "type": "boolean" },
+        "right": { "type": "boolean" },
+        "middle": { "type": "boolean" }
       },
       "additionalProperties": false
     },

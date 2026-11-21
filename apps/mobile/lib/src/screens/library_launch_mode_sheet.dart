@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/app_info.dart';
 import '../models/display_info.dart';
 import '../providers/system_controller.dart';
+import '../widgets/app_sheet.dart';
 
 class LaunchModeSelection {
   const LaunchModeSelection({this.mode, this.clear = false});
@@ -24,9 +25,8 @@ Future<LaunchModeSelection?> showLibraryLaunchModeSheet(
     );
     return null;
   }
-  return showModalBottomSheet<LaunchModeSelection>(
-    context: context,
-    showDragHandle: true,
+  return showAppSheet<LaunchModeSelection>(
+    context,
     isScrollControlled: true,
     builder: (sheetContext) => SafeArea(
       child: ConstrainedBox(

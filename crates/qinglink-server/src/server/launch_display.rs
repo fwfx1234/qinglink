@@ -159,14 +159,14 @@ impl LaunchDisplayCoordinator {
                 mode.refresh_millihz,
             ) {
                 tracing::warn!(app_id = %app.id, %error, "切换游戏显示模式失败，继续启动");
-                let _ = crate::lock_unpoisoned(&state.app_db).set_setting(SNAPSHOT_KEY, "");
+                clear_snapshot(state);
                 return launch_app(app);
             }
         }
         if let Err(error) = launch_app(app) {
             match restore(&snapshot) {
                 Ok(()) => {
-                    let _ = crate::lock_unpoisoned(&state.app_db).set_setting(SNAPSHOT_KEY, "");
+                    clear_snapshot(state);
                 }
                 Err(restore_error) => {
                     tracing::error!(%restore_error, "游戏启动失败后恢复显示模式失败");
@@ -189,7 +189,7 @@ impl LaunchDisplayCoordinator {
             if let Some(launch) = active.take() {
                 match restore(&launch.snapshot) {
                     Ok(()) => {
-                        let _ = crate::lock_unpoisoned(&state.app_db).set_setting(SNAPSHOT_KEY, "");
+                        clear_snapshot(state);
                     }
                     Err(restore_error) => {
                         tracing::error!(%restore_error, "启动监视线程失败后恢复显示模式失败");

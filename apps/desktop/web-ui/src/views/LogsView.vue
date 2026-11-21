@@ -375,6 +375,6 @@ function loadMore(): void {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-bright);
 }
 </style>

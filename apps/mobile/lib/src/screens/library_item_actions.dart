@@ -27,6 +27,16 @@ class LibraryItemActions {
   /// 由宿主注入：重新同步常用、最近与当前分区。
   final Future<void> Function() reload;
 
+  /// 把控制器记下的失败原因拼成用户可读的提示。
+  ///
+  /// 控制器在返回 `false` 之前已经把原始错误写进了 `state.error`；这里如果
+  /// 再用固定文案，等于把唯一一份诊断信息丢掉。
+  String _failureMessage({String fallback = '操作失败'}) {
+    final reason = ref.read(favoritesProvider).error;
+    if (reason == null || reason.trim().isEmpty) return fallback;
+    return '$fallback：${reason.trim()}';
+  }
+
   /// 加入常用。
   Future<void> addToFavorites(BuildContext context, LauncherItem item) async {
     final ok = await ref.read(favoritesProvider.notifier).add(item.id);
@@ -71,7 +81,9 @@ class LibraryItemActions {
         confirm ? '已从常用移除 ${item.name}' : '已取消添加 ${item.name}',
       );
     } else {
-      context.showErrorSnackBar('操作失败');
+      // 控制器已经把原因写进 state.error，这里不能再固定显示"操作失败"：
+      // 用户看到一句没有原因的话，只能靠猜（网络？权限？PC 端没响应？）。
+      context.showErrorSnackBar(_failureMessage());
     }
   }
 
@@ -84,7 +96,7 @@ class LibraryItemActions {
     if (ok) {
       context.showSuccessSnackBar(item.pinned ? '已从首页取消置顶' : '已置顶到首页');
     } else {
-      context.showErrorSnackBar('操作失败');
+      context.showErrorSnackBar(_failureMessage());
     }
   }
 

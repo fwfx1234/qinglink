@@ -24,7 +24,7 @@ class AppListRow extends StatelessWidget {
     this.onTap,
     this.enabled = true,
     this.showChevron = false,
-    this.minHeight = 56,
+    this.minHeight = AppMetrics.listRow,
     this.padding = const EdgeInsets.symmetric(vertical: 6),
     this.border,
   });
@@ -48,7 +48,13 @@ class AppListRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final leading = tile && icon != null
-        ? TileIcon(icon: icon!, color: iconTone ?? AppColors.primary)
+        ? TileIcon(
+            icon: icon!,
+            color: iconTone ?? AppColors.primary,
+            size: 34,
+            radius: AppRadius.sm,
+            iconSize: 18,
+          )
         : (icon != null
               ? Icon(icon, size: 18, color: iconTone ?? palette.textMuted)
               : null);
@@ -63,7 +69,7 @@ class AppListRow extends StatelessWidget {
           decoration: border != null ? BoxDecoration(border: border) : null,
           child: Row(
             children: [
-              if (leading != null) ...[leading, const SizedBox(width: 11)],
+              if (leading != null) ...[leading, const SizedBox(width: 12)],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -74,8 +80,7 @@ class AppListRow extends StatelessWidget {
                           title ?? '',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: AppText.body.copyWith(
-                            fontWeight: FontWeight.w700,
+                          style: AppText.rowTitle.copyWith(
                             color: enabled
                                 ? palette.textPrimary
                                 : palette.textMuted,
@@ -89,7 +94,7 @@ class AppListRow extends StatelessWidget {
                         subtitle!,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: AppText.meta.copyWith(color: palette.textSubtle),
+                        style: AppText.meta.copyWith(color: palette.textMuted),
                       ),
                     ],
                   ],
@@ -101,7 +106,7 @@ class AppListRow extends StatelessWidget {
               if (showChevron)
                 Icon(
                   Icons.chevron_right_rounded,
-                  size: 16,
+                  size: 18,
                   color: palette.textSubtle,
                 ),
             ],

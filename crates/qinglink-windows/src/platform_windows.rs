@@ -17,6 +17,10 @@ mod auto_unlock;
 mod com_apartment;
 #[path = "platform_windows_display_modes.rs"]
 mod display_modes;
+#[path = "platform_windows_focus_hook.rs"]
+mod focus_hook;
+#[path = "platform_windows_focus_text.rs"]
+mod focus_text;
 #[path = "platform_windows_icon_bitmap.rs"]
 mod icon_bitmap;
 #[path = "platform_windows_icon_candidates.rs"]
@@ -35,6 +39,8 @@ mod icon_shell;
 mod icon_shortcut;
 #[path = "platform_windows_input_routing.rs"]
 mod input_routing;
+#[path = "platform_windows_key_state.rs"]
+mod key_state;
 #[path = "platform_windows_keyboard_input.rs"]
 mod keyboard_input;
 #[path = "platform_windows_launch_args.rs"]
@@ -69,6 +75,8 @@ mod window_switch;
 pub use app_catalog::search_installed_apps;
 pub use auto_unlock::auto_unlock;
 pub use display_modes::{get_displays, set_display_mode};
+pub use focus_hook::{FOCUS_NOTIFY_EVENT_NAME, set_focus_hook, unhook_focus};
+pub use focus_text::{has_focus_input, read_focus_text};
 pub use icon_candidates::list_icon_candidates;
 pub use icon_image_file::{base64_image_to_icon_base64, image_file_to_icon_base64};
 pub use icon_normalize::ICON_EDGE;
@@ -80,6 +88,7 @@ pub use icon_resolve::{
 pub use icon_resource::{extract_icon_base64, extract_resource_icon_base64};
 pub use icon_shell::extract_shell_icon_base64;
 pub use icon_shortcut::shortcut_target_exists;
+pub use key_state::pressed_buttons;
 pub use keyboard_input::{key_event, key_press, send_text};
 pub use launch_session::launch_in_active_session;
 pub use launch_shell::{
@@ -90,7 +99,8 @@ pub use mouse_input::{
     mouse_button, mouse_button_state, mouse_move, mouse_move_absolute, mouse_wheel,
 };
 pub use power_actions::{
-    console_ctrl_handler, install_console_ctrl_handler, lock, logoff, restart, shutdown, sleep,
+    console_ctrl_handler, install_console_ctrl_handler, lock, logoff, restart, set_keep_awake,
+    shutdown, sleep,
 };
 pub use process_actions::{kill, resume, set_priority, suspend};
 pub use session_account::configure_no_password_wake;
@@ -134,4 +144,33 @@ pub fn send_secure_ascii(text: &str) -> anyhow::Result<()> {
 /// 读写与 `SendSAS` 调用的失败并总是返回 `Ok(())`。返回值保留 `Result` 以维持接口稳定。
 pub fn send_secure_attention() -> anyhow::Result<()> {
     crate::secure_desktop::send_secure_attention()
+}
+
+/// 读取 PC 上焦点输入框的已有文本，供手机端回填输入框。
+///
+/// Session 0（服务进程）下 UIA 看不到用户桌面，必须经会话代理在登录会话里读；
+/// 普通桌面进程直接读本会话。返回 `Ok(None)` 表示没有可回填的输入框——焦点不在编辑框上、
+/// 密码框、只读、控件不提供 Value 模式，或取到的值是空白/占位提示。
+///
+/// # Errors
+/// COM/UIA 初始化失败、会话代理不可用或代理拒绝请求时返回错误。
+pub fn read_focus_input_text() -> anyhow::Result<Option<String>> {
+    if crate::secure_desktop::running_in_session_zero() {
+        let text = crate::secure_desktop::agent_request_message("focus_text", None)?;
+        return Ok((!text.is_empty()).then_some(text));
+    }
+    focus_text::read_focus_text()
+}
+
+/// 读取物理鼠标左右中键的按下状态；Session 0 下经会话代理读登录会话。
+///
+/// 读不到时返回"全部抬起"：这条信息只用于界面提示与去重，不该让调用方处理错误。
+pub fn mouse_buttons_state() -> qinglink_protocol::MouseButtonsState {
+    if crate::secure_desktop::running_in_session_zero() {
+        return crate::secure_desktop::agent_request_message("input_state", None)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+    }
+    key_state::pressed_buttons()
 }

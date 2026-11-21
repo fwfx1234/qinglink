@@ -203,9 +203,6 @@ class RemoteSession {
   /// 发送不等待回执的命令。
   void send(Map<String, dynamic> payload) => _commands.send(payload);
 
-  /// Typed fire-and-forget entry point for input events.
-  void sendTyped(RemoteRequest request) => _commands.sendTyped(request);
-
   /// 吊销令牌并断开会话。
   Future<Map<String, dynamic>> revokeToken() => _commands.revokeToken();
 

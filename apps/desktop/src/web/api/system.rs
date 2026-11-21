@@ -112,24 +112,14 @@ pub async fn update_settings(
     }
 
     if let Some(enabled) = request.keep_awake {
-        // `SetThreadExecutionState` is per-thread, so this must run on the main
-        // thread, which outlives any single request.
-        let (reply, receiver) = oneshot::channel();
-        state
-            .host
-            .send(HostCommand::SetKeepAwake { enabled, reply })
-            .map_err(|_| ApiError::internal("桌面端主线程不可用"))?;
-        await_host(receiver).await?;
-        state.settings.set(
-            state.settings.autostart(),
-            enabled,
-            state.settings.debug_log(),
-        );
-        // 开关跨重启保留。持久化失败只记警告：会话里的开关已经生效，
-        // 不该因为"记不住"把这次请求判成失败。
-        if let Err(error) = state.preferences.set_keep_awake(enabled) {
-            tracing::warn!(%error, enabled, "保存保持唤醒设置失败");
-        }
+        // 保持唤醒由服务进程统一持有：手机端控制中心、桌面端托盘与这里写的是
+        // 同一份状态。以服务回包的实际值为准刷新本地镜像，下一次快照再校准。
+        let applied = state
+            .service
+            .call_typed::<bool>(DesktopCommand::SetKeepAwake { enabled })
+            .await
+            .map_err(|error| ApiError::internal(format!("设置保持唤醒失败：{error}")))?;
+        state.settings.set_keep_awake(applied);
     }
 
     if let Some(enabled) = request.debug_log {
@@ -200,7 +190,7 @@ async fn dispatch_lifecycle(state: Arc<WebState>, exiting: bool) -> Result<Json<
 fn health_payload(state: &WebState) -> Value {
     json!({
         "status": "ok",
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": qinglink_version::VERSION,
         "pid": std::process::id(),
         "uptime_secs": state.uptime_secs(),
         "web_port": state.port(),

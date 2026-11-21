@@ -42,8 +42,10 @@ pub(super) fn snapshot(state: &AppState) -> CommandResult {
         address: network_ready.then(|| format!("0.0.0.0:{}", state.service.server_port())),
         last_error: state.control.network_error(),
         pending_pairing,
-        device_count: Some(state.token_store.count_active()),
+        device_count: state.token_store.count_active(),
         scan,
+        app_version: Some(qinglink_version::VERSION.to_string()),
+        keep_awake: Some(state.keep_awake()),
     })
 }
 

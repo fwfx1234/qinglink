@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use qinglink_storage::database::{DatabaseService, PooledConnection, SqlitePool};
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -161,82 +161,97 @@ impl TokenStore {
         Ok(token)
     }
 
-    /// 校验令牌是否有效（永久或未过期），结果缓存 60 秒。
-    pub fn validate(&self, token: &str) -> bool {
+    /// 校验令牌是否有效（永久或未过期），只在真正查到结果时缓存 60 秒。
+    ///
+    /// # Errors
+    /// 取连接或查询失败时返回错误。**不能把它们并成 `false`**：数据库一次瞬时
+    /// 抖动会把全部在线设备判为令牌失效，而缓存有效期 60 秒会把这次误判钉住
+    /// 一分钟，期间所有设备都被心跳踢线且日志无任何 DB 错误痕迹。
+    pub fn validate(&self, token: &str) -> anyhow::Result<bool> {
         let hash = token_hash(token);
         if let Ok(cache) = self.validate_cache.lock()
             && let Some((created, valid)) = cache.get(&hash)
             && created.elapsed() < VALIDATE_CACHE_TTL
         {
-            return *valid;
+            return Ok(*valid);
         }
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        let valid = self
-            .connection()
-            .ok()
-            .and_then(|connection| {
-                connection
-                    .query_row(
-                        "SELECT expires_at, permanent FROM tokens_v2 WHERE token_hash = ?1",
-                        [&hash],
-                        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-                    )
-                    .ok()
-            })
-            .is_some_and(|(expires_at, permanent)| permanent == 1 || expires_at > now);
+        let connection = self.connection()?;
+        let row = connection
+            .query_row(
+                "SELECT expires_at, permanent FROM tokens_v2 WHERE token_hash = ?1",
+                [&hash],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?;
+        let valid = row.is_some_and(|(expires_at, permanent)| permanent == 1 || expires_at > now);
+        // 只有"查到了"才写缓存：错误路径在上面已经 `?` 返回，不会污染缓存。
         if let Ok(mut cache) = self.validate_cache.lock() {
             cache.insert(hash.clone(), (Instant::now(), valid));
         }
-        if valid && let Ok(connection) = self.connection() {
+        if valid {
             let _ = connection.execute(
                 "UPDATE paired_devices SET last_seen_at = ?1
                      WHERE device_id = (SELECT device_id FROM tokens_v2 WHERE token_hash = ?2)",
                 params![now, hash],
             );
         }
-        valid
+        Ok(valid)
     }
 
-    /// 撤销单个令牌，返回是否存在被删除的令牌。
-    pub fn revoke(&self, token: &str) -> bool {
-        !self.revoke_hashes(token).is_empty()
+    /// 连接级校验：`None` 表示数据库不可用，**不得**据此判定令牌失效。
+    ///
+    /// 心跳每几秒就问一次；把一次瞬时数据库失败当成撤销，会踢掉所有在线设备。
+    /// 需要区分三态的调用方用这个，只需要"是/否"的用 [`Self::validate`]。
+    pub fn check_valid(&self, token: &str) -> Option<bool> {
+        match self.validate(token) {
+            Ok(valid) => Some(valid),
+            Err(error) => {
+                tracing::warn!(%error, "令牌校验失败（数据库不可用），本次不判定为失效");
+                None
+            }
+        }
     }
 
-    /// 按令牌明文撤销，返回被删除的令牌摘要列表。
-    pub fn revoke_hashes(&self, token: &str) -> Vec<String> {
+    /// 撤销单个令牌。
+    ///
+    /// 返回 `Ok(true)` 表示确实删掉了一行，`Ok(false)` 表示该令牌本就不存在。
+    ///
+    /// # Errors
+    /// 取连接、开事务、执行 DELETE 或提交失败时返回错误。这四种失败与
+    /// "令牌不存在"必须可区分：把它们合流成一个 `false`，客户端就无法区分
+    /// "撤销成功"与"撤销失败"，而后者意味着令牌仍然有效。
+    pub fn revoke(&self, token: &str) -> anyhow::Result<bool> {
         self.revoke_hash(token_hash(token))
     }
 
-    fn revoke_hash(&self, hash: String) -> Vec<String> {
-        let Ok(connection) = self.connection() else {
-            return Vec::new();
-        };
-        let Ok(transaction) = connection.unchecked_transaction() else {
-            return Vec::new();
-        };
+    fn revoke_hash(&self, hash: String) -> anyhow::Result<bool> {
+        let connection = self.connection()?;
+        let transaction = connection.unchecked_transaction()?;
         let device_id: Option<String> = transaction
             .query_row(
                 "SELECT device_id FROM tokens_v2 WHERE token_hash = ?1",
                 [&hash],
                 |row| row.get(0),
             )
-            .ok()
-            .flatten();
-        let affected = transaction
-            .execute("DELETE FROM tokens_v2 WHERE token_hash = ?1", [&hash])
-            .unwrap_or(0);
+            .optional()?;
+        let affected =
+            transaction.execute("DELETE FROM tokens_v2 WHERE token_hash = ?1", [&hash])?;
+        if affected == 0 {
+            // 令牌本就不存在：结束事务，返回"没删到"。
+            transaction.rollback()?;
+            return Ok(false);
+        }
         if let Some(device_id) = device_id {
-            let _ = transaction.execute(
+            transaction.execute(
                 "DELETE FROM paired_devices WHERE device_id = ?1
                  AND NOT EXISTS (SELECT 1 FROM tokens_v2 WHERE device_id = ?1)",
                 [&device_id],
-            );
+            )?;
         }
-        if affected == 0 || transaction.commit().is_err() {
-            return Vec::new();
-        }
+        transaction.commit()?;
         self.remove_cached(std::slice::from_ref(&hash));
-        vec![hash]
+        Ok(true)
     }
 
     fn remove_cached(&self, hashes: &[String]) {
@@ -326,23 +341,27 @@ impl TokenStore {
         all
     }
 
-    /// Number of active device tokens.
+    /// Number of active device tokens, or `None` when the count is unknown.
     ///
     /// Unlike [`Self::list_active`] this is a single counting query, which is
     /// what the desktop's periodic snapshot can afford to call.
-    pub fn count_active(&self) -> usize {
-        let Ok(connection) = self.connection() else {
-            return 0;
-        };
+    ///
+    /// Returns `None` rather than `0` on a database failure: reporting zero would
+    /// render as "no paired devices" in the dashboard, which a user reads as
+    /// "everything was unpaired" instead of "the query failed". The protocol type
+    /// already models the unknown state (`Option<usize>`), so this is not a
+    /// contract change.
+    pub fn count_active(&self) -> Option<usize> {
+        let connection = self.connection().ok()?;
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        connection
+        let count = connection
             .query_row(
                 "SELECT COUNT(*) FROM tokens_v2 WHERE permanent = 1 OR expires_at > ?1",
                 [now],
                 |row| row.get::<_, i64>(0),
             )
-            .map(|count| count.max(0) as usize)
-            .unwrap_or(0)
+            .ok()?;
+        Some(count.max(0) as usize)
     }
 
     /// 按页列出有效令牌（令牌前缀, 摘要信息），页大小上限 100。

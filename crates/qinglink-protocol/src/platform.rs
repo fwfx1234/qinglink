@@ -40,7 +40,9 @@ pub struct AudioOutputsResponse {
     pub devices: Vec<AudioOutputDevice>,
 }
 /// 系统音量状态。
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+///
+/// `Copy` 是刻意的：它只有两个标量字段，服务端多处把它当作值类型传递。
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VolumeStatus {
     /// 音量百分比（0–100）。
     pub percent: u8,
@@ -121,6 +123,27 @@ pub struct ForegroundResponse {
     pub process_name: String,
     /// 窗口句柄数值。
     pub hwnd: usize,
+    /// 焦点输入框里已有的文本，供手机端回填输入框；没有可回填的输入框时为 `None`。
+    ///
+    /// `skip_serializing_if` 不是可选优化：服务端此前在自己的复本里就有它，
+    /// 而协议层没有，导致同一逻辑消息按"序列化时用哪份类型"发出两种线格式
+    /// （有字段 vs 有 `null`）。现在只有这一份定义，行为固定为"无文本时省略字段"；
+    /// `default` 保留在反序列化侧，让不发送该字段的旧服务端仍可被解析。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_text: Option<String>,
+}
+/// 物理鼠标按键的按下状态。
+///
+/// 服务端按固定间隔读取一次，仅在变化时通过 `input_state` 事件下发；手机端据此显示
+/// "PC 侧鼠标正处于按下状态"，并在拖拽开始前避免重复下发按下。
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MouseButtonsState {
+    /// 左键是否按下。
+    pub left: bool,
+    /// 右键是否按下。
+    pub right: bool,
+    /// 中键是否按下。
+    pub middle: bool,
 }
 /// 一种显示模式（分辨率与刷新率）。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -143,6 +166,6 @@ pub struct DisplayInfoResponse {
     pub primary: bool,
     /// 当前生效的显示模式。
     pub current_mode: DisplayModeResponse,
-    /// 该显示器支持的全部显示模式。
+    /// 常用显示模式；当前模式不在其中时也会附在列表末尾。
     pub modes: Vec<DisplayModeResponse>,
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/network/remote_command_exception.dart';
 import '../models/auth.dart';
 import '../services/remote_session.dart';
 import '../services/ws_client.dart';
@@ -105,17 +106,28 @@ class SessionConnector {
   }
 
   /// 撤销当前令牌、断开连接并清空本地令牌。
+  ///
+  /// 撤销失败**不阻断登出**：网络断了也不该把人锁在应用里，而且本地凭据一旦
+  /// 保留，用户反而失去"再试一次"的入口。但失败必须**可见**——否则用户看到
+  /// "已退出登录"，而 PC 端该令牌仍然有效，事后没有任何地方能查证。
   Future<void> logout() async {
+    String? revocationWarning;
     try {
       await _ref.read(remoteSessionRepositoryProvider).revokeCurrentToken();
     } catch (error, stackTrace) {
-      if (kDebugMode) {
-        debugPrint('[QingLink] revoke token failed: $error\n$stackTrace');
-      }
+      // release 版同样要留痕：只写在 `kDebugMode` 分支里等于线上零痕迹。
+      debugPrint('[QingLink] revoke token failed: $error\n$stackTrace');
+      // PC 明确回绝与"根本没连上 PC"是两件事，提示要能区分，
+      // 但两者都意味着本机已登出、PC 端未确认撤销。
+      revocationWarning = error is RemoteCommandException
+          ? '已退出本机，但 PC 端未确认撤销（${error.code}）。建议在 PC 上手动移除该设备。'
+          : '已退出本机，但未能与 PC 确认撤销。建议在 PC 上手动移除该设备。';
     }
     _ref.read(remoteSessionRepositoryProvider).disconnect();
-    _state.update(const AuthState());
     await _ref.read(settingsProvider.notifier).clearToken();
+    // 最后写状态：`clearToken()` 会触发连接配置变更并重置一次状态，
+    // 先写会被覆盖掉，提示就没了。
+    _state.update(AuthState(errorMessage: revocationWarning));
   }
 
   void _onConnectionConfigChanged(

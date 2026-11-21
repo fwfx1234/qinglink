@@ -1,0 +1,14 @@
+[package]
+name = "qinglink-version"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[build-dependencies]
+sha2.workspace = true
+
+[lints]
+workspace = true

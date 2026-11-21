@@ -14,7 +14,7 @@ import '../utils/remote_actions.dart';
 import '../widgets/app_ui.dart';
 import 'ir/tv_quick_panel.dart';
 
-/// 快捷操作网格：按红外可用性决定列数，每个瓦片直接调用对应入口。
+/// 快捷操作网格：4 列图标瓦片，每个瓦片直接调用对应入口。
 class HomeQuickActionsSection extends ConsumerWidget {
   const HomeQuickActionsSection({
     super.key,
@@ -38,7 +38,6 @@ class HomeQuickActionsSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return _QuickGrid(
-      crossAxisCount: irReady ? 4 : 3,
       items: [
         ..._systemTiles(context, ref),
         if (irReady) ..._tvTiles(context),
@@ -46,7 +45,7 @@ class HomeQuickActionsSection extends ConsumerWidget {
           (label) => _QuickTile(
             icon: Icons.keyboard_command_key_rounded,
             label: label,
-            tone: AppColors.violet,
+            tone: context.palette.violet,
             enabled: ready,
             onTap: () => onShortcut(label),
           ),
@@ -56,63 +55,65 @@ class HomeQuickActionsSection extends ConsumerWidget {
     );
   }
 
-  /// 系统动作：解锁、进程、休眠、关机、音量。
+  /// 系统动作：解锁、音量、睡眠、关机。
   List<_QuickTile> _systemTiles(BuildContext context, WidgetRef ref) {
+    final palette = context.palette;
     return [
       _QuickTile(
         icon: Icons.lock_open_rounded,
         label: '解锁',
-        tone: AppColors.amber,
+        tone: palette.warn,
         // Keep the entry visible while preventing a remote
         // command from being sent before the PC session exists.
         enabled: online,
         onTap: onUnlock,
       ),
       _QuickTile(
-        icon: Icons.dynamic_feed_rounded,
-        label: '进程',
-        tone: AppColors.violet,
+        icon: Icons.volume_up_rounded,
+        label: '音量',
+        tone: palette.info,
         enabled: ready,
-        onTap: () => context.push(AppRoutes.processes),
+        onTap: () => showVolumeSheet(context, ref),
       ),
       _QuickTile(
         icon: Icons.bedtime_rounded,
-        label: '休眠',
-        tone: AppColors.slate,
+        label: '睡眠',
+        tone: palette.violet,
         enabled: ready,
         onTap: () => confirmPowerAction(context, ref, 'sleep'),
       ),
       _QuickTile(
         icon: Icons.power_settings_new_rounded,
         label: '关机',
-        tone: AppColors.red,
+        tone: palette.danger,
         enabled: ready,
         onTap: () => confirmPowerAction(context, ref, 'shutdown'),
       ),
       _QuickTile(
-        icon: Icons.volume_up_rounded,
-        label: '音量',
-        tone: AppColors.amber,
+        icon: Icons.dynamic_feed_rounded,
+        label: '进程',
+        tone: palette.info,
         enabled: ready,
-        onTap: () => showVolumeSheet(context, ref),
+        onTap: () => context.push(AppRoutes.processes),
       ),
     ];
   }
 
   /// 电视动作：红外电源与遥控器面板（仅在红外可用时出现）。
   List<_QuickTile> _tvTiles(BuildContext context) {
+    final palette = context.palette;
     return [
       _QuickTile(
-        icon: Icons.power_settings_new_rounded,
-        label: '电源',
-        tone: AppColors.slate,
+        icon: Icons.tv_rounded,
+        label: '电视',
+        tone: palette.info,
         enabled: true,
         onTap: onTvPower,
       ),
       _QuickTile(
         icon: Icons.settings_remote_rounded,
-        label: 'TV',
-        tone: AppColors.cyan,
+        label: '遥控',
+        tone: palette.warn,
         enabled: true,
         onTap: () => showTvQuickPanel(context),
       ),
@@ -124,7 +125,7 @@ class HomeQuickActionsSection extends ConsumerWidget {
     return _QuickTile(
       icon: Icons.mouse_rounded,
       label: '控制',
-      tone: AppColors.cyan,
+      tone: context.palette.violet,
       enabled: ready,
       onTap: () => context.push(AppRoutes.mouse),
     );
@@ -149,9 +150,8 @@ class _QuickTile {
 }
 
 class _QuickGrid extends StatelessWidget {
-  const _QuickGrid({required this.items, this.crossAxisCount = 3});
+  const _QuickGrid({required this.items});
   final List<_QuickTile> items;
-  final int crossAxisCount;
 
   @override
   Widget build(BuildContext context) {
@@ -160,11 +160,12 @@ class _QuickGrid extends StatelessWidget {
       padding: EdgeInsets.zero,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: items.length,
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-        mainAxisExtent: 48,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        mainAxisSpacing: 6,
+        crossAxisSpacing: 10,
+        // 44 图标 + 8 间隙 + 16 文字行高 = 68，行距合计 76（设计稿 74）。
+        mainAxisExtent: 70,
       ),
       itemBuilder: (context, index) => _QuickTileView(item: items[index]),
     );
@@ -182,32 +183,27 @@ class _QuickTileView extends StatelessWidget {
       opacity: item.enabled ? 1 : 0.4,
       child: PressableScale(
         enabled: item.enabled,
-        child: AppCard(
-          radius: AppRadius.md,
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: item.enabled ? item.onTap : null,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              TileIcon(
-                icon: item.icon,
-                color: item.tone,
-                size: 26,
-                radius: 8,
-                iconSize: 15,
-                alpha: 0.16,
-              ),
-              const SizedBox(width: 7),
-              Flexible(
-                child: Text(
-                  item.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.label.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: palette.textPrimary,
-                  ),
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: item.tone.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
+                child: Icon(item.icon, size: 22, color: item.tone),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                item.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.meta.copyWith(color: palette.textMuted),
               ),
             ],
           ),

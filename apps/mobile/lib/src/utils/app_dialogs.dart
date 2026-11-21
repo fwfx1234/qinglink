@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/feature_facades.dart';
 import '../providers/process_controller.dart';
+import '../providers/settings_provider.dart';
 import '../providers/power_controller.dart';
 import '../theme/app_theme.dart';
 import 'snackbar_extension.dart';
@@ -46,19 +47,22 @@ Future<void> confirmPowerAction(
   WidgetRef ref,
   String mode,
 ) async {
-  const copy = <String, (String, String, String)>{
+  // 标题里带上真实设备名（设置里可能已经改过名），不要写死成「客厅电脑」。
+  final pcName = ref.read(settingsProvider).pcName;
+  final device = (pcName == null || pcName.isEmpty) ? '电脑' : pcName;
+  final copy = <String, (String, String, String)>{
     'sleep': (
-      '让电脑进入睡眠？',
+      '让$device进入睡眠？',
       '电脑会立即进入睡眠，当前应用保持打开。',
       '睡眠',
     ),
     'restart': (
-      '重启客厅电脑？',
+      '重启$device？',
       '正在运行的应用会被关闭，电脑上线后仍可继续连接。',
       '重启',
     ),
     'shutdown': (
-      '关闭客厅电脑？',
+      '关闭$device？',
       '这会中断所有正在运行的游戏和软件，请确认已保存进度。',
       '关机',
     ),

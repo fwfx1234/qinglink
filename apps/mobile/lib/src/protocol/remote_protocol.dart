@@ -72,12 +72,22 @@ final class RemoteResponse {
   bool get isError => type == 'error' || error != null;
 
   factory RemoteResponse.fromJson(Map<String, dynamic> json) {
+    final type = json['type'] as String? ?? 'unknown';
+    // WS 错误帧的线格式是 {"type":"error","data":{code,message}}：信封把
+    // code/message 放在 `data` 里，**没有**顶层 `error` 键
+    // （服务端 responses_ws.rs 的 #[serde(tag = "type", content = "data")] 决定）。
+    // 只有 `type == 'error'` 时 `data` 才是错误载荷；成功帧的 `data` 是正常结果，
+    // 不能无条件当错误读——`RemoteError.fromJson` 对任何输入都返回非空对象，
+    // 那样会让每一次成功调用都抛异常。
     final rawData = json['data'];
-    final rawError = json['error'];
+    final isErrorFrame = type == 'error';
+    final rawError = isErrorFrame ? rawData : json['error'];
     return RemoteResponse(
-      type: json['type'] as String? ?? 'unknown',
+      type: type,
       requestId: json['request_id'] as String?,
-      data: rawData is Map ? Map<String, dynamic>.from(rawData) : null,
+      data: isErrorFrame || rawData is! Map
+          ? null
+          : Map<String, dynamic>.from(rawData),
       error: rawError is Map
           ? RemoteError.fromJson(Map<String, dynamic>.from(rawError))
           : null,

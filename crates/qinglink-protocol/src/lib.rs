@@ -16,7 +16,7 @@ pub use pairing::{
 };
 pub use platform::{
     AppInfo, AudioOutputDevice, AudioOutputsResponse, DisplayInfoResponse, DisplayModeResponse,
-    ForegroundResponse, LockInputResult, LockInputStatus, MAX_MOUSE_MOVE_DELTA,
+    ForegroundResponse, LockInputResult, LockInputStatus, MAX_MOUSE_MOVE_DELTA, MouseButtonsState,
     SecureDesktopStatus, UnlockStatus, VolumeStatus, WindowSwitchDirection,
 };
 

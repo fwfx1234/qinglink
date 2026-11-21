@@ -1,6 +1,10 @@
 use super::*;
 
-pub(super) fn handle(_state: &AppState, req: &WsClientRequest, _session_token: Option<&str>) -> WsServerMessage {
+pub(super) fn handle(
+    _state: &AppState,
+    req: &WsClientRequest,
+    _session_token: Option<&str>,
+) -> WsServerMessage {
     match req {
         // === File System ===
         WsClientRequest::BrowseFiles { path } => {
@@ -31,8 +35,6 @@ pub(super) fn handle(_state: &AppState, req: &WsClientRequest, _session_token: O
             WsServerMessage::Response(WsServerResponse::QuickAccess(items))
         }
 
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
 }
-
-

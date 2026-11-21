@@ -16,7 +16,7 @@ class AppIcon extends ConsumerStatefulWidget {
     this.size = 40,
     this.radius = 10,
     this.fallback = Icons.apps_rounded,
-    this.tone = AppColors.cyan,
+    this.tone,
     this.revision = 0,
   });
 
@@ -25,7 +25,8 @@ class AppIcon extends ConsumerStatefulWidget {
   final double size;
   final double radius;
   final IconData fallback;
-  final Color tone;
+  /// 图标底衬色；为空时取当前主题的信息色。
+  final Color? tone;
 
   /// Bump to force a reload after the PC icon has been refreshed.
   final int revision;
@@ -91,6 +92,7 @@ class _AppIconState extends ConsumerState<AppIcon> {
   @override
   Widget build(BuildContext context) {
     final bytes = _bytes;
+    final tone = widget.tone ?? context.palette.info;
     final cacheWidth = (widget.size * MediaQuery.devicePixelRatioOf(context))
         .round();
     return Container(
@@ -98,11 +100,11 @@ class _AppIconState extends ConsumerState<AppIcon> {
       height: widget.size,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: bytes == null ? widget.tone.withValues(alpha: 0.16) : null,
+        color: bytes == null ? tone.withValues(alpha: 0.16) : null,
         borderRadius: BorderRadius.circular(widget.radius),
       ),
       child: bytes == null
-          ? Icon(widget.fallback, size: widget.size * 0.5, color: widget.tone)
+          ? Icon(widget.fallback, size: widget.size * 0.5, color: tone)
           : Image.memory(
               bytes,
               fit: BoxFit.contain,
@@ -113,7 +115,7 @@ class _AppIconState extends ConsumerState<AppIcon> {
               errorBuilder: (_, _, _) => Icon(
                 widget.fallback,
                 size: widget.size * 0.5,
-                color: widget.tone,
+                color: tone,
               ),
             ),
     );

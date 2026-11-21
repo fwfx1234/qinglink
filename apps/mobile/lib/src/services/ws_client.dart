@@ -157,6 +157,12 @@ class WsClient {
       // 目录扫描完成的唯一推送事件：漏掉它会让连接层把它当成"没有 request_id
       // 的响应"丢掉，手机端就只能靠用户手动刷新。
       case 'launcher_catalog_ready':
+      // 鼠标按键状态推送：不认它就会被当成"没有 request_id 的响应"丢掉，
+      // 手机端也就永远看不到 PC 侧正在按住。
+      case 'input_state':
+      // 焦点第一次进入输入框：手机端据此自动弹出键盘面板。同样必须在这里认领，
+      // 否则会被当成"没有 request_id 的响应"静默丢弃。
+      case 'focus_input':
       case 'session_closed':
         return true;
       default:

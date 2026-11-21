@@ -1,3 +1,8 @@
+/// S13 按键与信号（对应设计稿 `S13-keys-signals-*.png`）。
+///
+/// 单卡行式列表：按键名 + 协议/信号码 + 测试按钮。长按可编辑或删除。
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -6,8 +11,8 @@ import '../../providers/ir_remote_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_ui.dart';
 import 'ir_widgets.dart';
+import '../../widgets/app_sheet.dart';
 
-/// 按键与信号配置页：编辑当前遥控器的载波/时序数据并测试发送。
 class IrCommandScreen extends ConsumerStatefulWidget {
   const IrCommandScreen({super.key, required this.profileId});
 
@@ -113,6 +118,67 @@ class _IrCommandScreenState extends ConsumerState<IrCommandScreen> {
     if (mounted) setState(() => _profileId = id);
   }
 
+  /// 长按按键行：编辑或删除（内置遥控器只能查看）。
+  Future<void> _showCommandActions(
+    IrRemoteProfile profile,
+    IrCommand command,
+  ) async {
+    if (profile.builtin) {
+      showIrMessage(context, '内置遥控器为只读，复制后可编辑');
+      return;
+    }
+    final palette = context.palette;
+    final action = await showAppSheet<String>(
+      context,
+        builder: (sheetContext) => Container(
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.xl,
+          AppSpacing.md,
+          AppSpacing.xl,
+          MediaQuery.of(sheetContext).viewPadding.bottom + AppSpacing.lg,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: palette.lineStrong,
+                  borderRadius: BorderRadius.circular(AppRadius.pill),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            Text(
+              command.name,
+              style: AppText.cardTitle.copyWith(color: palette.textPrimary),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            AppListRow(
+              icon: Icons.edit_outlined,
+              title: '编辑按键',
+              showChevron: true,
+              onTap: () => Navigator.of(sheetContext).pop('edit'),
+            ),
+            AppListRow(
+              icon: Icons.delete_outline_rounded,
+              title: '删除按键',
+              iconTone: palette.danger,
+              showChevron: true,
+              onTap: () => Navigator.of(sheetContext).pop('delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'edit') await _editCommand(profile, command: command);
+    if (action == 'delete') await _deleteCommand(profile, command);
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
@@ -122,53 +188,117 @@ class _IrCommandScreenState extends ConsumerState<IrCommandScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     return Scaffold(
+      backgroundColor: palette.background,
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 20, 18, 28),
+          padding: const EdgeInsets.fromLTRB(
+            AppMetrics.pagePadding,
+            0,
+            AppMetrics.pagePadding,
+            AppSpacing.xxl,
+          ),
           children: [
-            PageHeading(
-              eyebrow: profile.name,
-              title: '按键与信号',
-              trailing: IconBtn(
-                icon: Icons.close_rounded,
-                tooltip: '返回',
-                onPressed: () => Navigator.of(context).maybePop(),
+            SizedBox(
+              height: AppMetrics.navHeight,
+              child: Row(
+                children: [
+                  IconBtn(
+                    icon: Icons.chevron_left_rounded,
+                    tooltip: '返回',
+                    tonal: true,
+                    iconSize: 22,
+                    onPressed: () => Navigator.of(context).maybePop(),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Text(
+                      '按键与信号',
+                      style: AppText.pageTitle.copyWith(
+                        color: palette.textPrimary,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: profile.builtin
+                        ? () => _copyProfile(profile)
+                        : () => _editCommand(profile),
+                    child: Text(
+                      profile.builtin ? '复制后学习' : '学习',
+                      style: AppText.body.copyWith(
+                        color: palette.brand,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            if (profile.builtin)
-              _BuiltinProfileNotice(onCopy: () => _copyProfile(profile)),
-            SectionHeading(
-              title: '按键列表',
-              trailing: Text(
-                '${profile.commands.length} 个',
-                style: AppText.meta.copyWith(color: palette.textSubtle),
-              ),
-            ),
-            if (profile.commands.isEmpty)
-              const EmptyState(
-                icon: Icons.keyboard_alt_outlined,
-                title: '暂无按键',
-                message: '请录入载波频率和微秒时序。',
-              )
-            else
-              ...profile.commands.map(
-                (command) => _CommandTile(
-                  command: command,
-                  editable: !profile.builtin,
-                  onTest: () => _testCommand(command),
-                  onEdit: () => _editCommand(profile, command: command),
-                  onDelete: () => _deleteCommand(profile, command),
+            const SizedBox(height: AppSpacing.sm),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: palette.surface2,
+                  border: Border.all(color: palette.line),
+                  borderRadius: BorderRadius.circular(AppRadius.pill),
+                ),
+                child: Text(
+                  '${profile.name} · ${profile.commands.length} 键',
+                  style: AppText.label.copyWith(color: palette.textMuted),
                 ),
               ),
-            const SizedBox(height: 6),
-            SecondaryButton(
-              label: '添加按键',
-              icon: Icons.add_rounded,
-              expand: true,
-              onPressed: profile.builtin
-                  ? null
-                  : () => _editCommand(profile),
             ),
+            const SizedBox(height: AppSpacing.md),
+            if (profile.commands.isEmpty)
+              EmptyState(
+                icon: Icons.keyboard_alt_outlined,
+                title: '暂无按键',
+                message: '点右上角「学习」录入载波频率与微秒时序。',
+                action: SecondaryButton(
+                  label: '添加按键',
+                  icon: Icons.add_rounded,
+                  onPressed: profile.builtin
+                      ? null
+                      : () => _editCommand(profile),
+                ),
+              )
+            else
+              AppCard(
+                radius: AppRadius.lg,
+                padding: EdgeInsets.zero,
+                child: Column(
+                  children: [
+                    for (var i = 0; i < profile.commands.length; i++) ...[
+                      if (i > 0)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppMetrics.cardPadding,
+                          ),
+                          child: Divider(height: 1, color: palette.line),
+                        ),
+                      _CommandRow(
+                        command: profile.commands[i],
+                        onTest: () => _testCommand(profile.commands[i]),
+                        onLongPress: () => _showCommandActions(
+                          profile,
+                          profile.commands[i],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            if (profile.builtin) ...[
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                '内置遥控器为只读，点右上角「复制后学习」生成可编辑副本。',
+                style: AppText.meta.copyWith(color: palette.textSubtle),
+              ),
+            ],
           ],
         ),
       ),
@@ -176,40 +306,70 @@ class _IrCommandScreenState extends ConsumerState<IrCommandScreen> {
   }
 }
 
-/// 内置遥控器提示条：说明只读限制并提供「复制」入口。
-class _BuiltinProfileNotice extends StatelessWidget {
-  const _BuiltinProfileNotice({required this.onCopy});
+/// 按键行：名称 + 协议/信号码 + 测试按钮。
+class _CommandRow extends StatelessWidget {
+  const _CommandRow({
+    required this.command,
+    required this.onTest,
+    required this.onLongPress,
+  });
 
-  final VoidCallback onCopy;
+  final IrCommand command;
+  final VoidCallback onTest;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: AppCard(
-        radius: AppRadius.lg,
-        padding: const EdgeInsets.all(13),
-        color: AppColors.cyan.withValues(alpha: 0.07),
-        borderColor: AppColors.cyan.withValues(alpha: 0.3),
-        boxShadow: const [],
+    final signal = _SignalInfo.of(command);
+    return GestureDetector(
+      onLongPress: onLongPress,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 52),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppMetrics.cardPadding,
+          vertical: AppSpacing.sm,
+        ),
         child: Row(
           children: [
-            const Icon(
-              Icons.lock_outline_rounded,
-              size: 18,
-              color: AppColors.cyan,
-            ),
-            const SizedBox(width: 10),
             Expanded(
               child: Text(
-                '内置遥控器为只读，复制后可自由编辑。',
-                style: AppText.meta.copyWith(color: palette.textMuted),
+                command.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.rowTitle.copyWith(color: palette.textPrimary),
               ),
             ),
-            TextButton(
-              onPressed: onCopy,
-              child: const Text('复制'),
+            const SizedBox(width: AppSpacing.sm),
+            Text(
+              signal.label,
+              style: AppText.meta.copyWith(color: palette.textMuted),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            SizedBox(
+              height: 28,
+              child: OutlinedButton(
+                onPressed: onTest,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: palette.brand,
+                  side: BorderSide(
+                    color: palette.brand.withValues(alpha: 0.45),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  minimumSize: const Size(0, 28),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                ),
+                child: Text(
+                  '测试',
+                  style: AppText.label.copyWith(
+                    color: palette.brand,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
             ),
           ],
         ),
@@ -218,93 +378,47 @@ class _BuiltinProfileNotice extends StatelessWidget {
   }
 }
 
-/// 单个按键卡片：展示载波/脉冲/重复信息与操作按钮组。
-class _CommandTile extends StatelessWidget {
-  const _CommandTile({
-    required this.command,
-    required this.editable,
-    required this.onTest,
-    required this.onEdit,
-    required this.onDelete,
-  });
+/// 从时序里还原协议名与信号码：标记位长度为 1 个单脉冲，空格长度判断比特。
+class _SignalInfo {
+  const _SignalInfo(this.label);
 
-  final IrCommand command;
-  final bool editable;
-  final VoidCallback onTest;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
+  final String label;
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: AppCard(
-        radius: AppRadius.lg,
-        padding: EdgeInsets.zero,
-        child: AppListRow(
-          title: command.name,
-          subtitle:
-              '${command.carrierHz} Hz · ${command.patternUs.length} 个脉冲 · 重复 ${command.repeatCount} 次',
-          icon: Icons.radio_button_checked_rounded,
-          iconTone: AppColors.cyan,
-          tile: true,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          trailing: _CommandActions(
-            editable: editable,
-            onTest: onTest,
-            onEdit: onEdit,
-            onDelete: onDelete,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 按键操作按钮组：测试发送，以及可编辑时的编辑与删除。
-class _CommandActions extends StatelessWidget {
-  const _CommandActions({
-    required this.editable,
-    required this.onTest,
-    required this.onEdit,
-    required this.onDelete,
-  });
-
-  final bool editable;
-  final VoidCallback onTest;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconBtn(
-          icon: Icons.send_rounded,
-          tooltip: '测试发送',
-          size: 36,
-          iconSize: 17,
-          onPressed: onTest,
-        ),
-        if (editable)
-          IconBtn(
-            icon: Icons.edit_outlined,
-            tooltip: '编辑',
-            size: 36,
-            iconSize: 17,
-            onPressed: onEdit,
-          ),
-        if (editable)
-          IconBtn(
-            icon: Icons.delete_outline,
-            tooltip: '删除',
-            size: 36,
-            iconSize: 17,
-            color: AppColors.red,
-            onPressed: onDelete,
-          ),
-      ],
+  factory _SignalInfo.of(IrCommand command) {
+    final pattern = command.patternUs;
+    final bytes = pattern.length;
+    // NEC 系（含 RCA-38）帧：帧头 2 段 + 每比特 2 段 + 结束 2 段。
+    if (bytes > 8 && (bytes - 4).isEven) {
+      final bits = (bytes - 4) ~/ 2;
+      final unit = pattern[2];
+      if (unit > 0 && bits % 8 == 0 && bits <= 32) {
+        final threshold = unit * 3;
+        var value = BigInt.zero;
+        var valid = true;
+        for (var i = 0; i < bits; i++) {
+          final space = pattern[3 + i * 2];
+          if (space <= 0) {
+            valid = false;
+            break;
+          }
+          value = (value << 1) | (space > threshold ? BigInt.one : BigInt.zero);
+        }
+        if (valid) {
+          final hex = value.toRadixString(16).toUpperCase().padLeft(
+            (bits / 4).ceil(),
+            '0',
+          );
+          final protocol = bits == 24
+              ? 'RCA-38'
+              : bits == 32
+              ? 'NEC'
+              : 'RAW';
+          return _SignalInfo('$protocol · 0x$hex');
+        }
+      }
+    }
+    return _SignalInfo(
+      '${(command.carrierHz / 1000).toStringAsFixed(1)} kHz · $bytes 段',
     );
   }
 }

@@ -84,17 +84,25 @@ class _LibraryBlockedSectionState extends ConsumerState<LibraryBlockedSection> {
     return RefreshIndicator(
       onRefresh: _loadBlocked,
       color: AppColors.primary,
-      child: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(18, 0, 18, 96),
+      child: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(
+          AppMetrics.pagePadding,
+          0,
+          AppMetrics.pagePadding,
+          AppMetrics.tabBarInset,
+        ),
         itemCount: _blocked.length,
-        separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
           final item = _blocked[index];
           return RepaintBoundary(
-            child: LibraryBlockedTile(
-              item: item,
-              iconRevision: widget.iconRevision(item.id),
-              onRestore: () => _restore(item),
+            child: LibraryRowShell(
+              first: index == 0,
+              last: index == _blocked.length - 1,
+              child: LibraryBlockedTile(
+                item: item,
+                iconRevision: widget.iconRevision(item.id),
+                onRestore: () => _restore(item),
+              ),
             ),
           );
         },

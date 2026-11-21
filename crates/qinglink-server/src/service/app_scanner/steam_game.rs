@@ -1,7 +1,8 @@
-//! Steam 游戏到目录条目的映射，以及游戏主可执行文件的定位。
+//! Steam 游戏到目录条目的映射。
 
 use std::collections::HashMap;
 
+use crate::service::app_scanner::steam_exe::find_main_exe;
 use crate::service::app_scanner::{AppEntry, AppScanner};
 
 impl AppScanner {
@@ -25,8 +26,8 @@ impl AppScanner {
             .cloned()
             .unwrap_or_else(|| original.clone());
 
-        // Find the main executable in the game directory.
-        let exe_path = Self::find_steam_game_exe(&game.install_path, &game.name)
+        // 主程序只能猜（Steam 清单里没有），而猜错的代价是图标，见 `steam_exe`。
+        let exe_path = find_main_exe(&game.install_path, &game.name, &game.install_dir)
             .unwrap_or_else(|| game.install_path.clone());
 
         // Steam already ships cover art for every installed game. Prefer it over
@@ -52,70 +53,5 @@ impl AppScanner {
             is_pinned: false,
             launch_mode: None,
         }
-    }
-
-    /// Find the main executable for a Steam game.
-    fn find_steam_game_exe(install_path: &str, game_name: &str) -> Option<String> {
-        let dir = std::path::Path::new(install_path);
-        if !dir.is_dir() {
-            return None;
-        }
-
-        // 1. Try to find an exe matching the game name in the root directory.
-        let game_name_normalized = game_name.replace([' ', ':', '-', '.'], "").to_lowercase();
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("exe") {
-                    let exe_name = path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("")
-                        .replace([' ', ':', '-', '.'], "")
-                        .to_lowercase();
-                    if exe_name == game_name_normalized {
-                        return Some(path.to_str()?.to_string());
-                    }
-                }
-            }
-        }
-
-        // 2. Try to find any exe in the root directory.
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("exe") {
-                    return Some(path.to_str()?.to_string());
-                }
-            }
-        }
-
-        // 3. Recursively search subdirectories (depth 2).
-        Self::find_exe_recursive(dir, 2)
-    }
-
-    fn find_exe_recursive(dir: &std::path::Path, max_depth: u32) -> Option<String> {
-        if max_depth == 0 {
-            return None;
-        }
-
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("exe") {
-                    return Some(path.to_str()?.to_string());
-                }
-            }
-
-            for entry in std::fs::read_dir(dir).ok()?.flatten() {
-                let path = entry.path();
-                if path.is_dir()
-                    && let Some(exe) = Self::find_exe_recursive(&path, max_depth - 1)
-                {
-                    return Some(exe);
-                }
-            }
-        }
-        None
     }
 }

@@ -59,9 +59,6 @@ class RemoteSessionCommandChannel {
     _requireTransport().send(payload);
   }
 
-  /// Typed fire-and-forget entry point for input events.
-  void sendTyped(RemoteRequest request) => send(request.toJson());
-
   /// 吊销当前令牌，随后断开会话。
   Future<Map<String, dynamic>> revokeToken() async {
     final response = await request({'type': 'revoke_token'});

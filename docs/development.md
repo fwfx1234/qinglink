@@ -55,12 +55,16 @@ $env:QINGLINK_SKIP_WEB_BUILD = '1'
   该文件是构建产物、**不入库**（`.gitignore` 的 `/apps/desktop/assets/input/*.exe`）。
   全新 clone 里它根本不存在，这种情况 `build.rs` **不报警**（只有
   `QINGLINK_REQUIRE_INPUT_ASSETS=1` 才会让构建失败），症状出现在运行时：桌面端
-  「安装服务」提示资源缺失，先按 §2.3 生成它。
+  「安装服务」提示资源缺失，先按本文档 §2.3 生成它。
 - **内嵌界面旧于前端源码**：`web-ui/dist/index.html` 落后于 `web-ui/src`。这发生在
   `QINGLINK_SKIP_WEB_BUILD=1` 或两条 npm 构建都失败时——此时内嵌的是**上一次的 `dist`**，
   不是占位页。所以**"构建成功"不等于"界面是新的"**；占位页只在 `dist/index.html`
   根本不存在时出现（`--self-check` 的 `web_interface.placeholder` 只回答"有没有界面"，
   不回答"新不新"）。
+
+`build.rs` 还负责版本资源：`qinglink.rc` 只保留应用清单，`FILEVERSION` / `FileVersion`
+由 `qinglink_version::version_info_rc` 按当前构建号生成后嵌入（见 §2.4）。版本号一变，
+`build.rs` 就会因 `../../crates/qinglink-version/build-number.txt` 变化而重跑。
 
 本仓库没有构建脚本：跨语言编排全部由 `build.rs` 承担，日常只用
 `cargo` / `npm` / `flutter` 的原生命令（[`AGENTS.md`](../AGENTS.md) §7）。
@@ -151,6 +155,37 @@ cd apps\mobile; flutter pub get; flutter run
 签名——本机自建的未签名产物可以直接通过界面「修复服务」安装。要强制签名，在启动桌面端之前设置
 `QINGLINK_REQUIRE_SIGNED_INPUT=1`，此时提权助手会拒绝未签名的服务资源或桌面端。无论哪种模式，
 内嵌资源的 SHA256 都会核对。
+
+### 2.4 版本号
+
+桌面端与服务端共用一个版本号，形如 `0.1.0+13`：
+
+- `+` 之前是 `Cargo.toml` 的 `[workspace.package] version`，**手工维护**：功能变了改
+  minor，只有修 bug 改 patch，破坏性变更改 major。
+- `+` 之后是构建号，由 `crates/qinglink-version/build.rs` **自动维护**：被跟踪的源码
+  （`crates/*`、`apps/desktop/src`、`apps/desktop/web-ui/src`、`apps/desktop/assets`、
+  `services/qinglink-service/src`、`protocol/`，以及根 `Cargo.toml`、桌面端的 `.rc`
+  与应用清单）指纹一变就加一，同一份源码重复构建不会变。`assets/input/` 下的服务
+  二进制是构建产物，**不计入**指纹——否则刷新服务资源会让桌面端的号无谓地涨。
+
+状态记在 `crates/qinglink-version/build-number.txt`（第一行构建号，第二行上次的源码指纹）。
+**它与代码一起提交**：每次改动跑一次构建，这个文件就会变，提交时带上即可。如果它没被提交，
+换一台机器构建会从旧号继续，版本号可能出现回退。
+
+版本号出现在四个地方，都取自同一份 `qinglink_version::VERSION`：
+
+| 位置 | 字段 |
+| --- | --- |
+| 桌面端 `GET /api/admin/v1/health`、`/diagnostics` | `version` |
+| 桌面端界面（仪表盘「服务端版本」、诊断页「桌面端版本 / 服务端版本」） | 同上 |
+| 服务端 `GET /api/v2/health` | `app_version` |
+| Windows 文件属性（两个 exe） | `FILEVERSION` / `FileVersion` |
+
+Windows 版本资源不再写死在 `.rc` 里：`apps/desktop/qinglink.rc` 只保留应用清单，版本信息由
+`qinglink_version::version_info_rc` 在构建脚本中生成；服务端没有静态 `.rc`，完全由
+`services/qinglink-service/build.rs` 生成。`0.1.0+13` 对应 `FILEVERSION 0,1,0,13`。
+
+不要再用 `env!("CARGO_PKG_VERSION")` 展示版本：它只有语义版本，看不出两次改动。
 
 ---
 
@@ -396,6 +431,28 @@ Access is denied. (os error 5)`）。**"服务在运行 + 管道被拒"时不要
 `log_dir_writable` 为 `false`（写不进去数据目录），日志只落到 stderr，文本文件一天也
 不会有。
 
+### 手机显示"未检测到显示器"
+
+`get_displays` 由**会话代理**在用户会话里执行。服务本体跑在 Session 0，那里没有交互
+桌面，`EnumDisplayDevicesW` 枚举不到任何"连接到桌面"的显示器，所以服务进程自己做枚举
+只能是空列表。排查顺序：
+
+1. 确认会话代理存在：
+
+   ```powershell
+   Get-Process QingLinkService | Select-Object Id, SessionId
+   ```
+
+   应当有两行：服务本体 `SessionId 0`，会话代理 `SessionId 1`。只有一行说明代理没起来，
+   在服务日志里搜 `Session agent launched` 与 `Failed to launch session agent`。
+2. 代理随服务启动，有几秒延迟；开机后立刻打开控制中心可能失败一次，点右上角刷新即可。
+3. 仍失败时看控制中心错误行的文案：`AGENT_REQUEST_TIMEOUT` 表示代理管道 3 秒内没应答；
+   `未检测到连接到 Windows 桌面的显示器` 表示代理自己也没枚举到（PC 确实没接显示器，
+   或代理被拉到了非交互会话）。
+
+服务升级后必须让**服务与代理一起重启**（界面「诊断」页的「修复服务（升级）」），
+只重启桌面端不会换掉正在运行的代理。
+
 ### 改了服务端代码，界面却仍显示"服务未连接"
 
 `QingLinkService.exe` **不由桌面端的构建流程编译**，而是作为资源内嵌在
@@ -582,7 +639,8 @@ npm run typecheck
    否则移动端会继续看到旧目录。
 3. **携带敏感字段的事件类型要手写 `Debug`。** `PendingPairing` 刻意不实现 `Debug`，
    为的是 PIN 不可能被打进日志。
-4. **不要在 main 线程之外做托盘操作或 `SetThreadExecutionState`。**
+4. **不要在 main 线程之外做托盘操作**；保持唤醒的 `SetThreadExecutionState`
+   只由服务常驻线程调用，桌面端不应再出现该 API。
 5. **不要在主循环里做阻塞 IO**；管道调用最长 3 秒。
 6. **Web 处理函数不能直接碰只属于 main 线程的状态**，走 `HostCommand`。
 7. **新增日志 sink 时保持"失败即降级"**：日志坏了不能让应用起不来。
@@ -599,3 +657,5 @@ npm run typecheck
     管理接口上的一个特例）。
 13. **不新增测试代码、不运行测试套件。** 细节与替代的静态检查见
     [`AGENTS.md`](../AGENTS.md) §4；既有测试文件保留。
+14. **提交时带上 `crates/qinglink-version/build-number.txt`。** 它记录当前构建号与源码
+    指纹；漏提交会让另一台机器从旧号继续，版本号出现回退（见 §2.4）。

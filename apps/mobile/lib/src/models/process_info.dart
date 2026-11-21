@@ -76,12 +76,16 @@ class ForegroundResponse {
   final String processName;
   final int hwnd;
 
+  /// PC 焦点输入框里已有的文本；没有可回填的输入框（含密码框）时为 `null`。
+  final String? focusText;
+
   const ForegroundResponse({
     required this.pid,
     required this.title,
     this.path,
     required this.processName,
     this.hwnd = 0,
+    this.focusText,
   });
 
   factory ForegroundResponse.fromJson(Map<String, dynamic> json) {
@@ -94,6 +98,7 @@ class ForegroundResponse {
           _basenameFromPath(json['path'] as String?) ??
           '',
       hwnd: _readInt(json['hwnd']),
+      focusText: json['focus_text'] as String?,
     );
   }
 

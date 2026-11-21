@@ -19,6 +19,7 @@ futures-util.workspace = true
 image.workspace = true
 qinglink-protocol = { path = "../../crates/qinglink-protocol" }
 qinglink-storage = { path = "../../crates/qinglink-storage" }
+qinglink-version = { path = "../../crates/qinglink-version" }
 qinglink-windows = { path = "../../crates/qinglink-windows" }
 rusqlite.workspace = true
 tokio.workspace = true
@@ -47,6 +48,7 @@ windows = { workspace = true, features = [
 
 [build-dependencies]
 embed-resource = "3.0"
+qinglink-version = { path = "../../crates/qinglink-version" }
 sha2.workspace = true
 
 [lints]

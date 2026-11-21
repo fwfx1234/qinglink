@@ -1,57 +1,71 @@
 /* 深色主题（可选）。颜色令牌必须**成对**存在于 light.css 中，缺一个就会继承到
-   另一个主题的值。深色下层次靠亮度差，卡片不再加投影。 */
+   另一个主题的值。深色下层次靠亮度差，卡片不再加投影。
+
+   品牌色分工（两套令牌的关键约定）：
+   - --accent        用于**文字、图标描边、焦点**：必须 ≥4.5:1，因此取深而稳的绿；
+   - --accent-bright 用于**不含文字的装饰**（3px 强调条、状态点、品牌方块）：
+                     非文字元素只要 ≈3:1，可以用更鲜的绿；
+   这两个必须分开。若把鲜绿直接当文字色，白底/深底上都会掉到 3:1 附近，读不清。
+   中性色统一带一点点绿（#0a0d0d → #232727），和 App 端同一套底色语言。 */
 
 [data-theme='dark'] {
   color-scheme: dark;
 
   /* 背景分层：页面底 → 卡片/侧边栏 → 控件/内嵌 → 悬浮/活跃 */
-  --surface-0: #08090c;
-  --surface-1: #101218;
-  --surface-2: #171a22;
-  --surface-3: #1f232e;
+  --surface-0: #0a0d0d;
+  --surface-1: #121414;
+  --surface-2: #1a1c1c;
+  --surface-3: #1f2222;
 
   /* 边框：发丝级。深色底上描边比浅色更需要一点点亮度才看得见 */
-  --border-1: #1e222c;
-  --border-2: #333a49;
+  --border-1: #212626;
+  --border-2: #303836;
 
-  /* 文本 */
-  --text-1: #edf0f6;
-  --text-2: #9aa3b4;
-  --text-3: #828b9d;
+  /* 文本：分别对 --surface-1 达到 16.3 / 7.3 / 5.5 : 1。
+     --text-3 在本组件库里是 12px 小字的主力色，必须守住 4.5:1，
+     所以没有沿用 App 端更暗的 low 色，而是提亮到 #838e8a；
+     --surface-3（hover 态）因此也压到只比 --surface-2 亮一档，
+     保证小字停在变动的背景上仍然可读。 */
+  --text-1: #edf2f0;
+  --text-2: #9aa5a1;
+  --text-3: #838e8a;
 
-  /* 品牌色：深色底上用更亮的色相才够对比 */
-  --accent: #8f8cf7;
-  --accent-strong: #a9a7fb;
-  /* 浅色强调块上改用深色前景 */
-  --accent-contrast: #08090c;
-  --success: #4ade80;
-  --warning: #fbbf24;
-  --error: #f87171;
-  --error-contrast: #08090c;
+  /* 品牌：深色底上用亮绿，文字场景 10.6:1 */
+  --accent: #36d9a1;
+  --accent-bright: #43e0ac;
+  --accent-strong: #5fe3b3;
+  /* 鲜绿块上的前景必须是近黑，白字在 #43e0ac 上只有 ~2.9:1 */
+  --accent-contrast: #08120e;
+  --accent-ink: #08120e;
+  /* success 比品牌绿更偏黄绿 18°，避免"在线"和"品牌强调"用同一个颜色 */
+  --success: #3ddc84;
+  --warning: #f2b557;
+  --error: #ff6b6e;
+  --error-contrast: #1a0b0c;
 
   /* 实心主按钮：近白而非品牌色 */
-  --primary-bg: #f2f3f7;
+  --primary-bg: #edf2f0;
   --primary-bg-hover: #ffffff;
-  --primary-fg: #0a0b0e;
+  --primary-fg: #0a0d0d;
 
   /* 语义色的低透明度衬底 */
-  --accent-soft: rgba(143, 140, 247, 0.14);
-  --success-soft: rgba(74, 222, 128, 0.14);
-  --warning-soft: rgba(251, 191, 36, 0.14);
-  --error-soft: rgba(248, 113, 113, 0.14);
+  --accent-soft: rgba(54, 217, 161, 0.14);
+  --success-soft: rgba(61, 220, 132, 0.14);
+  --warning-soft: rgba(242, 181, 87, 0.14);
+  --error-soft: rgba(255, 107, 110, 0.14);
 
   /* 更弱/更实的衬底与描边 */
-  --warning-soft-faint: rgba(251, 191, 36, 0.04);
-  --warning-soft-strong: rgba(251, 191, 36, 0.09);
-  --accent-border: rgba(143, 140, 247, 0.32);
-  --warning-border: rgba(251, 191, 36, 0.32);
-  --error-border: rgba(248, 113, 113, 0.32);
+  --warning-soft-faint: rgba(242, 181, 87, 0.05);
+  --warning-soft-strong: rgba(242, 181, 87, 0.1);
+  --accent-border: rgba(54, 217, 161, 0.32);
+  --warning-border: rgba(242, 181, 87, 0.32);
+  --error-border: rgba(255, 107, 110, 0.32);
 
   /* 键盘焦点光环 */
-  --accent-ring: rgba(143, 140, 247, 0.3);
+  --accent-ring: rgba(54, 217, 161, 0.3);
 
   /* 模态遮罩 */
-  --overlay: rgba(3, 4, 7, 0.66);
+  --overlay: rgba(3, 5, 5, 0.68);
 
   /* 阴影：深色底上几乎不需要投影，浮层只用更深的阴影 */
   --shadow-xs: none;

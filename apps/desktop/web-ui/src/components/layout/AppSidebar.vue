@@ -140,8 +140,8 @@ const statusTitle = computed(() =>
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-md);
-  background: var(--accent);
-  color: var(--accent-contrast);
+  background: var(--accent-bright);
+  color: var(--accent-ink);
 }
 
 .brand__name {

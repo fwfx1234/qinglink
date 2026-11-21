@@ -84,6 +84,9 @@ ConnectionConfig readConnectionConfig(
     reversePhoneScrollBar:
         prefs.getBool(SettingsKeys.reversePhoneScrollBar) ?? false,
     autoUnlockOnWake: prefs.getBool(SettingsKeys.autoUnlockOnWake) ?? false,
+    // 旧版本没有这个键：保持历史行为（自动弹面板），升级后不会突然失效。
+    autoOpenKeyboardOnFocus:
+        prefs.getBool(SettingsKeys.autoOpenKeyboard) ?? true,
     tvFollowPcPowerOn: prefs.getBool(SettingsKeys.tvFollowPcPowerOn) ?? false,
     tvFollowPcPowerOff: prefs.getBool(SettingsKeys.tvFollowPcPowerOff) ?? false,
     lockPasswordConfigured: lockPasswordConfigured,

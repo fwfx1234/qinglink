@@ -22,7 +22,7 @@ void main() {
     final response = RemoteResponse.fromJson({
       'type': 'error',
       'request_id': 'r1',
-      'error': {'code': 'NOT_READY', 'message': '尚未准备好'},
+      'data': {'code': 'NOT_READY', 'message': '尚未准备好'},
     });
 
     expect(response.isError, isTrue);

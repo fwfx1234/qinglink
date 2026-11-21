@@ -34,6 +34,7 @@ pub(in crate::windows_service_impl) fn dispatch(
         "capabilities"
             | "get_snapshot"
             | "set_paused"
+            | "set_keep_awake"
             | "cancel_pairing"
             | "list_devices"
             | "revoke_device"
@@ -101,6 +102,7 @@ fn execute(state: &AppState, peer: DesktopPeer, command: DesktopCommand) -> Comm
             app_add: true,
             app_launch: true,
             app_icon_manage: true,
+            keep_awake: true,
         }),
         DesktopCommand::GetSnapshot { desktop_unlocked } => {
             state
@@ -111,6 +113,12 @@ fn execute(state: &AppState, peer: DesktopPeer, command: DesktopCommand) -> Comm
         DesktopCommand::SetPaused { paused } => {
             state.set_paused(paused).map_err(CommandError::internal)?;
             snapshot::snapshot(state)
+        }
+        DesktopCommand::SetKeepAwake { enabled } => {
+            state
+                .set_keep_awake(enabled)
+                .map_err(CommandError::internal)?;
+            value(state.keep_awake())
         }
         DesktopCommand::CancelPairing { pairing_id } => pairing::cancel_pairing(state, &pairing_id),
         DesktopCommand::ListDevices { offset, limit } => {

@@ -69,7 +69,7 @@ defineEmits<{
 
 .empty--accent .empty__icon {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-bright);
 }
 
 .empty--warning .empty__icon {

@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import '../screens/control_center_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/mouse_keyboard_screen.dart';
+import '../screens/connection_diagnose_screen.dart';
+import '../screens/pairing_screen.dart';
 import '../screens/processes_tab.dart';
 import '../screens/scan_folder_screen.dart';
 import '../screens/settings_tab.dart';
@@ -21,6 +23,8 @@ abstract final class AppRoutes {
   static const home = '/';
   static const controlCenter = '/control-center';
   static const mouse = '/mouse';
+  static const pairing = '/pairing';
+  static const diagnose = '/diagnose';
   static const processes = '/processes';
   static const scanFolder = '/scan-folder';
   static const settings = '/settings';
@@ -35,8 +39,11 @@ GoRouter buildAppRouter(Ref ref) => GoRouter(
   refreshListenable: _ProviderRefreshListenable(ref),
   redirect: (context, state) {
     final authenticated = ref.read(connectionProvider).isAuthenticated;
-    final protectedRoute = state.uri.path != AppRoutes.home;
-    if (protectedRoute && !authenticated) return AppRoutes.home;
+    // 配对页本身就要在未认证状态下进入，不能重定向回首页。
+    final publicRoute =
+        state.uri.path == AppRoutes.home ||
+        state.uri.path == AppRoutes.pairing;
+    if (!publicRoute && !authenticated) return AppRoutes.home;
     return null;
   },
   initialLocation: AppRoutes.home,
@@ -55,6 +62,16 @@ GoRouter buildAppRouter(Ref ref) => GoRouter(
       path: AppRoutes.mouse,
       name: 'mouse',
       builder: (_, _) => const MouseKeyboardScreen(),
+    ),
+    GoRoute(
+      path: AppRoutes.diagnose,
+      name: 'diagnose',
+      builder: (_, _) => const ConnectionDiagnoseScreen(),
+    ),
+    GoRoute(
+      path: AppRoutes.pairing,
+      name: 'pairing',
+      builder: (_, _) => const PairingScreen(),
     ),
     GoRoute(
       path: AppRoutes.processes,

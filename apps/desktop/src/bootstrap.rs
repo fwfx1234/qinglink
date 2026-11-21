@@ -40,8 +40,6 @@ struct Environment {
     database: Arc<DatabaseService>,
     preferences: Preferences,
     debug_logging: bool,
-    /// 偏好里的保持唤醒意图；是否真的恢复成运行期请求由 [`restore_keep_awake`] 决定。
-    keep_awake: bool,
     instance: SingleInstance,
 }
 
@@ -56,7 +54,7 @@ struct WebStart {
 pub struct Desktop {
     /// 日志系统；退出序列里最后显式 drop 它。
     pub logs: Arc<LogSystem>,
-    /// 桌面端设置镜像；托盘与 HostCommand 都写它。
+    /// 桌面端设置镜像；Web 事件泵按服务快照写，托盘切换时也写。
     pub settings: Arc<SharedSettings>,
     /// Web 管理面共享状态。
     pub web_state: Arc<WebState>,
@@ -150,15 +148,13 @@ fn prepare(options: &StartupOptions, started_at: Instant) -> Result<Option<Envir
     if !log_level_from_environment {
         logs.set_debug(debug_logging);
     }
-    // 保持唤醒只读意图；实际请求要等装配阶段在 main 线程上恢复。
-    let keep_awake = preferences.keep_awake();
+    // 保持唤醒由服务进程统一持有，桌面端不再从偏好恢复自己的运行期请求。
     trace_step(started_at, "preferences loaded");
 
     tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
+        version = qinglink_version::VERSION,
         startup = options.startup,
         debug_logging,
-        keep_awake,
         data_dir = %paths.data_dir().display(),
         integrity = %qinglink_windows::integrity::current_integrity_name(),
         shell_integrity = %qinglink_windows::integrity::shell_integrity_name(),
@@ -170,7 +166,6 @@ fn prepare(options: &StartupOptions, started_at: Instant) -> Result<Option<Envir
         database,
         preferences,
         debug_logging,
-        keep_awake,
         instance,
     }))
 }
@@ -189,10 +184,9 @@ fn assemble(
     // --- Settings ----------------------------------------------------------
     let settings = Arc::new(SharedSettings::default());
     let autostart = qinglink_windows::autostart::is_enabled().unwrap_or(false);
-    // 保持唤醒随偏好跨重启恢复：`SetThreadExecutionState` 是 per-thread 状态，
-    // 必须在这里（main 线程，也是随后主循环所在的线程）立刻应用。
-    let keep_awake = restore_keep_awake(environment.keep_awake);
-    settings.set(autostart, keep_awake, environment.debug_logging);
+    // 保持唤醒的初始值为 false：真实状态由服务快照带回后由 Web 事件泵写入，
+    // 桌面端不再自己持有 `SetThreadExecutionState` 请求或跨重启恢复它。
+    settings.set(autostart, false, environment.debug_logging);
 
     // --- Secure-input install state ---------------------------------------
     let install_state = input_install::shared_state();
@@ -209,8 +203,7 @@ fn assemble(
     )?;
 
     // --- Tray --------------------------------------------------------------
-    let (tray, tray_rx, browser_fallback_opened) =
-        create_tray(&web_start.state, keep_awake, started_at);
+    let (tray, tray_rx, browser_fallback_opened) = create_tray(&web_start.state, false, started_at);
 
     // --- Pairing prompt ----------------------------------------------------
     let (prompt, prompt_rx) = create_prompt(started_at);
@@ -286,26 +279,6 @@ fn create_prompt(started_at: Instant) -> (Option<PairingPrompt>, UnboundedReceiv
             tracing::warn!(%error, "配对提示窗口创建失败，配对码只能在管理界面查看");
             let (_, receiver) = tokio::sync::mpsc::unbounded_channel();
             (None, receiver)
-        }
-    }
-}
-
-/// 按偏好恢复保持唤醒，返回本次启动真实生效的状态。
-///
-/// 必须在 main 线程调用：`SetThreadExecutionState` 是 per-thread 状态，而承载它的
-/// 就是随后的主循环线程。失败只降级为"开关关闭"，不影响启动。
-fn restore_keep_awake(persisted: bool) -> bool {
-    if !persisted {
-        return false;
-    }
-    match qinglink_windows::power::set_keep_awake(true) {
-        Ok(()) => {
-            tracing::info!("已按偏好恢复保持唤醒");
-            true
-        }
-        Err(error) => {
-            tracing::warn!(%error, "恢复保持唤醒失败，本次启动按关闭处理");
-            false
         }
     }
 }

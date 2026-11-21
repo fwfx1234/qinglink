@@ -60,19 +60,27 @@ class MouseCommandQueue {
     _enqueue(() => _releaseButton('left'));
   }
 
-  /// 拖选结束：先抬起左键，再自动右键呼出上下文菜单。
+  /// 拖选结束：只抬起左键。
+  ///
+  /// 这里**刻意不补发右键**。长按拖动的本意就是"按住左键搬运"（移动文件、拖选文本），
+  /// 抬手后再补一次右键会让资源管理器在放下文件后立刻弹出上下文菜单；调用方若需要
+  /// 右键语义，应走"长按不动再松手"那条路径。
   void endSelectionDrag() {
-    _enqueue(() async {
-      await _releaseButton('left');
-      await _clickWithFeedback(() => _input().mouseButton('right'));
-    });
+    _enqueue(() => _releaseButton('left'));
   }
 
-  /// 释放仍处于按下状态的所有按键（连接断开、页面销毁）。
+  /// 该按键是否仍处于按下状态（只统计本客户端发出的按下）。
+  bool isPressed(String button) => _pressedButtons.contains(button);
+
+  /// 释放仍处于按下状态的按键（连接断开、页面销毁）。
+  ///
+  /// 只释放自己真正按下过的键：无条件发 left/right up 会在 PC 侧制造多余事件，
+  /// 也会把别人按住的键"抬"掉。
   void releaseAll() {
     _enqueue(() async {
-      await _releaseButton('left');
-      await _releaseButton('right');
+      for (final button in _pressedButtons.toList(growable: false)) {
+        await _releaseButton(button);
+      }
       _pressedButtons.clear();
     });
   }
@@ -97,6 +105,8 @@ class MouseCommandQueue {
   }
 
   Future<void> _releaseButton(String button) async {
+    // 没按过就不发抬起：重复的 up 会在 PC 侧产生空事件，也会打断别人的按压状态。
+    if (!_pressedButtons.contains(button)) return;
     final sent = await _runCommand(
       () => _input().mouseButtonState(button, pressed: false),
     );

@@ -10,7 +10,6 @@ import type {
   AppItem,
   AppsStats,
   CatalogKind,
-  CatalogKindStats,
 } from '@/api/types'
 import { toAppError, type AppError } from '@/utils/errors'
 import { APP_PAGE_SIZE } from '@/utils/constants'
@@ -41,19 +40,15 @@ export const useAppsStore = defineStore('apps', () => {
   const statsLoading = ref(false)
   const scanning = reactive<Record<CatalogKind, boolean>>({ app: false, game: false })
   const busyIds = ref<string[]>([])
-  const catalogVersion = ref(0)
   /** 批量操作进行中 */
   const batchBusy = ref(false)
   /** 已勾选的条目 id（跨页保留，但切页时清空以避免误操作不可见条目） */
   const selectedIds = ref<string[]>([])
-  /** 最近一次目录变化原因，供界面提示 */
-  const lastChangeReason = ref<string | null>(null)
   const watchdog = new Watchdog()
 
   const selectedCount = computed(() => selectedIds.value.length)
   const hasSelection = computed(() => selectedIds.value.length > 0)
 
-  const currentKindStats = computed<CatalogKindStats | null>(() => stats.value?.[kind.value] ?? null)
   const page = computed(() => Math.floor(offset.value / limit.value) + 1)
   const pageCount = computed(() => Math.max(1, Math.ceil(total.value / limit.value)))
   const hasPrev = computed(() => offset.value > 0)
@@ -171,8 +166,6 @@ export const useAppsStore = defineStore('apps', () => {
 
   /** 目录变化事件（catalog_changed）：重新拉取当前页与统计（§6.2 / §6.3） */
   function onCatalogChanged(reason: string): void {
-    lastChangeReason.value = reason
-    catalogVersion.value += 1
     if (reason === 'scan_finished') {
       scanning.app = false
       scanning.game = false
@@ -271,17 +264,11 @@ export const useAppsStore = defineStore('apps', () => {
     return appsApi.iconCandidates(id)
   }
 
-  /**
-   * 重新解析一个条目的图标并落库（§4.34）。
-   *
-   * 成功后自增 `catalogVersion`，让 `AppIcon` 拿到新的 `icon_updated_at`，
-   * 从而绕开浏览器对图标 URL 的长缓存。
-   */
+  /** 重新解析一个条目的图标并落库（§4.34）。 */
   async function refreshIcon(id: string, iconPath?: string | null): Promise<AppIconUpdate> {
     markBusy(id, true)
     try {
       const result = await appsApi.refreshIcon(id, iconPath)
-      catalogVersion.value += 1
       return result
     } finally {
       markBusy(id, false)
@@ -367,13 +354,10 @@ export const useAppsStore = defineStore('apps', () => {
     statsLoading,
     scanning,
     busyIds,
-    catalogVersion,
     batchBusy,
     selectedIds,
     selectedCount,
     hasSelection,
-    lastChangeReason,
-    currentKindStats,
     page,
     pageCount,
     hasPrev,

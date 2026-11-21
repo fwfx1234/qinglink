@@ -131,11 +131,6 @@ export const useLogsStore = defineStore('logs', () => {
     }
   }
 
-  /** 使用当前 offset 重新拉取（由 logs/entries 之外的场景使用） */
-  async function reloadFirstPage(): Promise<void> {
-    await load()
-  }
-
   async function loadMore(): Promise<void> {
     if (nextOffset.value === null || loadingMore.value) return
     loadingMore.value = true
@@ -258,28 +253,6 @@ export const useLogsStore = defineStore('logs', () => {
     filteredCount.value = 0
     droppedCount.value = 0
     droppedAt.value = null
-  }
-
-  /**
-   * 最新一份磁盘日志文件名。
-   *
-   * 后端在省略 `file` 时按 `modified_secs` 取最新（见 web-api.md §4.24）；这里仍然
-   * 显式指定，为的是界面展示的文件与随后下载的是同一个，不受两次调用之间日志滚动影响。
-   */
-  function newestLogFile(): string | undefined {
-    const files = stats.value?.files ?? []
-    const logs = files.filter((file) => file.name.toLowerCase().endsWith('.log'))
-    if (logs.length === 0) return undefined
-    const current = logs.filter((file) => /^qinglink\.\d{4}-\d{2}-\d{2}\.log$/i.test(file.name))
-    const pool = current.length > 0 ? current : logs
-    return pool.reduce((newest, file) => (file.modified_secs > newest.modified_secs ? file : newest)).name
-  }
-
-  /** §4.24 下载磁盘日志文件 */
-  async function download(file?: string): Promise<void> {
-    const target = file ?? newestLogFile()
-    const blob = await logsApi.download(target)
-    saveBlob(blob, target ?? 'qinglink.log')
   }
 
   /** 下载指定来源的磁盘日志文件 */
@@ -417,7 +390,6 @@ export const useLogsStore = defineStore('logs', () => {
     activeFilterSummary,
     acceptsEntry,
     load,
-    reloadFirstPage,
     loadMore,
     loadStats,
     appendEntries,
@@ -429,7 +401,6 @@ export const useLogsStore = defineStore('logs', () => {
     applyFilters,
     clear,
     clearLocal,
-    download,
     downloadFrom,
     downloadDiagnosticsBundle,
     loadFiles,

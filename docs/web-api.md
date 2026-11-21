@@ -170,7 +170,7 @@ Content-Type: application/json
 | POST | `/pairing/cancel` | 取消配对请求 |
 | GET | `/apps` | 应用 / 游戏目录分页（含隐藏项） |
 | GET | `/apps/stats` | 目录统计 |
-| GET | `/apps/icon` | 取应用图标（PNG，按需解析，可用 `v=` 破缓存） |
+| GET | `/apps/icon` | 取应用图标（PNG，按需解析并落库，可用 `v=` 破缓存） |
 | GET | `/apps/icon/candidates` | 该条目可选的图标文件清单 |
 | POST | `/apps/icon/refresh` | 重新解析并落库一个条目的图标 |
 | POST | `/apps/icon/set` | 指定图标文件（等价于带 `icon_path` 的 refresh） |
@@ -200,13 +200,16 @@ Content-Type: application/json
 ```json
 { "ok": true, "data": {
   "status": "ok",
-  "version": "0.1.0",
+  "version": "0.1.0+13",
   "pid": 12345,
   "uptime_secs": 3600,
   "web_port": 3722,
   "log_level": "info"
 } }
 ```
+
+`version` 是桌面端产品版本号 `0.1.0+13`（语义版本 + 随源码改动自增的构建号，见
+[`development.md`](development.md) §2.4），与 Windows 文件属性的 `FILEVERSION` 一致。
 
 `uptime_secs` 自**进程启动**计，而不是自 Web 服务启动计：迁移、安全输入探测、
 `--restart-parent` 等待与托盘探测都发生在 Web 服务之前，用后者会让一个刚完成慢启动
@@ -218,7 +221,7 @@ Content-Type: application/json
 
 ```json
 { "ok": true, "data": {
-  "health": { "status": "ok", "version": "0.1.0", "pid": 12345, "uptime_secs": 3600, "web_port": 3722, "log_level": "info" },
+  "health": { "status": "ok", "version": "0.1.0+13", "pid": 12345, "uptime_secs": 3600, "web_port": 3722, "log_level": "info" },
   "service": {
     "connected": true,
     "paused": false,
@@ -325,14 +328,15 @@ Content-Type: application/json
 { "autostart": true, "keep_awake": true, "debug_log": false }
 ```
 
-响应返回修改后的完整设置。`autostart` 写注册表 Run 项；`keep_awake` 调用
-`SetThreadExecutionState`（`ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED`），
-同时阻止系统休眠与显示器熄屏；`debug_log` 切换日志级别。`keep_awake` 与 `debug_log`
-都持久化在桌面端偏好里（偏好键 `power.keep_awake` / `logging.debug`）。
+响应返回修改后的完整设置。`autostart` 写注册表 Run 项；`keep_awake` 经桌面管理管道
+下发 `set_keep_awake` 给服务进程，由服务调用 `SetThreadExecutionState`
+（`ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED`）阻止系统休眠与息屏；
+`debug_log` 切换日志级别。`keep_awake` 持久化在服务库 `settings.power.keep_awake`，
+`debug_log` 在桌面端偏好 `logging.debug`。
 
-> `keep_awake` 也可由托盘菜单切换，两者共享同一状态。
-> 该开关跨重启保留：桌面端启动时在主线程按偏好恢复 `SetThreadExecutionState`，
-> 因此托盘「重启桌面端」、更新与崩溃重拉之后仍然保持唤醒（退出桌面端会释放请求）。
+> 托盘、设置页与移动端控制中心读写服务进程的**同一个**开关：桌面端按服务快照同步
+> 显示，不再自己持有请求；服务启动时恢复，桌面端重启/退出不会取消它。服务未连接时
+> 写入失败并返回错误，界面保持原值。
 
 ### 4.5 `GET /service`
 
@@ -342,6 +346,7 @@ Content-Type: application/json
   "state": "connected",
   "expected_version": 2,
   "service_version": 2,
+  "service_app_version": "0.1.0+13",
   "paused": false, "network_ready": true,
   "address": "0.0.0.0:3721", "last_error": null,
   "capabilities": { "management": true, "pairing": true, "pause": true,
@@ -360,8 +365,11 @@ Content-Type: application/json
 | `unauthorized` | 服务拒绝当前桌面端的身份（可执行文件已重建，可信记录失效） | 引导「修复服务」重新登记 |
 | `unreachable` | 管道不可达（服务未装/未跑，或执行环境拒绝） | 引导安装 / 启动 |
 
-`expected_version` 是桌面端使用的协议版本，`service_version` 是服务实际应答的版本
-（从未应答过时为 `null`）。`state != "connected"` 时 `capabilities` 为 `null`。
+`expected_version` 是桌面端使用的协议版本，`service_version` 是服务实际应答的协议版本
+（从未应答过时为 `null`）。`service_app_version` 是**服务端产品版本号**（与服务端
+`GET /api/v2/health` 的 `app_version` 同源，形如 `0.1.0+13`），用来确认两端是不是同一次
+构建；旧服务不返回该字段时为 `null`，界面应显示占位符而不是空版本。
+`state != "connected"` 时 `capabilities` 为 `null`。
 
 ### 4.5.1 `POST /service/reconnect`
 
@@ -536,8 +544,8 @@ Content-Type: application/json
   这个条目的图标很可能不对，客户端应提供单独重扫（更换图标）的入口。
 - `icon_updated_at` 是图标最后一次解析的 Unix 秒，用作图标 URL 的 `v=` 参数；
   为 `null` / 缺失时退回不带 `v` 的 URL。
-- `has_icon` 只表示服务端**已经缓存**了图标。图标接口本身会按需解析，所以即使
-  `has_icon=false` 也应当照常请求 `/apps/icon`，失败时再回退到占位符。
+- `has_icon` 只表示服务端**已经缓存**了图标。图标接口本身会按需解析并在成功后落库，
+  所以即使 `has_icon=false` 也应当照常请求 `/apps/icon`，失败时再回退到占位符。
 
 ### 4.15 `GET /apps/stats`
 
@@ -561,6 +569,10 @@ Content-Type: application/json
 - `id` 需要 `encodeURIComponent`；服务端会同时接受 exe 路径作为 id。
 - 可选的 `v=<icon_updated_at>` 只用于区分缓存；换过图标后 URL 变化，
   浏览器就会重新取图，而不是继续用 24 小时的旧缓存。
+- **按需解析的结果会落库**：第一次请求成功解析后，载荷写入 `icon_base64` /
+  `icon_source` / `icon_updated_at` 并同步到内存目录，之后同一 id 的请求直接命中缓存。
+  解析失败**不落库**，下一次请求会重试；因此同一条目不会在"有图标 / 没图标"之间摇摆，
+  `has_icon` 也会在首次成功请求后变为 `true`。
 
 **载荷保证**：返回的 PNG 恒为 `128×128` 正方形，素材居中且最长边铺满画布
 （`max(ink_width, ink_height) == 128`）。前端可以直接把它放进固定尺寸的
@@ -760,7 +772,7 @@ base64 长度上限为 128 KiB（解码后 96 KiB）；提取侧会降档重编�
 
 ```json
 { "ok": true, "data": {
-  "version": "0.1.0", "pid": 40248, "uptime_secs": 138,
+  "version": "0.1.0+13", "pid": 40248, "uptime_secs": 138,
   "data_dir": "C:\\Users\\me\\AppData\\Local\\QingLink",
   "log_dir": "C:\\Users\\me\\AppData\\Local\\QingLink\\logs",
   "service_log_dir": "C:\\ProgramData\\QingLink\\logs",
@@ -877,7 +889,11 @@ base64 长度上限为 128 KiB（解码后 96 KiB）；提取侧会降档重编�
 `icon_path` 可省略。**省略时按下面的顺序自动重新解析**并写回服务端：
 
 1. Steam 条目优先用 Steam 已经下载好的封面（`source` 为 `steam`）：扫描猜出的主程序
-   经常是错的，而封面是这些条目唯一可靠的图源，所以它排在整条链的**最前**；
+   经常是错的，而封面是这些条目唯一可靠的图源，所以它排在整条链的**最前**。图源是
+   `appcache/librarycache`，三种排布都认：`<appid>_icon.jpg`（旧版平铺）、
+   `<appid>/header.jpg` 这类按 appid 分目录的具名资源，以及新版内容哈希布局
+   （`<appid>/<sha1>/header.jpg`，方形图标为 `<appid>/<sha1>.jpg`）。
+   选择顺序是**方形图标 → 横版头图 → 竖版胶囊 → logo**，都找不到才退回第 2 步；
 2. 快捷方式（`.lnk`）用 `IShellLink::GetIconLocation` 指定的外部图标与其
    **图标序号**（`some.dll,3` 这类快捷方式以前会取到错的图）；
 3. 快捷方式目标的程序内嵌资源；
@@ -889,6 +905,12 @@ base64 长度上限为 128 KiB（解码后 96 KiB）；提取侧会降档重编�
 指向**目录**或不存在路径的条目不会走第 5 步（系统默认图标那一步）：Steam 里没找到
 主程序的条目 `exe_path` 就是安装目录，以前会因此展示成"文档"图标，现在返回
 `source=none` 并由客户端显示占位符。
+
+Steam 条目落库时的 `exe_path` 是**猜**出来的（清单里没有这项），规则是：在安装目录下
+最多下挖 3 层（覆盖 Unreal 的 `<项目>/Binaries/Win64/`）收集候选，排除崩溃上报器、
+前置运行库安装器、卸载器，再按"名字与安装目录名 / 游戏名一致 > 互相包含 >
+层级更浅、体积更大"排序取第一名；一个都挑不出来时 `exe_path` 才会退化成安装目录。
+启动本身走 `steam://`，与猜出的 `exe_path` 无关。
 
 带上 `icon_path` 时使用该文件，并把它记为条目的首选图标；再次调用且不带
 `icon_path` 会清除这个偏好并回到自动解析。
@@ -953,9 +975,13 @@ base64 长度上限为 128 KiB（解码后 96 KiB）；提取侧会降档重编�
 
 该能力通过移动端 `WS /api/v2/events` 使用，不新增桌面管理 HTTP 接口。游戏目录摘要可返回
 可选的 `launch_mode`（`width`、`height`、`refresh_millihz`）。客户端用已有的 `get_displays`
-读取主显示器模式，并在 `update_scanner_app` 请求中发送 `launch_mode` 保存，或发送
-`clear_launch_mode: true` 清除；省略两个字段表示保持原配置。服务端拒绝主显示器当前不支持的模式，
-返回 `INVALID_DISPLAY_MODE`。
+读取显示器模式——该命令返回每台显示器的**1080p 及以上可选模式**（枚举到的真实分辨率 ×
+每档最多 4 个刷新率，外加当前模式兜底），同屏可用
+`set_display_mode`（扁平 `display_id` / `width` / `height` / `refresh_millihz`）直接切换，
+两者契约见 [`protocol/v2.md`](../protocol/v2.md)「显示设置」——并在 `update_scanner_app`
+请求中发送 `launch_mode` 保存，或发送 `clear_launch_mode: true` 清除；省略两个字段表示保持原配置。
+服务端拒绝主显示器枚举不到的模式，返回 `INVALID_DISPLAY_MODE`；候选集合是上面那份 1080p 及以上模式
+（低于 1080p 的旧配置仍会切换与恢复，但手机端无法重新保存）。
 
 启动时服务端先持久化主显示器原模式，再尝试切换并启动游戏。显示切换失败时仍启动游戏；手机端
 `launch_scanner_app` 与本机 `POST /apps/launch` 共用同一协调器。进程监视器按启动前后的 PID 差异
@@ -963,6 +989,27 @@ base64 长度上限为 128 KiB（解码后 96 KiB）；提取侧会降档重编�
 并行运行的已配置游戏采用首个游戏的模式。服务重启时会用已保存的游戏路径重新接管进程监视；
 若 180 秒内未发现游戏进程则恢复模式。快照保存在服务数据库的 `settings.launch_display.snapshot`，
 恢复失败时保留以供下次启动重试。
+
+### 4.36 移动端保持唤醒
+
+该能力通过移动端 `WS /api/v2/events` 使用，不新增桌面管理 HTTP 接口；桌面端托盘与
+设置页经桌面管理 IPC 的 `set_keep_awake` 命令读写**同一个**开关。请求/响应契约见
+[`protocol/v2.md`](../protocol/v2.md)「保持唤醒」：
+
+| 命令 | 说明 |
+| --- | --- |
+| `get_keep_awake` | 读取服务进程当前的保持唤醒开关，返回 `keep_awake_status` |
+| `set_keep_awake` | 带 `enabled`（bool，必填）开关，返回 `keep_awake_status`；失败返回 `KEEP_AWAKE_FAILED` |
+
+`SetThreadExecutionState` 是 **per-thread** 状态，服务端用一条专用常驻线程
+（`qinglink-keep-awake`）串行执行所有开关，避免在 `spawn_blocking` 工作线程上调用导致
+状态随线程回收丢失、或开与关落在不同线程上互相抵消。开关持久化在服务库
+`settings.power.keep_awake`，服务启动时恢复；桌面端按管理快照的 `keep_awake` 字段
+显示，快照变化（含手机端切换）由 `ServiceEvent::KeepAwake` 推给设置页与托盘。
+
+> 桌面端旧偏好 `power.keep_awake` 已不再使用；旧服务不支持 `keep_awake` 能力位时，
+> 桌面端开关报"不支持"，移动端命令回 `INVALID_REQUEST`。前端
+> `apps/desktop/web-ui/src/api/types.ts` 的 `POST /settings` 字段形状不变。
 
 ---
 

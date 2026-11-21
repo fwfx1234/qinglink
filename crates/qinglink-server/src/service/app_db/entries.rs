@@ -180,6 +180,8 @@ impl AppDatabase {
     ///
     /// # Errors
     /// 取不到数据库连接或更新条目的语句执行失败时返回 `Err`。
+    ///
+    /// 返回受影响行数：`0` 表示该 id 不存在，调用方应回 `NOT_FOUND`。
     pub fn update_app(
         &self,
         id: &str,
@@ -188,7 +190,7 @@ impl AppDatabase {
         icon_base64: Option<&str>,
         icon_source: Option<&str>,
         args: Option<&[String]>,
-    ) -> Result<(), String> {
+    ) -> Result<usize, String> {
         let conn = self
             .database
             .connection(&self.db_key)
@@ -207,15 +209,17 @@ impl AppDatabase {
              updated_at = ?5 WHERE id = ?6",
             rusqlite::params![name, exe_path, icon_base64, encoded_args, now, id, icon_source],
         )
-        .map_err(|e| e.to_string())?;
-        Ok(())
+        .map_err(|e| e.to_string())
     }
 
     /// 修改条目的显示名称。
     ///
     /// # Errors
     /// 取不到数据库连接或更新显示名的语句执行失败时返回 `Err`。
-    pub fn rename_app(&self, id: &str, name: &str) -> Result<(), String> {
+    ///
+    /// 返回受影响行数：`0` 表示该 id 不存在，调用方必须据此回 `NOT_FOUND`
+    /// 而不是回成功（否则"改名没生效"会以成功的形态返回给手机端）。
+    pub fn rename_app(&self, id: &str, name: &str) -> Result<usize, String> {
         let started = std::time::Instant::now();
         tracing::info!(id = %id, name = %name, "[rename] app_db: 等待数据库连接");
         let conn = self
@@ -240,14 +244,19 @@ impl AppDatabase {
             total_ms = started.elapsed().as_millis() as u64,
             "[rename] app_db: UPDATE 完成"
         );
-        Ok(())
+        Ok(updated)
     }
 
     /// 软删除条目（置 `is_deleted`，不物理删除行）。
     ///
+    /// 返回受影响行数：`0` 表示该 id 不存在，调用方应回 `NOT_FOUND`。
+    ///
+    /// 有意不加 `AND is_deleted = 0`：重复删除同一条目应当幂等成功，
+    /// 只有"id 根本不存在"才该报错。
+    ///
     /// # Errors
     /// 取不到数据库连接或更新删除标记的语句执行失败时返回 `Err`。
-    pub fn delete_app(&self, id: &str) -> Result<(), String> {
+    pub fn delete_app(&self, id: &str) -> Result<usize, String> {
         let conn = self
             .database
             .connection(&self.db_key)
@@ -256,15 +265,16 @@ impl AppDatabase {
             "UPDATE scanner_apps SET is_deleted = 1, updated_at = ?2 WHERE id = ?1",
             rusqlite::params![id, time::OffsetDateTime::now_utc().unix_timestamp()],
         )
-        .map_err(|e| e.to_string())?;
-        Ok(())
+        .map_err(|e| e.to_string())
     }
 
     /// 设置条目是否在列表中隐藏。
     ///
+    /// 返回受影响行数：`0` 表示该 id 不存在，调用方应回 `NOT_FOUND`。
+    ///
     /// # Errors
     /// 取不到数据库连接或更新隐藏标记的语句执行失败时返回 `Err`。
-    pub fn set_hidden(&self, id: &str, hidden: bool) -> Result<(), String> {
+    pub fn set_hidden(&self, id: &str, hidden: bool) -> Result<usize, String> {
         let conn = self
             .database
             .connection(&self.db_key)
@@ -277,8 +287,7 @@ impl AppDatabase {
             "UPDATE scanner_apps SET is_hidden = ?1, updated_at = ?2 WHERE id = ?3",
             rusqlite::params![if hidden { 1 } else { 0 }, now, id],
         )
-        .map_err(|e| e.to_string())?;
-        Ok(())
+        .map_err(|e| e.to_string())
     }
 }
 

@@ -79,7 +79,7 @@ permissions:
 - [ ] 共享状态使用适当的锁（`Mutex` vs `RwLock`）
 
 #### 桌面端线程模型（GPUI 已移除，线程划分见 `docs/architecture.md` 第 4 节）
-- [ ] 托盘与 `SetThreadExecutionState` 只在 main 线程操作
+- [ ] 托盘操作只在 main 线程；保持唤醒只由服务常驻线程持有，桌面端不得再调用 `SetThreadExecutionState`
 - [ ] Web 处理函数没有直接触碰只属于 main 线程的状态，而是走 `HostCommand`
 - [ ] 主循环里没有阻塞 IO（管道调用最长 3 秒）
 - [ ] 没有从 `std::thread` 直接修改托盘或界面状态
@@ -224,7 +224,7 @@ unsafe { SendInput(ptr, count) }
 
 ### 桌面端线程模型（GPUI 已移除，见 `docs/architecture.md` 第 4 节）
 - 状态更新是否走 `HostCommand` 通道，而不是直接触碰只属于 main 线程的状态
-- 托盘与 `SetThreadExecutionState` 是否只在 main 线程操作
+- 托盘操作是否只在 main 线程；桌面端是否未调用 `SetThreadExecutionState`（保持唤醒只由服务常驻线程持有）
 - 主循环里是否有阻塞 IO（管道调用最长 3 秒）
 - Mutex 锁是否未跨越 await 点
 

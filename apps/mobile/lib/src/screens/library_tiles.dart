@@ -1,4 +1,9 @@
 /// 「库」列表里的行与卡片：常用条目、目录条目、已屏蔽条目。
+///
+/// 设计稿里库列表是**一张卡片包住多行、行间用 1px 分隔线**，而不是每行一张卡，
+/// 行右侧只留一个「…」管理入口（启动靠整行点击）。为了保留 ListView 的懒加载，
+/// 这里用 [LibraryRowShell] 逐行拼出卡片外观：首行画上圆角与上边框，
+/// 末行画下圆角与下边框，中间行只画左右边框和一条分隔线。
 library;
 
 import 'package:flutter/material.dart';
@@ -9,7 +14,136 @@ import '../widgets/app_icon.dart';
 import '../widgets/app_ui.dart';
 import 'library_entry_utils.dart';
 
-/// 常用条目：整行点击启动，管理动作收进一个菜单。
+/// 行外壳：把一行画成「大卡片的一段」。
+class LibraryRowShell extends StatelessWidget {
+  const LibraryRowShell({
+    super.key,
+    required this.child,
+    required this.first,
+    required this.last,
+  });
+
+  final Widget child;
+
+  /// 是否列表首行（画上圆角与上边框）。
+  final bool first;
+
+  /// 是否列表末行（画下圆角与下边框，且不再画分隔线）。
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    // 注意：这里不要给 decoration 加 borderRadius —— 该组合在本项目当前
+    // Flutter 版本上会把子内容整块吞掉（首末行变成空白）。圆角改用外层
+    // ClipRRect 裁，描边仍走非圆角的 Border。
+    final box = DecoratedBox(
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(
+          left: BorderSide(color: palette.line),
+          right: BorderSide(color: palette.line),
+          top: BorderSide(color: first ? palette.line : Colors.transparent),
+          bottom: BorderSide(color: last ? palette.line : Colors.transparent),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          child,
+          if (!last)
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: palette.line,
+              indent: AppSpacing.md,
+              endIndent: AppSpacing.md,
+            ),
+        ],
+      ),
+    );
+    if (!first && !last) return box;
+    return ClipRRect(
+      borderRadius: BorderRadius.vertical(
+        top: Radius.circular(first ? AppRadius.lg : 0),
+        bottom: Radius.circular(last ? AppRadius.lg : 0),
+      ),
+      child: box,
+    );
+  }
+}
+
+/// 行内容：图标 + 标题/副标题 + 右侧动作，整行可点。
+class _LibraryRow extends StatelessWidget {
+  const _LibraryRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.subtitleColor,
+    this.onTap,
+    this.trailing,
+  });
+
+  final Widget icon;
+  final String title;
+  final String subtitle;
+  final Color subtitleColor;
+  final VoidCallback? onTap;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 56),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm,
+          ),
+          child: Row(
+            children: [
+              icon,
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.rowTitle.copyWith(
+                        color: palette.textPrimary,
+                      ),
+                    ),
+                    if (subtitle.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppText.meta.copyWith(color: subtitleColor),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (trailing != null) ...[
+                const SizedBox(width: AppSpacing.sm),
+                trailing!,
+              ],
+            ],
+          ),
+        ),
+    );
+  }
+}
+
+/// 常用条目：整行点击启动，管理动作只留一个「…」。
 class LibraryAppTile extends StatelessWidget {
   const LibraryAppTile({
     super.key,
@@ -29,71 +163,33 @@ class LibraryAppTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    return AppCard(
-      minHeight: 68,
-      radius: AppRadius.lg,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-      onTap: launching ? null : onLaunch,
-      child: Row(
-        children: [
-          AppIcon(
-            id: item.id,
-            size: 40,
-            radius: 10,
-            revision: iconRevision,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  item.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.cardTitle.copyWith(color: palette.textPrimary),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  item.pinned ? '已置顶到首页' : '点击启动',
-                  style: AppText.meta.copyWith(
-                    color: item.pinned ? AppColors.primary : palette.textSubtle,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (launching)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 11),
-              child: SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            )
-          else
-            IconBtn(
-              icon: Icons.play_arrow_rounded,
-              tooltip: '启动',
-              size: 38,
-              iconSize: 18,
-              radius: 9,
-              color: AppColors.primary,
-              background: AppColors.primary.withValues(alpha: 0.13),
-              onPressed: onLaunch,
-            ),
-          IconBtn(
-            icon: Icons.more_horiz_rounded,
-            tooltip: '管理',
-            size: 38,
-            iconSize: 17,
-            radius: 9,
-            onPressed: onMenu,
-          ),
-        ],
+    return _LibraryRow(
+      icon: AppIcon(
+        id: item.id,
+        size: 40,
+        radius: AppRadius.sm,
+        revision: iconRevision,
       ),
+      title: item.name,
+      subtitle: item.pinned
+          ? '已置顶到首页'
+          : librarySourceLabel(item.source),
+      subtitleColor: item.pinned ? palette.brand : palette.textMuted,
+      onTap: launching ? null : onLaunch,
+      trailing: launching
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : IconBtn(
+              icon: Icons.more_horiz_rounded,
+              tooltip: '管理',
+              size: 36,
+              iconSize: 18,
+              radius: AppRadius.sm,
+              onPressed: onMenu,
+            ),
     );
   }
 }
@@ -124,92 +220,56 @@ class LibraryCatalogTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    return AppCard(
-      minHeight: 68,
-      radius: AppRadius.lg,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+    return _LibraryRow(
+      icon: AppIcon(
+        id: item.id,
+        initialBase64: item.iconBase64,
+        size: 44,
+        radius: AppRadius.md,
+        revision: iconRevision,
+      ),
+      title: item.name,
+      subtitle: librarySourceLabel(item.source),
+      subtitleColor: palette.textMuted,
       onTap: launching ? null : onLaunch,
-      child: Row(
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          AppIcon(
-            id: item.id,
-            initialBase64: item.iconBase64,
-            size: 40,
-            radius: 10,
-            revision: iconRevision,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  item.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.cardTitle.copyWith(
-                    color: palette.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  librarySourceLabel(item.source),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.meta.copyWith(color: palette.textSubtle),
-                ),
-              ],
-            ),
-          ),
           if (launching)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 11),
-              child: SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
             )
           else
-            IconBtn(
-              icon: Icons.play_arrow_rounded,
-              tooltip: '启动',
-              size: 38,
-              iconSize: 18,
-              radius: 9,
-              color: AppColors.primary,
-              background: AppColors.primary.withValues(alpha: 0.13),
-              onPressed: onLaunch,
-            ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: added
-                ? Tooltip(
-                    message: '点击取消添加',
-                    child: GestureDetector(
-                      onTap: launching ? null : onRemove,
-                      behavior: HitTestBehavior.opaque,
-                      child: const StatusTag('已添加'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs),
+              child: added
+                  ? Tooltip(
+                      message: '点击取消添加',
+                      child: GestureDetector(
+                        onTap: launching ? null : onRemove,
+                        behavior: HitTestBehavior.opaque,
+                        child: const StatusTag('已添加'),
+                      ),
+                    )
+                  : IconBtn(
+                      icon: Icons.add_rounded,
+                      tooltip: '添加到常用',
+                      size: 36,
+                      iconSize: 18,
+                      radius: AppRadius.sm,
+                      color: palette.textPrimary,
+                      onPressed: onAdd,
                     ),
-                  )
-                : IconBtn(
-                    icon: Icons.add_rounded,
-                    tooltip: '添加到常用',
-                    size: 38,
-                    iconSize: 18,
-                    radius: 9,
-                    color: palette.textPrimary,
-                    onPressed: onAdd,
-                  ),
-          ),
+            ),
           if (onMenu != null)
             IconBtn(
               icon: Icons.more_horiz_rounded,
               tooltip: '管理',
-              size: 38,
-              iconSize: 17,
-              radius: 9,
+              size: 36,
+              iconSize: 18,
+              radius: AppRadius.sm,
               onPressed: onMenu,
             ),
         ],
@@ -234,27 +294,19 @@ class LibraryBlockedTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    return AppCard(
-      minHeight: 62,
-      radius: AppRadius.lg,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-      child: Row(
-        children: [
-          AppIcon(id: item.id, size: 36, radius: 9, revision: iconRevision),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              item.name,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: AppText.body.copyWith(color: palette.textPrimary),
-            ),
-          ),
-          TextButton(
-            onPressed: onRestore,
-            child: const Text('恢复'),
-          ),
-        ],
+    return _LibraryRow(
+      icon: AppIcon(
+        id: item.id,
+        size: 44,
+        radius: AppRadius.md,
+        revision: iconRevision,
+      ),
+      title: item.name,
+      subtitle: '已从列表隐藏',
+      subtitleColor: palette.textMuted,
+      trailing: TextButton(
+        onPressed: onRestore,
+        child: const Text('恢复'),
       ),
     );
   }

@@ -268,15 +268,22 @@ struct MessageRequest<'a> {
     text: Option<&'a str>,
 }
 
+/// 活动控制台会话的会话代理管道路径。
+///
+/// # Errors
+/// 取不到活动会话（`u32::MAX`）时返回 “no active console session”。
 #[cfg(target_os = "windows")]
-fn agent_request_message_inner(command: &str, text: Option<&str>) -> Result<String> {
+fn agent_pipe_path() -> Result<String> {
     use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
     let session = super::active_interactive_session()
         .unwrap_or_else(|| unsafe { WTSGetActiveConsoleSessionId() });
-    if session == u32::MAX {
-        anyhow::bail!("no active console session");
-    }
-    let pipe = format!(r"\\.\pipe\QingLinkSessionAgent-{session}");
+    ensure!(session != u32::MAX, "no active console session");
+    Ok(format!(r"\\.\pipe\QingLinkSessionAgent-{session}"))
+}
+
+#[cfg(target_os = "windows")]
+fn agent_request_message_inner(command: &str, text: Option<&str>) -> Result<String> {
+    let pipe = agent_pipe_path()?;
     let response: UnitResponse = request_with_timeout(
         &pipe,
         &MessageRequest {
@@ -298,4 +305,70 @@ pub(crate) fn agent_request_message(command: &str, text: Option<&str>) -> Result
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn agent_request_message(_: &str, _: Option<&str>) -> Result<String> {
     anyhow::bail!("secure desktop agent is only supported on Windows")
+}
+
+/// 通过会话代理枚举显示器；`message` 是 `DisplayInfoResponse` 数组的 JSON。
+///
+/// Session 0 的服务进程没有交互桌面，`EnumDisplayDevicesW` 在这里枚举不到任何
+/// “连接到桌面”的显示器，所以必须在用户会话里执行。
+#[cfg(target_os = "windows")]
+pub(crate) fn agent_display_list() -> Result<String> {
+    let pipe = agent_pipe_path()?;
+    let response: UnitResponse = request_with_timeout(
+        &pipe,
+        &MessageRequest {
+            version: 1,
+            command: "get_displays",
+            text: None,
+        },
+        "AGENT_REQUEST_TIMEOUT: 显示器服务响应超时",
+    )?;
+    ensure!(response.ok, "{}", response.message);
+    Ok(response.message)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn agent_display_list() -> Result<String> {
+    anyhow::bail!("display control is only supported on Windows")
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Serialize)]
+struct DisplayModeRequest<'a> {
+    version: u32,
+    command: &'a str,
+    display_id: &'a str,
+    width: u32,
+    height: u32,
+    refresh_millihz: u32,
+}
+
+/// 请求会话代理切换指定显示器的分辨率与刷新率。
+#[cfg(target_os = "windows")]
+pub(crate) fn agent_set_display_mode(
+    display_id: &str,
+    width: u32,
+    height: u32,
+    refresh_millihz: u32,
+) -> Result<()> {
+    let pipe = agent_pipe_path()?;
+    let response: UnitResponse = request_with_timeout(
+        &pipe,
+        &DisplayModeRequest {
+            version: 1,
+            command: "set_display_mode",
+            display_id,
+            width,
+            height,
+            refresh_millihz,
+        },
+        "AGENT_REQUEST_TIMEOUT: 显示器服务响应超时",
+    )?;
+    ensure!(response.ok, "{}", response.message);
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn agent_set_display_mode(_: &str, _: u32, _: u32, _: u32) -> Result<()> {
+    anyhow::bail!("display control is only supported on Windows")
 }

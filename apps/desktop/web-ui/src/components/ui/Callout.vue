@@ -57,7 +57,7 @@ withDefaults(
 }
 
 .callout--accent::before {
-  background: var(--accent);
+  background: var(--accent-bright);
 }
 
 .callout--warning {

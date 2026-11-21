@@ -17,6 +17,7 @@ class SettingsKeys {
   static const String mouseSensitivity = 'mouse_sensitivity';
   static const String reversePhoneScrollBar = 'reverse_phone_scroll_bar';
   static const String autoUnlockOnWake = 'auto_unlock_on_wake';
+  static const String autoOpenKeyboard = 'auto_open_keyboard';
   static const String tvFollowPcPowerOn = 'tv_follow_pc_power_on';
   static const String tvFollowPcPowerOff = 'tv_follow_pc_power_off';
   static const String shortcutPresets = 'shortcut_presets';

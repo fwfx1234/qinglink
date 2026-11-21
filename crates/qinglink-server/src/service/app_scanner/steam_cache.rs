@@ -17,7 +17,16 @@ impl AppScanner {
 
         let installed = scanner.find_steam_install().is_some();
         let games = if installed {
-            scanner.scan_games().unwrap_or_default()
+            match scanner.scan_games() {
+                Ok(games) => games,
+                Err(error) => {
+                    // 扫描失败不能写成"已加载的空缓存"：那会把"本机没有游戏"
+                    // 与"这次扫描失败"变成同一个结果，且 `steam_cache_loaded()`
+                    // 会从此返回 true，后续请求连重试都不会触发。
+                    tracing::warn!(%error, "Steam 游戏扫描失败，保留上一次缓存");
+                    return (*steam_cache).clone().unwrap_or_default();
+                }
+            }
         } else {
             Vec::new()
         };

@@ -38,7 +38,14 @@ pub(super) fn refresh_snapshot(
 
     // Read everything the diff needs before the state is overwritten: the
     // browser is only told about *changes*, because it cannot poll.
-    let (previous_view, previous_pairing, previous_devices, previous_scan, had_snapshot) = inner
+    let (
+        previous_view,
+        previous_pairing,
+        previous_devices,
+        previous_scan,
+        previous_keep_awake,
+        had_snapshot,
+    ) = inner
         .state
         .lock()
         .map(|state| {
@@ -47,13 +54,15 @@ pub(super) fn refresh_snapshot(
                 state.snapshot.pending_pairing.clone(),
                 state.snapshot.device_count,
                 scan_fingerprint(state.snapshot.scan.as_ref()),
+                state.snapshot.keep_awake,
                 state.snapshot_at.is_some(),
             )
         })
-        .unwrap_or((None, None, None, (None, None), false));
+        .unwrap_or((None, None, None, (None, None), None, false));
     let current_pairing = snapshot.pending_pairing.clone();
     let current_devices = snapshot.device_count;
     let current_scan = scan_fingerprint(snapshot.scan.as_ref());
+    let current_keep_awake = snapshot.keep_awake;
 
     if let Ok(mut state) = inner.state.lock() {
         state.snapshot = snapshot;
@@ -68,6 +77,14 @@ pub(super) fn refresh_snapshot(
     let current_view = inner.state.lock().ok().map(|state| state.view());
     if previous_view != current_view {
         let _ = inner.events.send(ServiceEvent::Status);
+    }
+
+    // 保持唤醒以服务快照为唯一状态源：首帧也要发，否则服务侧已开启而桌面端
+    // 初始值为 false 时，设置页与托盘会一直停在错误的状态上。
+    if let Some(enabled) = current_keep_awake
+        && previous_keep_awake != current_keep_awake
+    {
+        let _ = inner.events.send(ServiceEvent::KeepAwake(enabled));
     }
 
     // Pairing has its own channel and payload, so it is announced separately.

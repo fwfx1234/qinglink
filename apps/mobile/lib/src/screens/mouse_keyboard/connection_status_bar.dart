@@ -4,6 +4,8 @@ import '../../theme/app_theme.dart';
 import '../../widgets/app_ui.dart';
 
 /// 页面顶部的连接状态行：状态点 + 状态文案 + 鼠标设置入口。
+///
+/// 设计稿里这一行直接落在页面背景上（不套卡片），高 32。
 class ConnectionStatusBar extends StatelessWidget {
   const ConnectionStatusBar({
     super.key,
@@ -22,12 +24,13 @@ class ConnectionStatusBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 4, right: 2),
+    final palette = context.palette;
+    return SizedBox(
+      height: 32,
       child: Row(
         children: [
           StatusDot(color: statusColor, glow: connected),
-          const SizedBox(width: 7),
+          const SizedBox(width: 8),
           Text(
             statusText,
             style: AppText.label.copyWith(
@@ -38,9 +41,10 @@ class ConnectionStatusBar extends StatelessWidget {
           const Spacer(),
           IconBtn(
             icon: Icons.tune_rounded,
-            tooltip: '鼠标设置',
-            size: 34,
-            iconSize: 18,
+            tooltip: '设置',
+            size: 32,
+            iconSize: 17,
+            background: palette.iconBtn,
             onPressed: onOpenSettings,
           ),
         ],
@@ -60,7 +64,7 @@ class ErrorTextLine extends StatelessWidget {
     return Align(
       alignment: Alignment.centerLeft,
       child: Padding(
-        padding: const EdgeInsets.only(left: 4, top: 2),
+        padding: const EdgeInsets.only(top: 4),
         child: Text(
           message,
           maxLines: 1,

@@ -20,7 +20,7 @@ class ProcessIcon extends ConsumerStatefulWidget {
     this.size = 32,
     this.radius = 9,
     this.iconSize = 16,
-    this.color = AppColors.cyan,
+    this.color,
     this.fallback = Icons.memory_rounded,
   });
 
@@ -32,8 +32,8 @@ class ProcessIcon extends ConsumerStatefulWidget {
   final double radius;
   final double iconSize;
 
-  /// 占位图标的颜色。
-  final Color color;
+  /// 占位图标的颜色；为空时取当前主题的信息色。
+  final Color? color;
   final IconData fallback;
 
   @override
@@ -85,11 +85,12 @@ class _ProcessIconState extends ConsumerState<ProcessIcon> {
   Widget _placeholder() {
     return TileIcon(
       icon: widget.fallback,
-      color: widget.color,
+      color: widget.color ?? context.palette.info,
       size: widget.size,
       radius: widget.radius,
       iconSize: widget.iconSize,
-      filled: false,
+      // 设计稿里每行图标都有浅色底衬，取不到真实图标时也保持一致。
+      filled: true,
     );
   }
 

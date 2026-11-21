@@ -1,4 +1,5 @@
 use super::*;
+use crate::service::app_catalog::{self, CatalogError};
 
 pub(super) fn handle(
     state: &AppState,
@@ -38,8 +39,13 @@ pub(super) fn handle(
         WsClientRequest::SetScannerAppPinned { id, pinned } => {
             handle_set_pinned(state, id, *pinned)
         }
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
+}
+
+/// 把校验器的失败原因渲染成协议的错误信封。
+fn catalog_error(error: CatalogError) -> WsServerMessage {
+    WsServerMessage::Response(WsServerResponse::error(error.code, &error.message))
 }
 
 /// 手动新增一个应用条目，必要时解析图标，成功后刷新可见目录。
@@ -52,6 +58,37 @@ fn handle_add_app(
     source: Option<&str>,
     args: &[String],
 ) -> WsServerMessage {
+    // 与桌面管理 IPC 走同一组校验器。缺了这一步，手机端就是唯一能把任意
+    // `exe_path`（含空串、含不存在的路径）写进目录的入口——而目录里出现重复
+    // 或空路径之后，任何"同一 exe 唯一"的约束都无法再建立。
+    let exe_path = match app_catalog::validate_app_path(exe_path) {
+        Ok(path) => path,
+        Err(error) => return catalog_error(error),
+    };
+    let name = if name.trim().is_empty() {
+        app_catalog::default_app_name(&exe_path)
+    } else {
+        match app_catalog::validate_display_name(name) {
+            Ok(name) => name,
+            Err(error) => return catalog_error(error),
+        }
+    };
+    if name.is_empty() {
+        return catalog_error(CatalogError::bad_request(
+            "无法从路径推断名称，请填写显示名",
+        ));
+    }
+    // 稳定 id 让"同一 exe 加两次"变成显式冲突而不是第二行。这一步必须挡在
+    // 落库之前：`add_app` 用的是 `INSERT OR REPLACE`，真的命中已存在的主键时
+    // 会删行重插，把用户的收藏 / 置顶 / 隐藏 / 自定义名静默清空。
+    let id = app_catalog::app_id_for_path(&exe_path);
+    match state.admin_catalog() {
+        Ok(entries) if entries.iter().any(|entry| entry.id == id) => {
+            return catalog_error(CatalogError::conflict("该可执行文件已在目录中"));
+        }
+        Ok(_) => {}
+        Err(error) => return catalog_error(CatalogError::internal(error)),
+    }
     // Resolve the icon through every available source (shortcut icon,
     // embedded resource, sibling artwork). A single folder scan no
     // longer extracts icons in bulk, so this is the one entry the user
@@ -64,22 +101,22 @@ fn handle_add_app(
             None => return invalid_icon(),
         },
         None => {
-            let resolution = crate::platform::resolve_icon(exe_path, None);
+            let resolution = crate::platform::resolve_icon(&exe_path, None);
             let source = (resolution.icon_base64.is_some()).then(|| resolution.source.clone());
             (resolution.icon_base64, source)
         }
     };
     let app = crate::service::app_scanner::AppEntry {
-        id: format!("user:{}", uuid::Uuid::new_v4()),
-        name: name.to_string(),
-        original_name: name.to_string(),
-        exe_path: exe_path.to_string(),
+        id: id.clone(),
+        name: name.clone(),
+        original_name: name,
+        exe_path,
         icon_base64,
         icon_path: None,
         icon_source,
-        category: category.to_string(),
+        category: crate::server::normalize_catalog_kind(category).to_string(),
         source: source.unwrap_or("User").to_string(),
-        args: args.to_vec(),
+        args: app_catalog::sanitize_args(args),
         is_favorite: false,
         is_pinned: false,
         launch_mode: None,
@@ -89,7 +126,7 @@ fn handle_add_app(
         Ok(()) => {
             drop(db);
             reload_visible_catalog(state);
-            WsServerMessage::Response(WsServerResponse::ScannerAppUpdated { id: app.id })
+            WsServerMessage::Response(WsServerResponse::ScannerAppUpdated { id })
         }
         Err(e) => WsServerMessage::Response(WsServerResponse::error("ADD_FAILED", &e)),
     }
@@ -108,6 +145,18 @@ fn handle_update_app(
             "主显示器当前不支持该分辨率或刷新率，请重新选择",
         ));
     }
+    // 空名称合法，表示"恢复扫描得到的名字"（列表读取时会把空串折回原始名）。
+    let name = match app_catalog::validate_display_name(&query.name) {
+        Ok(name) => name,
+        Err(error) => return catalog_error(error),
+    };
+    // 修改既有条目只校验路径形状、不要求文件仍在：条目可能比磁盘上的程序活得
+    // 更久（先卸载、后重命名或删除是常见顺序）。
+    let exe_path = match app_catalog::validate_app_path_input(&query.exe_path) {
+        Ok(path) => path,
+        Err(error) => return catalog_error(error),
+    };
+    let args = query.args.as_deref().map(app_catalog::sanitize_args);
     // 客户端上传的图标先规范化，再把来源记成 `manual`；只更新其他字段时两者都为
     // `None`，SQL 的 COALESCE 会保留原值。
     let (icon_payload, icon_source) = match query.icon_base64.as_deref() {
@@ -131,26 +180,35 @@ fn handle_update_app(
             ));
         }
     }
-    let result = db
+    let updated = db
         .update_app(
             &query.id,
-            &query.name,
-            &query.exe_path,
+            &name,
+            &exe_path,
             icon_payload.as_deref(),
             icon_source,
-            query.args.as_deref(),
+            args.as_deref(),
         )
-        .and_then(|()| {
+        .and_then(|updated| {
+            // 0 行说明 id 根本不存在；继续写启动模式只会让"改了但没生效"
+            // 以成功的形态回到手机端。
+            if updated == 0 {
+                return Ok(0);
+            }
             if query.clear_launch_mode {
-                db.set_launch_mode(&query.id, None)
+                db.set_launch_mode(&query.id, None).map(|()| updated)
             } else if let Some(mode) = query.launch_mode.as_ref() {
-                db.set_launch_mode(&query.id, Some(mode))
+                db.set_launch_mode(&query.id, Some(mode)).map(|()| updated)
             } else {
-                Ok(())
+                Ok(updated)
             }
         });
-    match result {
-        Ok(()) => {
+    match updated {
+        Ok(0) => {
+            drop(db);
+            catalog_error(CatalogError::not_found("目录中不存在该条目"))
+        }
+        Ok(_) => {
             drop(db);
             reload_visible_catalog(state);
             WsServerMessage::Response(WsServerResponse::ScannerAppUpdated {
@@ -192,12 +250,19 @@ fn invalid_icon() -> WsServerMessage {
 
 /// 删除一个条目，成功后刷新可见目录。
 fn handle_delete_app(state: &AppState, id: &str) -> WsServerMessage {
-    let db = crate::lock_unpoisoned(&state.app_db);
-    match db.delete_app(id) {
-        Ok(()) => {
-            drop(db);
+    let id = match app_catalog::validate_entry_id(id) {
+        Ok(id) => id,
+        Err(error) => return catalog_error(error),
+    };
+    let deleted = {
+        let db = crate::lock_unpoisoned(&state.app_db);
+        db.delete_app(&id)
+    };
+    match deleted {
+        Ok(0) => catalog_error(CatalogError::not_found("目录中不存在该条目")),
+        Ok(_) => {
             reload_visible_catalog(state);
-            WsServerMessage::Response(WsServerResponse::ScannerAppDeleted { id: id.to_string() })
+            WsServerMessage::Response(WsServerResponse::ScannerAppDeleted { id })
         }
         Err(e) => WsServerMessage::Response(WsServerResponse::error("DELETE_FAILED", &e)),
     }
@@ -205,12 +270,19 @@ fn handle_delete_app(state: &AppState, id: &str) -> WsServerMessage {
 
 /// 屏蔽或恢复一个条目，成功后刷新可见目录。
 fn handle_set_hidden(state: &AppState, id: &str, hidden: bool) -> WsServerMessage {
-    let db = crate::lock_unpoisoned(&state.app_db);
-    match db.set_hidden(id, hidden) {
-        Ok(()) => {
-            drop(db);
+    let id = match app_catalog::validate_entry_id(id) {
+        Ok(id) => id,
+        Err(error) => return catalog_error(error),
+    };
+    let updated = {
+        let db = crate::lock_unpoisoned(&state.app_db);
+        db.set_hidden(&id, hidden)
+    };
+    match updated {
+        Ok(0) => catalog_error(CatalogError::not_found("目录中不存在该条目")),
+        Ok(_) => {
             reload_visible_catalog(state);
-            WsServerMessage::Response(WsServerResponse::ScannerAppUpdated { id: id.to_string() })
+            WsServerMessage::Response(WsServerResponse::ScannerAppUpdated { id })
         }
         Err(e) => WsServerMessage::Response(WsServerResponse::error("HIDE_FAILED", &e)),
     }
@@ -218,14 +290,19 @@ fn handle_set_hidden(state: &AppState, id: &str, hidden: bool) -> WsServerMessag
 
 /// 加入或移出"常用"；数据库锁在刷新可见目录前已释放。
 fn handle_set_favorite(state: &AppState, id: &str, favorite: bool) -> WsServerMessage {
-    let result = {
-        let db = crate::lock_unpoisoned(&state.app_db);
-        db.set_favorite(id, favorite)
+    let id = match app_catalog::validate_entry_id(id) {
+        Ok(id) => id,
+        Err(error) => return catalog_error(error),
     };
-    match result {
-        Ok(()) => {
+    let updated = {
+        let db = crate::lock_unpoisoned(&state.app_db);
+        db.set_favorite(&id, favorite)
+    };
+    match updated {
+        Ok(0) => catalog_error(CatalogError::not_found("目录中不存在该条目")),
+        Ok(_) => {
             reload_visible_catalog(state);
-            WsServerMessage::Response(WsServerResponse::ScannerAppUpdated { id: id.to_string() })
+            WsServerMessage::Response(WsServerResponse::ScannerAppUpdated { id })
         }
         Err(e) => WsServerMessage::Response(WsServerResponse::error("FAVORITE_FAILED", &e)),
     }
@@ -233,14 +310,19 @@ fn handle_set_favorite(state: &AppState, id: &str, favorite: bool) -> WsServerMe
 
 /// 置顶或取消置顶；数据库锁在刷新可见目录前已释放。
 fn handle_set_pinned(state: &AppState, id: &str, pinned: bool) -> WsServerMessage {
-    let result = {
-        let db = crate::lock_unpoisoned(&state.app_db);
-        db.set_pinned(id, pinned)
+    let id = match app_catalog::validate_entry_id(id) {
+        Ok(id) => id,
+        Err(error) => return catalog_error(error),
     };
-    match result {
-        Ok(()) => {
+    let updated = {
+        let db = crate::lock_unpoisoned(&state.app_db);
+        db.set_pinned(&id, pinned)
+    };
+    match updated {
+        Ok(0) => catalog_error(CatalogError::not_found("目录中不存在该条目")),
+        Ok(_) => {
             reload_visible_catalog(state);
-            WsServerMessage::Response(WsServerResponse::ScannerAppUpdated { id: id.to_string() })
+            WsServerMessage::Response(WsServerResponse::ScannerAppUpdated { id })
         }
         Err(e) => WsServerMessage::Response(WsServerResponse::error("PIN_FAILED", &e)),
     }

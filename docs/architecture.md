@@ -82,7 +82,8 @@
 | Steam 游戏 | 同上 → `steam_games` | 服务 | |
 | 已配对设备与令牌 | 同上 → `tokens_v2` | 服务 | |
 | PC 身份、配对 PIN | `%ProgramData%\QingLink\config\` | 服务 | |
-| 桌面端设置（调试日志、保持唤醒） | `%LOCALAPPDATA%\QingLink\qinglink.db` → `settings` | 桌面端 | 每用户 |
+| 桌面端设置（调试日志） | `%LOCALAPPDATA%\QingLink\qinglink.db` → `settings` | 桌面端 | 每用户 |
+| 保持唤醒开关 | `%ProgramData%\QingLink\qinglink.db` → `settings.power.keep_awake` | 服务 | 全局，桌面端与移动端共用 |
 | 桌面端日志文本（可读，也是唯一的历史） | `%LOCALAPPDATA%\QingLink\logs\qinglink.<日期>.log` | 桌面端 | 按天轮转，长期保留 |
 | 服务端日志文本 | `%ProgramData%\QingLink\logs\QingLinkService.log.<日期>` | 服务 | 桌面端**只读**直读，不经命名管道 |
 | 移动端首页快捷键 | 手机 `SharedPreferences` → `home_shortcuts` | 移动端 | 最多保存 12 个组合及加入顺序；方案页可直接固定或移除，触发仍通过服务端 `key_event` |
@@ -170,8 +171,8 @@ qinglink-web 线程（1 个，内含多线程 Tokio runtime）
 
 推论：
 
-- **不要把托盘或 `SetThreadExecutionState` 移出 main 线程。**
-  前者要求同线程创建/销毁，后者是 per-thread 状态。
+- **不要把托盘操作移出 main 线程**，它要求同线程创建/销毁。保持唤醒的
+  `SetThreadExecutionState` 已改由服务进程的常驻线程独占，桌面端一律不得调用。
 - **不要在 main 线程上等同步 IO。** 管道调用会阻塞最多 3 秒；配对弹窗的
   「取消配对」因此走 `pairing/cancel.rs` 的专用线程，结论经事件通道回到主循环。
 - **不要在主循环里做阻塞 IO。** 管道调用会阻塞最多 3 秒。
@@ -197,7 +198,16 @@ apps/desktop/src/
 ├── input_install/       安全输入服务的安装/修复/启停（含提权辅助进程）
 ├── service/             命名管道客户端
 │   ├── mod.rs           ServiceError（错误分类是 HTTP 错误码的唯一来源）
-│   └── client.rs        请求-响应相关 + 快照轮询 + 线程
+│   └── client/          请求-响应、快照轮询与 IPC 线程
+│       ├── mod.rs       模块边界：子模块声明与对外重导出
+│       ├── handle.rs    交给 Web 层的调用句柄：发命令、等回执
+│       ├── inner.rs     worker 线程与调用方共享的运行时内核
+│       ├── runtime.rs   worker 线程生命周期：启动、停机、退出时释放队列
+│       ├── worker.rs    worker 主循环：排空调用队列、按退避重连、驱动快照刷新
+│       ├── transport.rs 阻塞式传输抽象与真实命名管道实现
+│       ├── envelope.rs  请求/响应信封：编解码、协议版本校验与能力协商
+│       ├── snapshot.rs  周期快照刷新：状态迁移与变更事件派发
+│       └── state.rs     ServiceLinkState / 快照视图 / 事件类型
 ├── logging/             日志子系统
 │   ├── entry.rs         LogEntry / LogLevel
 │   ├── buffer.rs        内存环形缓冲 + 查询谓词 LogFilter + summary()
@@ -296,7 +306,7 @@ apps/desktop/src/
 
 ### 5.2.1 链路状态分类
 
-链路状态由 `apps/desktop/src/service/client.rs` 的 `ServiceLinkState` 分类，并写进
+链路状态由 `apps/desktop/src/service/client/state.rs` 的 `ServiceLinkState` 分类，并写进
 `GET /service` 的 `state`。两端是正常的，中间三种失败互不相同：
 
 | 状态 | 判据 | 正确处置 |
@@ -311,30 +321,67 @@ apps/desktop/src/
 带 `#[serde(default)]`，否则缺少这两个字段的旧响应会在传输层抛错，被误报成
 "cannot receive pipe response"，把真正的版本问题藏起来。
 
-服务端实现在 `services/qinglink-service/src/windows_service_impl/management.rs`。
+服务端实现在 `services/qinglink-service/src/windows_service_impl/management/`：分发入口是
+`command::dispatch`，`catalog_edit` 承担目录写操作，`apps` / `icons` / `devices` /
+`pairing` / `catalog` / `lookup` / `record` / `page` / `snapshot` 各管一摊。
 **任何修改 `scanner_apps` 的路径都必须调用 `reload_visible_catalog`**，否则内存里
-的可见目录缓存不会更新，移动端会继续看到旧数据。`management.rs` 通过
-`publish_catalog_change` 统一做这件事，并为两个 kind 都广播
-`LauncherCatalogReady` 事件。
+的可见目录缓存不会更新，移动端会继续看到旧数据。`catalog_edit::publish_catalog_change`
+统一做这件事，并为两个 kind 都广播 `LauncherCatalogReady` 事件。
+
+控制面还有四项"读 PC 状态 / 改本机状态"的能力，都**不新增 WS 请求类型**（焦点事件只新增推送，
+读取走既有代理管道）：
+
+- `get_foreground` 的响应带可选的 `focus_text`：用 UI Automation 读焦点输入框已有文本。
+  只认 `Edit` 控件 + `ValuePattern`，密码框、只读、不提供 Value 模式的控件（组合框、
+  只暴露文本树的自绘控件）与占位提示（空白归一后比较）一律不返回——`TextPattern` 读的是
+  控件文本树，Chromium 系会把 `placeholder` 混在里面，用它回填等于把提示文字当成正文。
+  Chromium 系另外按**结构**判断：焦点 `Edit` 带子元素就是 contenteditable 富文本编辑器，
+  同样不回填（它的 `Value` 里可能混着占位提示、UIA 无法区分）；纯 `<input>` / `<textarea>`
+  是叶子节点，浏览器地址栏、搜索框与普通表单照旧回填。服务进程在 Session 0 下经会话代理
+  读取，普通桌面进程直接读本会话。
+- 物理鼠标按键状态由 `service/input_state_monitor.rs` 的后台线程每 250ms 轮询
+  `GetAsyncKeyState`，仅在变化时广播 `input_state` 事件，并每 10 秒补发一次让后连上来的
+  客户端也能对齐。
+- 焦点是否进入输入框走**事件**，不轮询：会话代理里挂 `EVENT_OBJECT_FOCUS`（只收
+  `OBJID_CLIENT`），钩子回调只置位一个本进程事件，工作线程被唤醒后读一次
+  `has_focus_input()`（只判"焦点元素有没有可写的 `ValuePattern`"，不取文本），
+  仅在上升沿（没焦点 → 有焦点）置位跨会话事件 `Global\QingLinkFocusInput`。
+  服务进程的 `service/focus_monitor.rs` 阻塞 `WaitForSingleObject` 等这个事件，
+  醒来就广播 `focus_input`（无载荷）。空闲时两侧线程都阻塞，不占 CPU，也没有管道流量。
+  回调里**不读 UIA**：代理是单线程串行处理管道请求的，一次卡顿会堵住后续所有鼠标 /
+  键盘注入，所以真正的读取放在工作线程上。
+- **显示枚举与切换统一走 `qinglink_windows::display` 门面**：Session 0 的服务进程没有
+  交互桌面，`EnumDisplayDevicesW` 在那里枚举不到任何"连接到桌面"的显示器，
+  `ChangeDisplaySettingsExW` 也不会作用到用户桌面。门面按 `running_in_session_zero()`
+  决定本地执行还是把 `get_displays` / `set_display_mode` 转发给会话代理；游戏启动分辨率
+  的快照、切换与恢复共用这条路径，所以手机上看到的显示器与服务端切换的是同一块屏。
+  列表本身裁成常用模式子集（≤4K 的六档分辨率 × `60/90/120/144`Hz）以减少噪音，当前模式
+  不在子集里时会原样附上；`set_display_mode` 仍按枚举到的全量模式校验，存量非常用模式不受影响。
+
+上述读状态能力复用既有请求与事件通道，不新增 `requests_ws.rs` 的请求枚举——那个文件
+在 500 行硬上限之上，只许变短。保持唤醒是例外：它新增 `get_keep_awake` /
+`set_keep_awake` 两个请求类型，同时清掉 `Option` 字段上冗余的 `#[serde(default)]`
+（serde 对 `Option` 字段本就允许缺失），使该文件净减 4 行，仍满足 §2.3 的"只减不增"。
 
 单次响应帧上限 64 KiB（命名管道帧限制），因此分页函数会**按序列化后的字节数**
 收缩当前页并返回精确的 `next_offset`，绝不静默丢行。
 
 ### 5.3 crate 清单与职责
 
-6 个 crate 加两个可执行入口；"内部依赖"一列是各自 `Cargo.toml` 的真实取值，
+7 个 crate 加两个可执行入口；"内部依赖"一列是各自 `Cargo.toml` 的真实取值，
 依赖方向规则见 [`.opencode/rules/architecture.md`](../.opencode/rules/architecture.md) §1。
 
 | crate / 入口 | 职责 | 内部依赖 |
 | --- | --- | --- |
 | `crates/qinglink-protocol` | 跨语言 wire 类型与 JSON schema；本地管理 IPC 协议 `service_ipc.rs` | 无（叶子） |
-| `crates/qinglink-domain` | 纯领域类型与状态机（配对状态、能力协商、领域错误） | 无（叶子） |
+| `crates/qinglink-domain` | 纯领域类型与状态机（设备配对状态机、领域错误） | 无（叶子） |
 | `crates/qinglink-storage` | SQLite 连接池与迁移、`AppPaths`、数据目录 ACL | 无（叶子） |
+| `crates/qinglink-version` | 桌面端与服务端共用的产品版本号：语义版本 + 自增构建号，含 Windows 版本资源生成 | 无（叶子） |
 | `crates/qinglink-discovery` | 局域网发现（UDP 3723 / mDNS 广播） | `qinglink-protocol` |
-| `crates/qinglink-windows` | Windows 平台封装：输入注入、显示/音频、进程与电源、安全桌面、单实例、完整性 | `qinglink-protocol`、`qinglink-domain` |
-| `crates/qinglink-server` | 局域网 `/api/v2/*` 的 HTTP/WS、认证、扫描与目录服务、`scanner_apps` 读写 | `qinglink-protocol`、`qinglink-domain`、`qinglink-storage`、`qinglink-windows` |
-| `services/qinglink-service`（`QingLinkService.exe`） | LocalSystem 服务：业务数据所有者、TCP 3721 / UDP 3723、命名管道管理面、会话输入代理 | `qinglink-protocol`、`qinglink-discovery`、`qinglink-server`、`qinglink-storage`、`qinglink-windows` |
-| `apps/desktop`（`QingLink.exe`） | 托盘 + 本地管理 Web + 日志 + 服务租约与命令代理 | `qinglink-protocol`、`qinglink-storage`、`qinglink-windows`（**不依赖** `qinglink-server`） |
+| `crates/qinglink-windows` | Windows 平台封装：输入注入、显示/音频、进程与电源、安全桌面、单实例、完整性 | `qinglink-protocol` |
+| `crates/qinglink-server` | 局域网 `/api/v2/*` 的 HTTP/WS、认证、扫描与目录服务、`scanner_apps` 读写 | `qinglink-protocol`、`qinglink-domain`、`qinglink-storage`、`qinglink-version`、`qinglink-windows` |
+| `services/qinglink-service`（`QingLinkService.exe`） | LocalSystem 服务：业务数据所有者、TCP 3721 / UDP 3723、命名管道管理面、会话输入代理 | `qinglink-protocol`、`qinglink-discovery`、`qinglink-server`、`qinglink-storage`、`qinglink-version`、`qinglink-windows` |
+| `apps/desktop`（`QingLink.exe`） | 托盘 + 本地管理 Web + 日志 + 服务租约与命令代理 | `qinglink-protocol`、`qinglink-storage`、`qinglink-version`、`qinglink-windows`（**不依赖** `qinglink-server`） |
 
 ### 5.4 三端职责与构建编排
 
@@ -456,8 +503,15 @@ QingLink.exe --check-service     # 单独探一次服务命名管道
 | --- | --- |
 | 打开 QingLink | 用默认浏览器打开 `http://127.0.0.1:3722` |
 | 重启服务 | 提权重启 `QingLinkService`，结果通过 install-state 事件回流 |
-| 保持唤醒 | 勾选项，`SetThreadExecutionState`（系统 + 显示器），在 main 线程执行；开关落偏好并在启动时恢复 |
+| 保持唤醒 | 勾选项，经桌面管理 IPC 的 `set_keep_awake` 切换服务进程的开关；勾选状态按管理快照同步 |
 | 退出 | 退出桌面端（并请求服务停止，见 6.4） |
+
+托盘/管理界面设置页与移动端控制中心的「保持唤醒」是**同一个开关**：由
+`QingLinkService` 进程用一条常驻线程持有 `SetThreadExecutionState`（系统 + 显示器），
+状态持久化在服务库 `settings.power.keep_awake` 并在服务启动时恢复。桌面端不再
+自己调用该系统 API：设置页与托盘经 `set_keep_awake` 命令写入，按管理快照的
+`keep_awake` 字段（推 `ServiceEvent::KeepAwake`）跟随状态变化，因此手机端切换后
+PC 端也会同步。旧服务没有该能力位时，桌面端开关判为不支持。
 
 左键单击等同于"打开 QingLink"：左键 `WM_LBUTTONUP` 直接打开界面，右键才
 `TrackPopupMenu`（菜单从不挂在左键上）。
@@ -653,9 +707,9 @@ fallback 返回并带 1 小时缓存，`index.html` 与未知路径返回外壳�
 → 单实例互斥体（已存在则激活对方并退出）
 → 会话检查（判定当前会话是否受支持）
 → 数据库迁移 → 注册 qinglink/data
-→ Preferences 读取 → 应用调试日志级别（同时读出保持唤醒意图）
+→ Preferences 读取 → 应用调试日志级别（保持唤醒不再走偏好）
 → ServiceRuntime（IPC 线程）
-→ 设置镜像（autostart 读注册表；保持唤醒按偏好恢复并在 main 线程应用）
+→ 设置镜像（autostart 读注册表；保持唤醒初值 false，等管理快照同步）
 → WebState 装配 + 路由构建 + Web 线程（端口占用则硬失败）
 → 托盘创建（NIM_ADD 被拒后：可恢复则定时重试，完整性级别不匹配则立刻报错并打开浏览器兜底）
 → 配对提示窗口创建（失败只降级为"配对码仅在管理界面显示"，不影响启动）

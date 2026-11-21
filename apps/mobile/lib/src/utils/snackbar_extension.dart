@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import '../widgets/top_toast.dart';
 
-/// 全局统一的 Snackbar 反馈。
+/// 全局统一的轻提示反馈。
 ///
-/// 所有页面反馈统一走这里：圆角 12、边距 16、图标 + 语义色、时长 2s。
+/// 所有页面反馈统一走这里：顶部滑入、圆角 12、图标 + 语义色、时长 2s。
+/// 位置由 [showTopToast] 决定：提示钉在安全区顶部、高度随内容增长，
+/// 因此不会像"用超大底部 margin 顶到上方"那样把内容顶出屏幕外。
 extension SnackBarExtension on BuildContext {
   void showSuccessSnackBar(String message) {
     _show(message, AppColors.success, Icons.check_circle_rounded);
@@ -23,35 +26,6 @@ extension SnackBarExtension on BuildContext {
   }
 
   void _show(String message, Color color, IconData icon) {
-    final media = MediaQuery.of(this);
-    // SnackBars are anchored to the bottom; a large bottom margin lifts this
-    // one near the top so it is not covered by the bottom navigation bar or
-    // on-screen controls.
-    final bottomMargin = (media.size.height - media.padding.top - 96)
-        .clamp(AppSpacing.lg, media.size.height)
-        .toDouble();
-    ScaffoldMessenger.of(this).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Icon(icon, color: Colors.white, size: 18),
-            const SizedBox(width: 8),
-            Expanded(child: Text(message)),
-          ],
-        ),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: color,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.md),
-        ),
-        margin: EdgeInsets.fromLTRB(
-          AppSpacing.lg,
-          AppSpacing.lg,
-          AppSpacing.lg,
-          bottomMargin,
-        ),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    showTopToast(this, message: message, color: color, icon: icon);
   }
 }

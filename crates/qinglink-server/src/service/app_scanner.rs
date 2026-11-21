@@ -12,6 +12,7 @@ mod query;
 mod scan;
 mod start_menu;
 mod steam_cache;
+mod steam_exe;
 mod steam_game;
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

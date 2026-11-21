@@ -27,6 +27,12 @@ class DisplayModeInfo {
       ? resolution
       : '$resolution · $refreshText';
 
+  /// 两条模式是否完全相同（宽、高、刷新率逐项相等）。
+  bool equals(DisplayModeInfo other) =>
+      width == other.width &&
+      height == other.height &&
+      refreshMillihz == other.refreshMillihz;
+
   Map<String, dynamic> toJson() => {
     'width': width,
     'height': height,
@@ -49,15 +55,33 @@ class DisplayInfo {
     required this.modes,
   });
 
-  factory DisplayInfo.fromJson(Map<String, dynamic> json) => DisplayInfo(
-    id: json['id'] as String,
-    name: json['name'] as String? ?? '显示器',
-    primary: json['primary'] as bool? ?? false,
-    currentMode: DisplayModeInfo.fromJson(
-      json['current_mode'] as Map<String, dynamic>,
-    ),
-    modes: (json['modes'] as List? ?? const [])
-        .map((mode) => DisplayModeInfo.fromJson(mode as Map<String, dynamic>))
-        .toList(),
-  );
+  factory DisplayInfo.fromJson(Map<String, dynamic> json) {
+    // 旧版服务端可能不返回 modes（当时只给三种裁剪过的候选），字段缺失一律按空处理，
+    // 让界面显示"没有可选的分辨率"而不是整页解析失败。
+    final rawModes = json['modes'];
+    final modes = <DisplayModeInfo>[];
+    if (rawModes is List) {
+      for (final item in rawModes) {
+        if (item is Map) {
+          modes.add(DisplayModeInfo.fromJson(Map<String, dynamic>.from(item)));
+        }
+      }
+    }
+    final rawCurrent = json['current_mode'];
+    final currentMode = rawCurrent is Map
+        ? DisplayModeInfo.fromJson(Map<String, dynamic>.from(rawCurrent))
+        : (modes.isNotEmpty
+              ? modes.first
+              : const DisplayModeInfo(width: 0, height: 0, refreshMillihz: 0));
+    return DisplayInfo(
+      id: json['id'] as String,
+      name: json['name'] as String? ?? '显示器',
+      primary: json['primary'] as bool? ?? false,
+      currentMode: currentMode,
+      modes: modes,
+    );
+  }
+
+  /// 该模式是否就是当前生效的模式。
+  bool isCurrent(DisplayModeInfo mode) => currentMode.equals(mode);
 }

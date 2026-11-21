@@ -94,8 +94,15 @@ impl AppState {
                 // Only mark the pass complete on success, so a transient failure
                 // is retried on the next start instead of leaving old payloads
                 // in place forever.
-                if let Ok(db) = self.app_db.lock() {
-                    let _ = db.set_setting(ICON_PIPELINE_SETTING, ICON_PIPELINE_VERSION);
+                // 标记写不进去只会让下一次启动重跑一遍回填，属于可恢复；
+                // 但必须留痕，否则"每次启动都在回填图标"永远查不到原因。
+                if let Err(error) = crate::lock_unpoisoned(&self.app_db)
+                    .set_setting(ICON_PIPELINE_SETTING, ICON_PIPELINE_VERSION)
+                {
+                    tracing::warn!(
+                        %error,
+                        "图标管线版本标记写入失败，下次启动将重新回填目录图标"
+                    );
                 }
                 tracing::info!(updated, "icon pipeline upgrade: catalog icons refreshed");
             }
@@ -108,7 +115,10 @@ impl AppState {
 const ICON_PIPELINE_SETTING: &str = "icon.pipeline";
 
 /// Bump whenever the extractor's output geometry changes.
-const ICON_PIPELINE_VERSION: &str = "2";
+///
+/// 3：Steam 条目的图源改为读取新版 `librarycache` 布局（按 appid 目录 + 内容哈希），
+/// 之前的条目存的是"猜错 exe 的图标"（崩溃上报器）或干脆没有图标。
+const ICON_PIPELINE_VERSION: &str = "3";
 
 /// Re-resolve and persist the icons of every entry that has a stored payload.
 ///

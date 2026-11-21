@@ -49,7 +49,7 @@ pub(super) fn handle(
         WsClientRequest::DeleteCustomDir { id } => delete_custom_dir(state, id),
         WsClientRequest::ValidateDir { path } => validate_dir(path),
 
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
 }
 

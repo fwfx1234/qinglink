@@ -17,6 +17,7 @@ qinglink-discovery = { path = "../../crates/qinglink-discovery" }
 qinglink-protocol = { path = "../../crates/qinglink-protocol" }
 qinglink-server = { path = "../../crates/qinglink-server" }
 qinglink-storage = { path = "../../crates/qinglink-storage" }
+qinglink-version = { path = "../../crates/qinglink-version" }
 qinglink-windows = { path = "../../crates/qinglink-windows" }
 serde.workspace = true
 serde_json.workspace = true
@@ -33,3 +34,4 @@ workspace = true
 
 [build-dependencies]
 embed-resource = "3.0"
+qinglink-version = { path = "../../crates/qinglink-version" }

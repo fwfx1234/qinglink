@@ -6,6 +6,7 @@ import '../providers/file_controller.dart';
 import '../theme/app_theme.dart';
 import 'app_ui.dart';
 import 'icon_preview_thumb.dart';
+import 'app_sheet.dart';
 
 /// 文件浏览弹层的用途。
 enum FilePickerMode {
@@ -45,11 +46,10 @@ Future<String?> _showFilePicker(
   WidgetRef ref, {
   required FilePickerMode mode,
 }) {
-  return showModalBottomSheet<String>(
-    context: context,
+  return showAppSheet<String>(
+    context,
     isScrollControlled: true,
     useSafeArea: true,
-    showDragHandle: true,
     builder: (_) => FractionallySizedBox(
       heightFactor: 0.86,
       child: _FilePickerSheet(mode: mode),
@@ -156,7 +156,11 @@ class _FilePickerSheetState extends ConsumerState<_FilePickerSheet> {
             ),
           ),
         if (_loading)
-          const LinearProgressIndicator(minHeight: 2, color: AppColors.primary),
+          LinearProgressIndicator(
+            minHeight: 2,
+            color: AppColors.primary,
+            backgroundColor: Colors.transparent,
+          ),
         if (listing != null)
           Expanded(
             child: _PickerBody(

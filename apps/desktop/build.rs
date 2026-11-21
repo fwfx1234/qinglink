@@ -94,6 +94,8 @@ fn main() {
     println!("cargo:rerun-if-changed=assets/tray-icon.svg");
     println!("cargo:rerun-if-changed=qinglink.rc");
     println!("cargo:rerun-if-changed=qinglink.exe.manifest");
+    // 构建号一变，嵌进可执行文件的版本资源也要跟着变（见 embed_version_resource）。
+    println!("cargo:rerun-if-changed=../../crates/qinglink-version/build-number.txt");
     for entry in SERVICE_ASSET_SOURCES {
         println!("cargo:rerun-if-changed={entry}");
     }
@@ -104,6 +106,7 @@ fn main() {
     embed_resource::compile("qinglink.rc", embed_resource::NONE)
         .manifest_optional()
         .unwrap_or_else(|error| panic!("cannot embed qinglink.rc: {error}"));
+    embed_version_resource();
 
     let missing: Vec<_> = REQUIRED_FILES
         .iter()
@@ -157,6 +160,21 @@ fn main() {
     fs::write(output, generated).expect("write generated secure-input assets");
 
     build_web_assets();
+}
+
+/// 生成并嵌入随构建号变化的版本资源。
+///
+/// `qinglink.rc` 只保留应用清单：版本信息里的构建号每次源码改动都会变，写死在
+/// 仓库里必然与界面显示的 `0.1.0+13` 脱节，因此按当前版本与构建号现生成一份。
+fn embed_version_resource() {
+    let script = qinglink_version::version_info_rc("QingLink Desktop", "QingLink.exe");
+    let path = PathBuf::from(env::var_os("OUT_DIR").expect("out dir")).join("version_info.rc");
+    fs::write(&path, script).expect("write generated version resource");
+
+    #[cfg(windows)]
+    embed_resource::compile(&path, embed_resource::NONE)
+        .manifest_optional()
+        .unwrap_or_else(|error| panic!("cannot embed version_info.rc: {error}"));
 }
 
 /// Embed the built single-page frontend into the binary.

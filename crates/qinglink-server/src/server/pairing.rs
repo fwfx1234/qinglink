@@ -39,13 +39,14 @@ impl std::fmt::Debug for PairingNotification {
     }
 }
 
-/// 健康检查：返回本机标识、名称、协议版本与监听端口。
+/// 健康检查：返回本机标识、名称、协议版本、产品版本与监听端口。
 pub async fn health(Extension(state): Extension<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         pc_id: state.service.pc_id().to_string(),
         name: state.service.pc_name(),
         version: 2,
         port: state.service.server_port(),
+        app_version: Some(qinglink_version::VERSION.to_string()),
     })
 }
 
@@ -131,7 +132,10 @@ pub async fn confirm_request(
     let token = state
         .token_store
         .create_paired_token(&result.device_id, &result.device_name)
-        .map_err(|_| {
+        .map_err(|cause| {
+            // 原始错误必须留下：磁盘满、库被锁、唯一约束冲突在这里都会
+            // 呈现为同一句"无法创建令牌"，没有日志就无法区分。
+            tracing::error!(error = %cause, "配对确认后创建令牌失败");
             error(
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "TOKEN_CREATE_FAILED",

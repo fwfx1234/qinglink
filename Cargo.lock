@@ -1213,6 +1213,7 @@ dependencies = [
  "image",
  "qinglink-protocol",
  "qinglink-storage",
+ "qinglink-version",
  "qinglink-windows",
  "resvg",
  "rusqlite",
@@ -1277,6 +1278,7 @@ dependencies = [
  "qinglink-domain",
  "qinglink-protocol",
  "qinglink-storage",
+ "qinglink-version",
  "qinglink-windows",
  "rusqlite",
  "serde",
@@ -1304,6 +1306,7 @@ dependencies = [
  "qinglink-protocol",
  "qinglink-server",
  "qinglink-storage",
+ "qinglink-version",
  "qinglink-windows",
  "serde",
  "serde_json",
@@ -1329,13 +1332,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "qinglink-version"
+version = "0.1.0"
+dependencies = [
+ "sha2",
+]
+
+[[package]]
 name = "qinglink-windows"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
  "image",
- "qinglink-domain",
  "qinglink-protocol",
  "serde",
  "serde_json",

@@ -36,7 +36,7 @@ withDefaults(
 }
 
 .dot--accent {
-  background: var(--accent);
+  background: var(--accent-bright);
 }
 
 .dot--success {

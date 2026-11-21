@@ -1,7 +1,8 @@
 //! 服务管道与会话代理管道的命令解码与分发。
 
 use super::{
-    AGENT_MODE, authorization, desktop, input, lifecycle_monitor, management, pipe::Reply,
+    AGENT_MODE, authorization, desktop, dispatch_input, dispatch_session, input, lifecycle_monitor,
+    management, pipe::Reply,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,14 @@ pub struct Request {
     pub(super) keys: Vec<(u8, u8)>,
     #[serde(default)]
     pub(super) buttons: Vec<String>,
+    #[serde(default)]
+    pub(super) display_id: Option<String>,
+    #[serde(default)]
+    pub(super) width: Option<u32>,
+    #[serde(default)]
+    pub(super) height: Option<u32>,
+    #[serde(default)]
+    pub(super) refresh_millihz: Option<u32>,
     #[serde(flatten)]
     pub(super) extra: HashMap<String, serde_json::Value>,
 }
@@ -87,8 +96,9 @@ pub(super) fn handle_client(
         "release_inputs" | "get_status" | "register_parent" | "heartbeat" | "shutdown" => {
             dispatch_service_command(&mut stream, &request, state, client_pid, monitor, stop_tx)
         }
-        "lock" | "secure_ascii" | "send_text" | "list_windows" | "status" => {
-            dispatch_agent_command(&mut stream, &request)
+        "lock" | "secure_ascii" | "send_text" | "list_windows" | "status" | "focus_text"
+        | "input_state" | "focus_input" | "get_displays" | "set_display_mode" => {
+            dispatch_session::dispatch(&mut stream, &request)
         }
         "focus_window" | "focus_process" | "minimize_window" | "maximize_window"
         | "restore_window" | "close_window" | "switch_window" => {
@@ -98,9 +108,9 @@ pub(super) fn handle_client(
         | "mouse_move_absolute"
         | "mouse_button"
         | "mouse_button_state"
-        | "mouse_wheel" => dispatch_mouse_command(&mut stream, &request),
-        "key_press" | "key_event" => dispatch_key_command(&mut stream, &request),
-        "submit_pin" => submit_pin(&mut stream, request.pin.as_deref()),
+        | "mouse_wheel" => dispatch_input::dispatch_mouse_command(&mut stream, &request),
+        "key_press" | "key_event" => dispatch_input::dispatch_key_command(&mut stream, &request),
+        "submit_pin" => dispatch_input::submit_pin(&mut stream, request.pin.as_deref()),
         _ => write_response(&mut stream, false, "UNKNOWN_COMMAND", "未知输入命令"),
     }
 }
@@ -203,44 +213,6 @@ fn release_held_inputs(stream: &mut Reply, request: &Request) -> Result<()> {
     )
 }
 
-/// 锁屏、安全桌面文本输入、窗口枚举与会话代理就绪状态。
-fn dispatch_agent_command(stream: &mut Reply, request: &Request) -> Result<()> {
-    match request.command.as_str() {
-        "lock" => respond_result(
-            stream,
-            qinglink_windows::power::lock(),
-            "LOCK_FAILED",
-            "SERVICE_OK",
-            "锁屏已请求",
-        ),
-        "secure_ascii" => input_response(
-            stream,
-            qinglink_windows::secure_desktop::send_secure_ascii(
-                request.text.as_deref().unwrap_or(""),
-            ),
-            "安全文本已发送",
-        ),
-        "send_text" => input_response(
-            stream,
-            qinglink_windows::secure_desktop::send_text(request.text.as_deref().unwrap_or("")),
-            "文字已发送",
-        ),
-        "list_windows" => {
-            match serde_json::to_string(&qinglink_windows::platform_windows::enum_windows_light()) {
-                Ok(payload) => write_response(stream, true, "WINDOW_LIST", &payload),
-                Err(error) => {
-                    write_response(stream, false, "WINDOW_LIST_FAILED", &error.to_string())
-                }
-            }
-        }
-        "status" => match qinglink_windows::secure_desktop::status() {
-            Ok(status) => write_agent_status_response(stream, &status),
-            Err(error) => write_response(stream, false, "STATUS_FAILED", &error.to_string()),
-        },
-        _ => write_response(stream, false, "UNKNOWN_COMMAND", "未知输入命令"),
-    }
-}
-
 /// 窗口聚焦、进程聚焦、窗口动作与窗口切换。
 fn dispatch_window_command(stream: &mut Reply, request: &Request) -> Result<()> {
     match request.command.as_str() {
@@ -297,114 +269,6 @@ fn dispatch_window_command(stream: &mut Reply, request: &Request) -> Result<()> 
     }
 }
 
-/// 鼠标移动、按键与滚轮注入。
-fn dispatch_mouse_command(stream: &mut Reply, request: &Request) -> Result<()> {
-    match request.command.as_str() {
-        "mouse_move" => respond_result(
-            stream,
-            input::inject_mouse_move(request.dx.unwrap_or(0), request.dy.unwrap_or(0)),
-            "INPUT_FAILED",
-            "SERVICE_OK",
-            "鼠标移动已发送",
-        ),
-        "mouse_move_absolute" => respond_result(
-            stream,
-            input::inject_mouse_move_absolute(request.dx.unwrap_or(0), request.dy.unwrap_or(0)),
-            "INPUT_FAILED",
-            "SERVICE_OK",
-            "绝对定位鼠标移动已发送",
-        ),
-        "mouse_button" => respond_result(
-            stream,
-            input::inject_mouse_button(request.button.as_deref().unwrap_or("")),
-            "INPUT_FAILED",
-            "SERVICE_OK",
-            "鼠标按键已发送",
-        ),
-        "mouse_button_state" => respond_result(
-            stream,
-            input::inject_mouse_button_state(
-                request.button.as_deref().unwrap_or(""),
-                request.pressed.unwrap_or(false),
-            ),
-            "INPUT_FAILED",
-            "SERVICE_OK",
-            "鼠标按键状态已发送",
-        ),
-        "mouse_wheel" => respond_result(
-            stream,
-            input::inject_mouse_wheel(request.delta.unwrap_or(0)),
-            "INPUT_FAILED",
-            "SERVICE_OK",
-            "鼠标滚轮已发送",
-        ),
-        _ => write_response(stream, false, "UNKNOWN_COMMAND", "未知输入命令"),
-    }
-}
-
-/// 按键按下与 HID 按键事件注入。
-fn dispatch_key_command(stream: &mut Reply, request: &Request) -> Result<()> {
-    match request.command.as_str() {
-        "key_press" => match input::key_to_usage(request.button.as_deref().unwrap_or("")) {
-            Some(usage) => respond_result(
-                stream,
-                input::inject_key_event(usage, 0, true)
-                    .and_then(|()| input::inject_key_event(usage, 0, false)),
-                "INPUT_FAILED",
-                "SERVICE_OK",
-                "按键已发送",
-            ),
-            None => write_response(stream, false, "INVALID_KEY", "不支持的按键"),
-        },
-        "key_event" => respond_result(
-            stream,
-            input::inject_key_event(
-                request.usage.unwrap_or(0),
-                request.modifiers.unwrap_or(0),
-                request.pressed.unwrap_or(false),
-            ),
-            "INPUT_FAILED",
-            "SERVICE_OK",
-            "HID 按键已发送",
-        ),
-        _ => write_response(stream, false, "UNKNOWN_COMMAND", "未知输入命令"),
-    }
-}
-
-fn submit_pin(stream: &mut Reply, pin: Option<&str>) -> Result<()> {
-    let Some(pin) = pin else {
-        return write_response(stream, false, "INVALID_PIN_FORMAT", "PIN 不能为空");
-    };
-    anyhow::ensure!(
-        (4..=32).contains(&pin.len()) && pin.bytes().all(|byte| byte.is_ascii_digit()),
-        "PIN 必须是 4-32 位数字"
-    );
-    let result = pin
-        .chars()
-        .try_for_each(|digit| {
-            let usage = if digit == '0' {
-                0x27
-            } else {
-                0x1d + digit.to_digit(10).unwrap_or(0) as u8
-            };
-            input::inject_key_event(usage, 0, true)?;
-            input::inject_key_event(usage, 0, false)
-        })
-        .and_then(|()| input::inject_key_event(0x28, 0, true))
-        .and_then(|()| input::inject_key_event(0x28, 0, false));
-    respond_result(
-        stream,
-        result,
-        "INPUT_FAILED",
-        "SERVICE_OK",
-        "PIN 已通过 HID 发送",
-    )
-}
-
-fn input_response(stream: &mut Reply, result: Result<()>, message: &str) -> Result<()> {
-    respond_result(stream, result, "INPUT_FAILED", "SERVICE_OK", message)
-}
-
 pub(super) fn named_pipe_client_pid(pipe: HANDLE) -> Result<u32> {
     use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
     let mut pid = 0;
@@ -415,7 +279,12 @@ pub(super) fn named_pipe_client_pid(pipe: HANDLE) -> Result<u32> {
     Ok(pid)
 }
 
-fn write_response(stream: &mut Reply, ok: bool, code: &str, message: &str) -> Result<()> {
+pub(super) fn write_response(
+    stream: &mut Reply,
+    ok: bool,
+    code: &str,
+    message: &str,
+) -> Result<()> {
     stream.send(&Response {
         ok,
         code,
@@ -423,7 +292,7 @@ fn write_response(stream: &mut Reply, ok: bool, code: &str, message: &str) -> Re
         request_id: None,
     })
 }
-fn respond_result<T>(
+pub(super) fn respond_result<T>(
     stream: &mut Reply,
     result: Result<T>,
     error_code: &str,
@@ -448,42 +317,5 @@ fn write_response_with_id(
         code,
         message,
         request_id,
-    })
-}
-
-fn write_agent_status_response(
-    stream: &mut Reply,
-    status: &qinglink_windows::secure_desktop::SecureDesktopStatus,
-) -> Result<()> {
-    #[derive(Serialize)]
-    struct AgentStatus<'a> {
-        ok: bool,
-        code: &'a str,
-        message: &'a str,
-        desktop: &'a str,
-        locked: bool,
-        uac_detected: bool,
-        input_ready: bool,
-        session_id: u32,
-        token_integrity_level: u32,
-        agent_state: &'a str,
-        last_error: &'a str,
-    }
-    stream.send(&AgentStatus {
-        ok: status.input_ready,
-        code: if status.input_ready {
-            "AGENT_READY"
-        } else {
-            "AGENT_NOT_READY"
-        },
-        message: "QingLink 会话代理已就绪",
-        desktop: &status.desktop,
-        locked: status.locked,
-        uac_detected: status.uac_detected,
-        input_ready: status.input_ready,
-        session_id: status.session_id,
-        token_integrity_level: status.token_integrity_level,
-        agent_state: &status.agent_state,
-        last_error: &status.last_error,
     })
 }

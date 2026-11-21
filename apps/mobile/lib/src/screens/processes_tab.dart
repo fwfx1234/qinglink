@@ -164,7 +164,7 @@ class _ProcessSearchBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18),
+      padding: const EdgeInsets.symmetric(horizontal: AppMetrics.pagePadding),
       child: SearchField(
         controller: controller,
         hint: '搜索进程或 PID',
@@ -185,7 +185,7 @@ class _ProcessFilterBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18),
+      padding: const EdgeInsets.symmetric(horizontal: AppMetrics.pagePadding),
       child: Row(
         children: [
           FilterChipX(
@@ -193,7 +193,7 @@ class _ProcessFilterBar extends StatelessWidget {
             active: filter == 'user',
             onTap: () => onChanged('user'),
           ),
-          const SizedBox(width: 7),
+          const SizedBox(width: AppSpacing.sm),
           FilterChipX(
             label: '全部',
             active: filter == 'all',
@@ -223,19 +223,21 @@ class _ProcessList extends StatelessWidget {
   final ScrollController scrollController;
   final VoidCallback onRefresh;
 
-  static List<Object> _groupedRows(List<ProcessInfo> processes) {
+  /// 按 group 切成连续的分组块，每块单独渲染成一张卡片（设计稿 S6）。
+  static List<_ProcessGroup> _groupedBlocks(List<ProcessInfo> processes) {
     // 与 PC 任务管理器一致：应用 / 后台进程 / Windows 进程。
-    final rows = <Object>[];
-    String? currentGroup;
+    final blocks = <_ProcessGroup>[];
     for (final process in processes) {
       final group = process.group ?? 'background';
-      if (group != currentGroup) {
-        currentGroup = group;
-        rows.add(_groupLabel(group));
+      if (blocks.isEmpty || blocks.last.key != group) {
+        blocks.add(
+          _ProcessGroup(key: group, label: _groupLabel(group), items: [process]),
+        );
+      } else {
+        blocks.last.items.add(process);
       }
-      rows.add(process);
     }
-    return rows;
+    return blocks;
   }
 
   static String _groupLabel(String group) {
@@ -251,20 +253,19 @@ class _ProcessList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rows = _groupedRows(processes);
+    final blocks = _groupedBlocks(processes);
     return Column(
       children: [
         if (isLoading && processes.isNotEmpty)
-          const LinearProgressIndicator(
+          LinearProgressIndicator(
             minHeight: 2,
             color: AppColors.primary,
+            backgroundColor: Colors.transparent,
           ),
         Expanded(
           child: isLoading && processes.isEmpty
               ? const Center(
-                  child: CircularProgressIndicator(
-                    color: AppColors.primary,
-                  ),
+                  child: CircularProgressIndicator(),
                 )
               : processes.isEmpty
               ? EmptyState(
@@ -277,10 +278,21 @@ class _ProcessList extends StatelessWidget {
                   color: AppColors.primary,
                   child: ListView.builder(
                     controller: scrollController,
-                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
-                    itemCount: rows.length + (hasMore ? 1 : 0),
-                    itemBuilder: (context, index) =>
-                        _ProcessRow(rows: rows, index: index),
+                    padding: const EdgeInsets.fromLTRB(
+                      AppMetrics.pagePadding,
+                      0,
+                      AppMetrics.pagePadding,
+                      AppSpacing.xl,
+                    ),
+                    itemCount: blocks.length + (hasMore ? 1 : 0),
+                    itemBuilder: (context, index) => index >= blocks.length
+                        ? const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(AppSpacing.lg),
+                              child: CircularProgressIndicator(),
+                            ),
+                          )
+                        : _ProcessGroupBlock(group: blocks[index]),
                   ),
                 ),
         ),
@@ -289,38 +301,61 @@ class _ProcessList extends StatelessWidget {
   }
 }
 
-/// 列表中的一行：分组标题、进程卡片，或列表尾部的加载占位。
-class _ProcessRow extends ConsumerWidget {
-  const _ProcessRow({required this.rows, required this.index});
+/// 一个连续的进程分组（标题 + 该组的进程）。
+class _ProcessGroup {
+  _ProcessGroup({
+    required this.key,
+    required this.label,
+    required List<ProcessInfo> items,
+  }) : items = <ProcessInfo>[...items];
 
-  final List<Object> rows;
-  final int index;
+  /// 服务端给的分组标识（app / background / system）。
+  final String key;
+  final String label;
+  final List<ProcessInfo> items;
+}
+
+/// 分组块：标题在上，进程行收在一张整卡里，行间用分隔线。
+class _ProcessGroupBlock extends ConsumerWidget {
+  const _ProcessGroupBlock({required this.group});
+
+  final _ProcessGroup group;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (index >= rows.length) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(16),
-          child: CircularProgressIndicator(),
-        ),
-      );
-    }
-    final row = rows[index];
-    if (row is String) {
-      return _GroupHeader(title: row);
-    }
-    final process = row as ProcessInfo;
+    final palette = context.palette;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: _ProcessItem(
-        process: process,
-        onKill: () => confirmKillProcess(
-          context,
-          ref,
-          pid: process.pid,
-          name: process.name,
-        ),
+      padding: const EdgeInsets.only(bottom: AppSpacing.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _GroupHeader(title: group.label),
+          AppCard(
+            radius: AppRadius.md,
+            padding: EdgeInsets.zero,
+            child: ClipRRect(
+              // 卡片描边是直角画在外层，圆角在这里裁，避免 decoration
+              // 同时带 border + borderRadius 时整块内容不绘制的问题。
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              child: Column(
+                children: [
+                  for (var i = 0; i < group.items.length; i++) ...[
+                    if (i > 0) Divider(height: 1, color: palette.line),
+                    _ProcessItem(
+                      process: group.items[i],
+                      onKill: () => confirmKillProcess(
+                        context,
+                        ref,
+                        pid: group.items[i].pid,
+                        name: group.items[i].name,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -337,10 +372,7 @@ class _GroupHeader extends StatelessWidget {
       padding: const EdgeInsets.only(top: 10, bottom: 8),
       child: Text(
         title,
-        style: AppText.label.copyWith(
-          fontWeight: FontWeight.w700,
-          color: palette.textSubtle,
-        ),
+        style: AppText.label.copyWith(color: palette.textMuted),
       ),
     );
   }
@@ -356,18 +388,23 @@ class _ProcessItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final isSystem = process.group == 'system' || process.pid <= 4;
-    return AppCard(
-      minHeight: 60,
-      radius: AppRadius.md,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    return Container(
+      constraints: const BoxConstraints(minHeight: AppMetrics.listRow),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
       child: Row(
         children: [
           ProcessIcon(
             path: process.path,
             pid: process.pid,
+            size: 40,
+            radius: AppRadius.sm,
+            iconSize: 20,
             color: palette.textMuted,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -377,10 +414,7 @@ class _ProcessItem extends StatelessWidget {
                   process.displayLabel,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: AppText.body.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: palette.textPrimary,
-                  ),
+                  style: AppText.rowTitle.copyWith(color: palette.textPrimary),
                 ),
                 const SizedBox(height: 3),
                 Text(
@@ -389,7 +423,7 @@ class _ProcessItem extends StatelessWidget {
                       : 'PID ${process.pid} · ${process.memoryText}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: AppText.meta.copyWith(color: palette.textSubtle),
+                  style: AppText.meta.copyWith(color: palette.textMuted),
                 ),
               ],
             ),
@@ -402,8 +436,9 @@ class _ProcessItem extends StatelessWidget {
               tooltip: '结束进程',
               size: 36,
               iconSize: 16,
-              radius: 8,
-              color: AppColors.red,
+              radius: AppRadius.sm,
+              background: palette.surface2,
+              color: palette.textMuted,
               onPressed: onKill,
             ),
         ],

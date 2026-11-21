@@ -72,3 +72,11 @@ pub fn install_console_ctrl_handler() -> anyhow::Result<()> {
 pub fn lock() -> anyhow::Result<()> {
     crate::power::lock()
 }
+
+/// 开启或关闭保持唤醒，转发到 `crate::power::set_keep_awake`。
+///
+/// # Errors
+/// 透传 [`crate::power::set_keep_awake`] 的错误：`SetThreadExecutionState` 返回 0。
+pub fn set_keep_awake(enabled: bool) -> anyhow::Result<()> {
+    crate::power::set_keep_awake(enabled)
+}

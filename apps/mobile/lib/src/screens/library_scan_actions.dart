@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../app/routes.dart';
+import '../core/network/remote_command_exception.dart';
 import '../providers/favorites_controller.dart';
 import '../providers/launcher_controller.dart';
 import '../providers/library_controller.dart';
@@ -84,6 +85,10 @@ class LibraryScanActions {
       if (context.mounted) {
         context.showSuccessSnackBar('已开始扫描：开始菜单 + Steam');
       }
+    } on RemoteCommandException catch (error) {
+      // 服务端拒绝时带的是可直接展示的文案（如"检测到游戏运行，扫描已延后"），
+      // 把稳定错误码拼在用户眼前没有意义。
+      if (context.mounted) context.showErrorSnackBar(error.message);
     } catch (error) {
       if (context.mounted) context.showErrorSnackBar('扫描失败: $error');
     } finally {

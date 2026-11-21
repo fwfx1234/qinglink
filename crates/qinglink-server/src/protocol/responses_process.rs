@@ -187,46 +187,11 @@ pub struct GameScanCandidatesResponse {
     pub candidates: Vec<LauncherItemSummary>,
 }
 
-/// 前台窗口信息响应。
-#[derive(Debug, Serialize)]
-pub struct ForegroundResponse {
-    /// 前台窗口所属进程的 PID。
-    pub pid: u32,
-    /// 前台窗口标题。
-    pub title: String,
-    /// 前台窗口所属进程的可执行文件路径。
-    pub path: Option<String>,
-    /// 前台窗口所属进程的进程名。
-    pub process_name: String,
-    /// 前台窗口句柄（HWND）的数值形式。
-    pub hwnd: usize,
-}
-
-/// 显示器的显示模式。
-#[derive(Debug, Clone, Serialize)]
-pub struct DisplayModeResponse {
-    /// 水平分辨率（像素）。
-    pub width: u32,
-    /// 垂直分辨率（像素）。
-    pub height: u32,
-    /// 刷新率，单位为毫赫兹（mHz）。
-    pub refresh_millihz: u32,
-}
-
-/// 单个显示器的信息。
-#[derive(Debug, Clone, Serialize)]
-pub struct DisplayInfoResponse {
-    /// 显示器唯一标识。
-    pub id: String,
-    /// 显示器名称。
-    pub name: String,
-    /// 是否为主显示器。
-    pub primary: bool,
-    /// 当前生效的显示模式。
-    pub current_mode: DisplayModeResponse,
-    /// 该显示器支持的全部显示模式。
-    pub modes: Vec<DisplayModeResponse>,
-}
+// 这三个响应体只有协议层一份定义，本文件只做重导出。
+//
+// `ForegroundResponse.focus_text` 曾在两边带不同的 `serde` 属性（这边 omit、
+// 协议层发 `null`），同一条消息因此有两种线格式。去重后行为固定为"无文本时省略"。
+pub use qinglink_protocol::{DisplayInfoResponse, DisplayModeResponse, ForegroundResponse};
 
 /// 显示器列表响应。
 #[derive(Debug, Clone, Serialize)]

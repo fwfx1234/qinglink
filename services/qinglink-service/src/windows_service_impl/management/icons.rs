@@ -1,7 +1,7 @@
 //! 应用图标：读取缓存、重解析候选、列出候选文件。
 //!
-//! 只有用户显式指定的图标文件才会写入条目的偏好；自动解析结果可复现，固化它
-//! 反而会让后续刷新误判为手动来源。
+//! 只有用户显式指定的图标文件才会写入条目的 `icon_path` 偏好；按需读取时解析出的
+//! 自动结果只缓存「载荷 + 来源」，因此后续刷新仍按自动链重新解析，不会被误判成手动来源。
 
 use crate::windows_service_impl::management::catalog_edit::publish_catalog_change;
 use crate::windows_service_impl::management::lookup::{find_entry, steam_artwork};
@@ -21,12 +21,22 @@ struct IconChoice {
 }
 
 /// Return the stored icon, falling back to a fresh extraction.
+///
+/// 解析成功的结果会被缓存（载荷 + 来源，不写 `icon_path`），这样同一个条目在
+/// 后续请求里拿到的是同一份载荷：每次重读文件资源时偶发的提取失败会让图标
+/// "时而有时而没有"。
 pub(super) fn get_app_icon(state: &AppState, id: &str) -> CommandResult {
     let entry = find_entry(state, id)?;
-    let icon_base64 = entry.icon_base64.clone().or_else(|| {
-        qinglink_server::platform::resolve_icon(&entry.exe_path, entry.icon_path.as_deref())
-            .icon_base64
-    });
+    let icon_base64 = match entry.icon_base64.clone() {
+        Some(icon) => Some(icon),
+        None => qinglink_server::server::icon_service::resolve_and_remember(
+            state,
+            &entry.id,
+            &entry.exe_path,
+            entry.icon_path.as_deref(),
+            &entry.source,
+        ),
+    };
     // Reject oversized payloads rather than letting the IPC frame grow
     // without bound; the UI falls back to a placeholder. The extractor
     // already stays inside the budget, so this is only a safety net.

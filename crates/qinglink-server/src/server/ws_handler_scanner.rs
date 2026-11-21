@@ -6,9 +6,6 @@ pub(super) fn handle(
     _session_token: Option<&str>,
 ) -> WsServerMessage {
     match req {
-        // === Legacy scanner ===
-        WsClientRequest::GetScannerApps => list_scanner_apps(state),
-        WsClientRequest::RefreshScannerApps => refresh_scanner_apps(state),
         WsClientRequest::RenameScannerApp {
             id,
             original_name,
@@ -23,42 +20,8 @@ pub(super) fn handle(
             kind,
         } => add_scanned_games(state, path, exe_paths, names, kind),
 
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
-}
-
-/// 返回扫描器缓存中的全部条目。
-fn list_scanner_apps(state: &AppState) -> WsServerMessage {
-    let apps = state.app_scanner.get_or_scan();
-    let response: Vec<crate::service::app_scanner::ScannerAppEntryResponse> =
-        apps.into_iter().map(Into::into).collect();
-    WsServerMessage::Response(WsServerResponse::ScannerApps(response))
-}
-
-/// 重新扫描本机应用，按类别写入数据库后刷新可见目录。
-fn refresh_scanner_apps(state: &AppState) -> WsServerMessage {
-    let apps = state.app_scanner.scan();
-    let response: Vec<crate::service::app_scanner::ScannerAppEntryResponse> =
-        apps.into_iter().map(Into::into).collect();
-    let cached = state.app_scanner.get_or_scan();
-    let db = crate::lock_unpoisoned(&state.app_db);
-    let scanned_apps: Vec<_> = cached
-        .iter()
-        .filter(|app| !app.category.eq_ignore_ascii_case("game"))
-        .cloned()
-        .collect();
-    let scanned_games: Vec<_> = cached
-        .iter()
-        .filter(|app| app.category.eq_ignore_ascii_case("game"))
-        .cloned()
-        .collect();
-    let _ = db.sync_scanned_kind("app", &scanned_apps);
-    let _ = db.sync_scanned_kind("game", &scanned_games);
-    let _ = db.mark_scan_completed("app");
-    let _ = db.mark_scan_completed("game");
-    drop(db);
-    reload_visible_catalog(state);
-    WsServerMessage::Response(WsServerResponse::ScannerApps(response))
 }
 
 /// 重命名条目：先写数据库，再改扫描器缓存，最后刷新可见目录。
@@ -90,7 +53,12 @@ fn rename_scanner_app(
         result
     };
     match result {
-        Ok(()) => {
+        // 0 行说明该 id 不存在：继续改缓存与刷新目录只会让"改名没生效"
+        // 以成功的形态返回给客户端。
+        Ok(0) => {
+            WsServerMessage::Response(WsServerResponse::error("NOT_FOUND", "目录中不存在该条目"))
+        }
+        Ok(_) => {
             tracing::info!("[rename] 2/3 app_scanner.rename 开始");
             state.app_scanner.rename(original_name, new_name);
             tracing::info!(

@@ -13,4 +13,10 @@ pub struct HealthResponse {
     pub version: u8,
     /// 服务实际监听的 TCP 端口。
     pub port: u16,
+    /// 服务端产品版本号，形如 `0.1.0+13`。
+    ///
+    /// 旧版服务不返回该字段，因此解析侧要容忍缺失：缺失表示"服务端版本未知"，
+    /// 而不是"版本为空"。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_version: Option<String>,
 }

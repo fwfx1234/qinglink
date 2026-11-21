@@ -55,6 +55,7 @@ windows_only_bail!(sleep, anyhow::Result<()>, _hibernate: bool);
 windows_only_bail!(restart, anyhow::Result<()>, _force: bool, _delay_secs: u64);
 windows_only_bail!(logoff, anyhow::Result<()>);
 windows_only_bail!(lock, anyhow::Result<()>);
+windows_only_bail!(set_keep_awake, anyhow::Result<()>, _enabled: bool);
 windows_only_bail!(auto_unlock, anyhow::Result<()>, _pin: Option<&str>);
 
 // === Application & window queries ===
@@ -253,6 +254,11 @@ windows_only_bail!(key_event, anyhow::Result<()>, _usage: u8, _modifiers: u8, _p
 /// 非 Windows 平台不存在安全桌面，恒返回 `false`。
 pub fn is_secure_desktop() -> anyhow::Result<bool> {
     Ok(false)
+}
+
+/// 非 Windows 平台没有物理鼠标状态可读，恒返回"全部抬起"。
+pub fn mouse_buttons_state() -> qinglink_protocol::MouseButtonsState {
+    qinglink_protocol::MouseButtonsState::default()
 }
 
 windows_only_bail!(configure_no_password_wake, anyhow::Result<()>);

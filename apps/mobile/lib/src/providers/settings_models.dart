@@ -191,6 +191,12 @@ class ConnectionConfig {
   /// 唤醒后是否自动尝试确认解锁
   final bool autoUnlockOnWake;
 
+  /// PC 焦点进入输入框时是否自动弹出手机输入面板。
+  ///
+  /// 默认开启（设计稿把"PC 侧一聚焦就能打字"当成主路径）；关掉后仍可从
+  /// 控制页的键盘按钮手动打开，只是不再被远端事件抢占。
+  final bool autoOpenKeyboardOnFocus;
+
   /// 发送唤醒时是否同步打开电视（当前遥控器的红外电源键）。
   final bool tvFollowPcPowerOn;
 
@@ -223,6 +229,7 @@ class ConnectionConfig {
     this.mouseSensitivity = defaultMouseSensitivity,
     this.reversePhoneScrollBar = false,
     this.autoUnlockOnWake = false,
+    this.autoOpenKeyboardOnFocus = true,
     this.tvFollowPcPowerOn = false,
     this.tvFollowPcPowerOff = false,
     this.lockPasswordConfigured = false,
@@ -252,6 +259,7 @@ class ConnectionConfig {
     double? mouseSensitivity,
     bool? reversePhoneScrollBar,
     bool? autoUnlockOnWake,
+    bool? autoOpenKeyboardOnFocus,
     bool? tvFollowPcPowerOn,
     bool? tvFollowPcPowerOff,
     bool? lockPasswordConfigured,
@@ -280,6 +288,8 @@ class ConnectionConfig {
       reversePhoneScrollBar:
           reversePhoneScrollBar ?? this.reversePhoneScrollBar,
       autoUnlockOnWake: autoUnlockOnWake ?? this.autoUnlockOnWake,
+      autoOpenKeyboardOnFocus:
+          autoOpenKeyboardOnFocus ?? this.autoOpenKeyboardOnFocus,
       tvFollowPcPowerOn: tvFollowPcPowerOn ?? this.tvFollowPcPowerOn,
       tvFollowPcPowerOff: tvFollowPcPowerOff ?? this.tvFollowPcPowerOff,
       lockPasswordConfigured:
@@ -312,6 +322,7 @@ class ConnectionConfig {
     'mouseSensitivity': mouseSensitivity,
     'reversePhoneScrollBar': reversePhoneScrollBar,
     'autoUnlockOnWake': autoUnlockOnWake,
+    'autoOpenKeyboardOnFocus': autoOpenKeyboardOnFocus,
     'tvFollowPcPowerOn': tvFollowPcPowerOn,
     'tvFollowPcPowerOff': tvFollowPcPowerOff,
     'lockPasswordConfigured': lockPasswordConfigured,
@@ -350,6 +361,8 @@ class ConnectionConfig {
       ),
       reversePhoneScrollBar: json['reversePhoneScrollBar'] as bool? ?? false,
       autoUnlockOnWake: json['autoUnlockOnWake'] as bool? ?? false,
+      autoOpenKeyboardOnFocus:
+          json['autoOpenKeyboardOnFocus'] as bool? ?? true,
       tvFollowPcPowerOn: json['tvFollowPcPowerOn'] as bool? ?? false,
       tvFollowPcPowerOff: json['tvFollowPcPowerOff'] as bool? ?? false,
       lockPasswordConfigured: json['lockPasswordConfigured'] as bool? ?? false,

@@ -18,8 +18,6 @@ import '../providers/auth_provider.dart';
 import '../providers/feature_facades.dart';
 import '../providers/settings_provider.dart';
 import '../providers/system_controller.dart';
-import '../services/ws_client.dart';
-import '../theme/app_theme.dart';
 import 'home_bottom_nav.dart';
 import 'home_connection.dart';
 import 'home_notifications.dart';
@@ -38,6 +36,9 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen>
     with WidgetsBindingObserver {
+  /// 三个 Tab 的页面标题，顶栏只展示“我在哪”。
+  static const _tabTitles = ['首页', '库', '更多'];
+
   int _currentIndex = 0;
   WakeState _wakeState = WakeState.idle;
   late final PageController _pageController;
@@ -181,31 +182,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    final authState = ref.watch(connectionProvider);
-    final pcName = ref.watch(settingsProvider.select((s) => s.pcName));
-    final remoteWsState = ref.watch(connectionReadyProvider)
-        ? WsConnectionState.connected
-        : WsConnectionState.disconnected;
     return Scaffold(
-      body: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              AppColors.primary.withValues(alpha: 0.05),
-              Colors.transparent,
-            ],
-            stops: const [0, 0.28],
-          ),
-        ),
+      body: SafeArea(
+        bottom: false,
         child: Column(
           children: [
-            HomeTopBar(
-              authState: authState,
-              remoteWsState: remoteWsState,
-              pcName: pcName,
-            ),
+            HomeTopBar(title: _tabTitles[_currentIndex]),
             Expanded(
               child: PageView.builder(
                 controller: _pageController,

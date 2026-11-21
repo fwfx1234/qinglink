@@ -49,7 +49,9 @@ impl AppDatabase {
     ///
     /// # Errors
     /// 取不到数据库连接或更新常用标记的语句执行失败时返回 `Err`。
-    pub fn set_favorite(&self, id: &str, favorite: bool) -> Result<(), String> {
+    ///
+    /// 返回受影响行数：`0` 表示该 id 不存在，调用方应回 `NOT_FOUND`。
+    pub fn set_favorite(&self, id: &str, favorite: bool) -> Result<usize, String> {
         let conn = self
             .database
             .connection(&self.db_key)
@@ -61,15 +63,16 @@ impl AppDatabase {
              WHERE id = ?3",
             rusqlite::params![if favorite { 1 } else { 0 }, now, id],
         )
-        .map_err(|e| e.to_string())?;
-        Ok(())
+        .map_err(|e| e.to_string())
     }
 
     /// Pin / unpin an entry on the phone's home page.
     ///
     /// # Errors
     /// 取不到数据库连接或更新置顶标记的语句执行失败时返回 `Err`。
-    pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<(), String> {
+    ///
+    /// 返回受影响行数：`0` 表示该 id 不存在，调用方应回 `NOT_FOUND`。
+    pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<usize, String> {
         let conn = self
             .database
             .connection(&self.db_key)
@@ -83,7 +86,6 @@ impl AppDatabase {
              WHERE id = ?3",
             rusqlite::params![if pinned { 1 } else { 0 }, now, id],
         )
-        .map_err(|e| e.to_string())?;
-        Ok(())
+        .map_err(|e| e.to_string())
     }
 }

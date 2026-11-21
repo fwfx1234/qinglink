@@ -8,7 +8,16 @@ class TouchpadInputController {
   static const int maxMouseDelta = 500;
   static const Duration longPressDuration = Duration(milliseconds: 400);
   static const Duration _minimumFlushInterval = Duration(milliseconds: 16);
+
+  /// 轻点 / 移动判定阈值：超过它就不再是"点击"。
   static const double _tapSlop = 6;
+
+  /// 长按识别之后进入拖拽的阈值。
+  ///
+  /// 与 [_tapSlop] 分开：`_tapSlop = 6` 是按灵敏度倍率前的逻辑像素，默认 4 倍灵敏度
+  /// 下等于 24 像素光标位移，用户"按住不动然后小幅拖动"会被判成没动，松手反而弹右键。
+  static const double _dragSlop = 3;
+
   static const double _pixelsPerScrollStep = 14;
 
   TouchpadInputController({
@@ -36,7 +45,7 @@ class TouchpadInputController {
   /// 拖选开始：PC 端左键按下。
   final void Function() onSelectionDragStart;
 
-  /// 拖选结束（发生过实际拖动）：PC 端左键抬起 + 自动右键。
+  /// 拖选结束（发生过实际拖动）：仅 PC 端左键抬起，松手后不再补右键。
   final void Function() onSelectionDragEnd;
 
   /// 拖选被取消（第二指落下/系统取消）：仅左键抬起。
@@ -115,8 +124,8 @@ class TouchpadInputController {
       final totalDelta = position - (_pointerOrigins[pointer] ?? position);
 
       if (_longPressRecognized) {
-        // 长按已识别：位移超过阈值才真正进入拖选（左键按下）。
-        if (!_selecting && totalDelta.distance > _tapSlop) {
+        // 长按已识别：位移超过 [_dragSlop] 即进入拖选（左键按下）。
+        if (!_selecting && totalDelta.distance > _dragSlop) {
           _selecting = true;
           onSelectionDragStart();
         }
@@ -167,7 +176,7 @@ class TouchpadInputController {
         _longPressRecognized = false;
         onRightTap();
       } else if (_selecting) {
-        // 拖选结束：先发出残留位移，再通知上层抬左键 + 自动右键。
+        // 拖选结束：先发出残留位移，再通知上层抬左键（不补右键）。
         _selecting = false;
         _longPressRecognized = false;
         flushNow();

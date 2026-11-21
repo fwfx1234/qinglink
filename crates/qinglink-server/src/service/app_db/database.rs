@@ -117,47 +117,27 @@ impl AppDatabase {
             )
             .map_err(|e| e.to_string())?;
         // Migrate databases created before deletion support was introduced.
-        let _ = connection.execute(
-            "ALTER TABLE scanner_apps ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
-        let _ = connection.execute("ALTER TABLE scanner_apps ADD COLUMN display_name TEXT", []);
-        let _ = connection.execute(
-            "ALTER TABLE scanner_apps ADD COLUMN args TEXT NOT NULL DEFAULT '[]'",
-            [],
-        );
+        //
+        // 每一列都先查 `PRAGMA table_info` 再决定是否 ALTER：`ALTER TABLE ADD COLUMN`
+        // 对已存在的列会报错，靠吞掉错误来"兼容"会把**真正的迁移失败**一起吞掉，
+        // 于是初始化仍返回 Ok，之后在完全无关的功能处报 "no such column"。
+        add_column_if_missing(&connection, "is_deleted", "INTEGER NOT NULL DEFAULT 0")?;
+        add_column_if_missing(&connection, "display_name", "TEXT")?;
+        add_column_if_missing(&connection, "args", "TEXT NOT NULL DEFAULT '[]'")?;
         // Icon provenance: which file the payload came from, and when it was
         // last resolved. Databases created before per-entry icon management
         // simply have no provenance recorded.
-        let _ = connection.execute("ALTER TABLE scanner_apps ADD COLUMN icon_path TEXT", []);
-        let _ = connection.execute("ALTER TABLE scanner_apps ADD COLUMN icon_source TEXT", []);
-        let _ = connection.execute(
-            "ALTER TABLE scanner_apps ADD COLUMN icon_updated_at INTEGER",
-            [],
-        );
+        add_column_if_missing(&connection, "icon_path", "TEXT")?;
+        add_column_if_missing(&connection, "icon_source", "TEXT")?;
+        add_column_if_missing(&connection, "icon_updated_at", "INTEGER")?;
         // Curation flags. They used to live in the phone's SharedPreferences,
         // which meant "我的常用" did not follow the PC or the user's other
         // devices; the service is now their only owner.
-        let _ = connection.execute(
-            "ALTER TABLE scanner_apps ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
-        let _ = connection.execute(
-            "ALTER TABLE scanner_apps ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
-        let _ = connection.execute(
-            "ALTER TABLE scanner_apps ADD COLUMN launch_width INTEGER",
-            [],
-        );
-        let _ = connection.execute(
-            "ALTER TABLE scanner_apps ADD COLUMN launch_height INTEGER",
-            [],
-        );
-        let _ = connection.execute(
-            "ALTER TABLE scanner_apps ADD COLUMN launch_refresh_millihz INTEGER",
-            [],
-        );
+        add_column_if_missing(&connection, "is_favorite", "INTEGER NOT NULL DEFAULT 0")?;
+        add_column_if_missing(&connection, "is_pinned", "INTEGER NOT NULL DEFAULT 0")?;
+        add_column_if_missing(&connection, "launch_width", "INTEGER")?;
+        add_column_if_missing(&connection, "launch_height", "INTEGER")?;
+        add_column_if_missing(&connection, "launch_refresh_millihz", "INTEGER")?;
         // Older builds wrote a renamed label into `name`. Preserve it as the
         // display override while restoring `name` to its scanner-owned role.
         connection
@@ -170,4 +150,34 @@ impl AppDatabase {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
+}
+
+/// 给 `scanner_apps` 补一列：已存在则跳过，`ALTER` 失败向上传播。
+///
+/// `ALTER TABLE ADD COLUMN` 对已存在的列返回错误，所以"先查后改"是必需的；
+/// 但**不能**靠吞掉这个错误来兼容，否则真正的迁移失败会被一起吞掉。
+fn add_column_if_missing(
+    connection: &rusqlite::Connection,
+    column: &str,
+    definition: &str,
+) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(scanner_apps)")
+        .map_err(|e| e.to_string())?;
+    let existing = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(statement);
+    if existing.iter().any(|name| name == column) {
+        return Ok(());
+    }
+    connection
+        .execute(
+            &format!("ALTER TABLE scanner_apps ADD COLUMN {column} {definition}"),
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }

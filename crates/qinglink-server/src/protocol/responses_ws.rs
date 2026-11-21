@@ -47,6 +47,11 @@ pub enum WsServerResponse {
         /// 网卡适配器信息列表。
         networks: Vec<qinglink_protocol::WakeNetworkAdapter>,
     },
+    /// 服务进程当前的保持唤醒状态。
+    KeepAwakeStatus {
+        /// 是否正在阻止系统自动休眠与显示器熄屏。
+        enabled: bool,
+    },
 
     // === Processes ===
     /// 进程分页列表。

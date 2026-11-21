@@ -5,8 +5,8 @@ use qinglink_storage::database::DatabaseService;
 
 /// 桌面端自己的持久化偏好。
 ///
-/// 只放桌面端进程私有的开关（调试日志、保持唤醒）：业务数据与服务状态都不在这里，
-/// 那些以服务侧的数据库与 IPC 为准。
+/// 只放桌面端进程私有的开关（调试日志）：业务数据与服务状态都不在这里，
+/// 那些以服务侧的数据库与 IPC 为准；保持唤醒也已统一由服务进程持有。
 #[derive(Clone)]
 pub struct Preferences {
     database: Arc<DatabaseService>,
@@ -28,22 +28,6 @@ impl Preferences {
     /// 取不到数据库连接或写入失败时返回 `Err`。
     pub fn set_debug_logging(&self, enabled: bool) -> Result<()> {
         self.set_boolean("logging.debug", enabled)
-    }
-
-    /// 保持唤醒（阻止系统休眠与显示器熄屏）是否开启。
-    pub fn keep_awake(&self) -> bool {
-        self.boolean("power.keep_awake")
-    }
-
-    /// 持久化保持唤醒开关。
-    ///
-    /// 这里只记用户意图，真正的 `SetThreadExecutionState` 状态是 per-thread 的，
-    /// 由启动装配在 main 线程上恢复（见 `bootstrap::restore_keep_awake`）。
-    ///
-    /// # Errors
-    /// 取不到数据库连接或写入失败时返回 `Err`。
-    pub fn set_keep_awake(&self, enabled: bool) -> Result<()> {
-        self.set_boolean("power.keep_awake", enabled)
     }
 
     /// 读一个布尔偏好：缺失、连接失败或值不是 `true` 都按 `false` 处理。

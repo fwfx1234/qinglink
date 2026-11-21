@@ -1,4 +1,10 @@
-//! 系统电源与会话控制：关机、重启、睡眠、注销、锁屏，以及唤醒免密与服务退出清理。
+//! 系统电源与会话控制：关机、重启、睡眠、注销、锁屏、保持唤醒，以及唤醒免密与
+//! 服务退出清理。
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use super::platform_impl;
 
@@ -90,4 +96,93 @@ pub fn install_console_ctrl_handler() -> anyhow::Result<()> {
 /// 返回 `Err`；非 Windows 平台恒返回不支持错误。
 pub fn configure_no_password_wake() -> anyhow::Result<()> {
     platform_impl::configure_no_password_wake()
+}
+
+// === 保持唤醒 ===
+
+/// 保持唤醒的状态与命令通道。
+///
+/// `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)`
+/// 是 **per-thread** 状态：哪个线程调用，请求就归哪个线程持有，线程退出时请求随即
+/// 失效。WS 请求落在 tokio 的工作线程上，既不能保证每次都是同一条线程，也不能
+/// 保证线程长期存活。因此由一条专用常驻线程串行执行所有开关，进程退出时由系统回收。
+struct KeepAwake {
+    /// 当前开关状态，供 [`keep_awake`] 读取。
+    enabled: AtomicBool,
+    /// 命令通道；`None` 表示常驻线程创建失败。
+    commands: Option<Mutex<Sender<KeepAwakeCommand>>>,
+}
+
+/// 一次开关请求，`reply` 回传平台调用结果，使 WS 请求能同步拿到成败。
+struct KeepAwakeCommand {
+    enabled: bool,
+    reply: Sender<anyhow::Result<()>>,
+}
+
+static KEEP_AWAKE: OnceLock<KeepAwake> = OnceLock::new();
+
+fn keep_awake_state() -> &'static KeepAwake {
+    KEEP_AWAKE.get_or_init(|| {
+        let (sender, receiver) = mpsc::channel::<KeepAwakeCommand>();
+        let commands = match std::thread::Builder::new()
+            .name("qinglink-keep-awake".into())
+            .spawn(move || run_keep_awake(receiver))
+        {
+            Ok(_) => Some(Mutex::new(sender)),
+            Err(error) => {
+                tracing::error!(%error, "创建保持唤醒线程失败");
+                None
+            }
+        };
+        KeepAwake {
+            enabled: AtomicBool::new(false),
+            commands,
+        }
+    })
+}
+
+/// 常驻线程：始终由同一条线程发起与释放 `SetThreadExecutionState` 请求。
+fn run_keep_awake(receiver: Receiver<KeepAwakeCommand>) {
+    for command in receiver {
+        let result = platform_impl::set_keep_awake(command.enabled);
+        let _ = command.reply.send(result);
+    }
+}
+
+/// 读取服务进程当前的保持唤醒状态。
+///
+/// 这是桌面端与移动端共用的唯一状态源：开关的持久化与启动恢复由
+/// `server::state::AppState` 负责，本模块只持有运行期请求。
+pub fn keep_awake() -> bool {
+    keep_awake_state().enabled.load(Ordering::Relaxed)
+}
+
+/// 开启或关闭保持唤醒。
+///
+/// # Errors
+///
+/// 常驻线程不可用、已退出、未返回结果，或 `SetThreadExecutionState` 调用失败时返回
+/// `Err`；非 Windows 平台恒返回不支持错误。
+pub fn set_keep_awake(enabled: bool) -> anyhow::Result<()> {
+    let state = keep_awake_state();
+    let commands = state
+        .commands
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("保持唤醒线程不可用"))?;
+    let (reply_sender, reply_receiver) = mpsc::channel();
+    let command = KeepAwakeCommand {
+        enabled,
+        reply: reply_sender,
+    };
+    commands
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .send(command)
+        .map_err(|_| anyhow::anyhow!("保持唤醒线程已退出"))?;
+    let result = reply_receiver
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|_| anyhow::anyhow!("保持唤醒线程未返回结果"))?;
+    result?;
+    state.enabled.store(enabled, Ordering::Relaxed);
+    Ok(())
 }

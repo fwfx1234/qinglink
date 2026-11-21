@@ -23,7 +23,8 @@ pub(crate) use desktop::attach_input_desktop;
 pub use desktop::pairing_desktop_available;
 pub use hid::usage_to_scancode;
 pub(crate) use ipc::{
-    agent_hid_key, agent_request, agent_request_message, agent_status_request, agent_window_request,
+    agent_display_list, agent_hid_key, agent_request, agent_request_message,
+    agent_set_display_mode, agent_status_request, agent_window_request,
 };
 pub use key::send_hid_key;
 pub use mouse::{send_mouse_button, send_mouse_move, send_mouse_move_absolute, send_mouse_wheel};

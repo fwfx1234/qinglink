@@ -60,14 +60,10 @@ class QingLinkPairing {
   ) async {
     try {
       final decoded = await _transport.postJson(Uri.parse(url), body);
-      if (decoded['ok'] == false) {
-        final error = decoded['error'];
-        final map = error is Map ? Map<String, dynamic>.from(error) : const {};
-        throw QingLinkPairingException(
-          map['code'] as String? ?? 'PAIRING_FAILED',
-          map['message'] as String? ?? '配对失败',
-        );
-      }
+      // HTTP 契约用 {"ok":false,"error":{code,message}}，而传输层已对非 2xx
+      // 抛 ServerFailure / ProtocolFailure，因此这里拿到的恒为成功信封。
+      // 注意：WebSocket 契约不是这个形状（错误帧是 {"type":"error","data":{...}}），
+      // 不要把两边的字段名互相套用。
       return (decoded['data'] as Map<String, dynamic>?) ?? decoded;
     } on QingLinkPairingException {
       rethrow;

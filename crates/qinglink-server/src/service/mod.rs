@@ -2,9 +2,12 @@
 //!
 //! 提供 SQLite 持久化、配对管理与服务器设置。
 
+pub mod app_catalog;
 pub mod app_db;
 pub mod app_scanner;
 pub mod file_browser;
+pub mod focus_monitor;
+pub mod input_state_monitor;
 pub mod process;
 pub mod system;
 pub mod window_monitor;

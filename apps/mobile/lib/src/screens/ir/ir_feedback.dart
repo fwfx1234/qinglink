@@ -1,26 +1,24 @@
-/// IR 页面的反馈：统一 SnackBar 提示与红外能力提示条。
+/// IR 页面的反馈：统一顶部轻提示与红外能力提示条。
 library;
 
 import 'package:flutter/material.dart';
 
 import '../../theme/app_theme.dart';
 import '../../widgets/app_ui.dart';
+import '../../widgets/top_toast.dart';
 
 /// 统一在 IR 各页面弹出一条提示。
 ///
-/// 会先清掉上一条，避免连续发送时提示排队堆积、看起来一直不消失。
+/// 复用全局顶部提示：新提示直接替换旧提示，连续发送不会排队堆积；
 /// [error] 为 true 时停留更久，方便用户看清失败原因。
 void showIrMessage(BuildContext context, String text, {bool error = false}) {
   if (!context.mounted) return;
-  final messenger = ScaffoldMessenger.of(context);
-  messenger.clearSnackBars();
-  messenger.showSnackBar(
-    SnackBar(
-      content: Text(text),
-      duration: Duration(milliseconds: error ? 2800 : 1000),
-      behavior: SnackBarBehavior.floating,
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-    ),
+  showTopToast(
+    context,
+    message: text,
+    color: error ? AppColors.error : AppColors.primary,
+    icon: error ? Icons.error_rounded : Icons.check_circle_rounded,
+    duration: Duration(milliseconds: error ? 2800 : 1000),
   );
 }
 
@@ -41,7 +39,7 @@ class IrCapabilityBanner extends StatelessWidget {
       boxShadow: const [],
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded, size: 19, color: AppColors.warning),
+          Icon(Icons.warning_amber_rounded, size: 19, color: AppColors.warning),
           const SizedBox(width: 10),
           Expanded(
             child: Column(

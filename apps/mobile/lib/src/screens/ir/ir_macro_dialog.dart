@@ -26,8 +26,12 @@ class _IrMacroDialogState extends State<IrMacroDialog> {
     super.initState();
     _name = TextEditingController(text: widget.macro?.name ?? '新流程');
     final initial = widget.macro?.steps ?? const <IrMacroStep>[];
+    // 遥控器可能一个按键都没有（用户把按键删光了）：这时 `.first` 会抛
+    // "Bad state: No element"，整个页面直接变错误页，所以这里用 firstOrNull
+    // 兜住，把"没有按键"交给界面提示。
+    final fallbackCommandId = widget.profile.commands.firstOrNull?.id;
     _commandIds = initial.isEmpty
-        ? [widget.profile.commands.first.id]
+        ? [?fallbackCommandId]
         : initial.map((step) => step.commandId).toList();
     _delays =
         (initial.isEmpty
@@ -62,8 +66,10 @@ class _IrMacroDialogState extends State<IrMacroDialog> {
 
   /// 追加一个默认步骤（按键取第一个，延时 300ms）。
   void _addStep() {
+    final fallbackCommandId = widget.profile.commands.firstOrNull?.id;
+    if (fallbackCommandId == null) return;
     setState(() {
-      _commandIds.add(widget.profile.commands.first.id);
+      _commandIds.add(fallbackCommandId);
       _delays.add(TextEditingController(text: '300'));
     });
   }
@@ -139,11 +145,19 @@ class _IrMacroDialogState extends State<IrMacroDialog> {
               decoration: const InputDecoration(labelText: '流程名称'),
             ),
             const SizedBox(height: 12),
+            if (widget.profile.commands.isEmpty)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text('当前遥控器还没有按键，请先在「按键与信号」里添加按键。'),
+              ),
             ...List.generate(_commandIds.length, _buildStep),
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
-                onPressed: _commandIds.length >= 32 ? null : _addStep,
+                onPressed: _commandIds.length >= 32 ||
+                        widget.profile.commands.isEmpty
+                    ? null
+                    : _addStep,
                 icon: const Icon(Icons.add),
                 label: const Text('添加步骤'),
               ),
@@ -157,7 +171,10 @@ class _IrMacroDialogState extends State<IrMacroDialog> {
         onPressed: () => Navigator.pop(context),
         child: const Text('取消'),
       ),
-      FilledButton(onPressed: _save, child: const Text('保存')),
+      FilledButton(
+        onPressed: _commandIds.isEmpty ? null : _save,
+        child: const Text('保存'),
+      ),
     ],
   );
 }

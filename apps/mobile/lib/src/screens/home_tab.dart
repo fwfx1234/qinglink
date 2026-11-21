@@ -99,6 +99,13 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       locked: locked,
       uac: uac,
       canWake: canWake,
+      deviceName: settings.pcName,
+      subtitle: _statusSubtitle(
+        online: online,
+        locked: locked,
+        uptime: system.status?.uptimeSeconds ?? 0,
+        uptimeText: system.status?.uptimeText,
+      ),
     );
     final pinnedApps = _sortedPinnedApps(
       ref.watch(favoritesProvider).pinned,
@@ -114,43 +121,73 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     return RefreshIndicator(
       color: AppColors.primary,
       onRefresh: () => _refreshAll(online),
-      child: Stack(
+      child: Column(
         children: [
-          ListView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 96),
-            children: [
-              if (!ready || uac) ...[
+          Expanded(
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(
+                AppMetrics.pagePadding,
+                AppSpacing.md,
+                AppMetrics.pagePadding,
+                AppSpacing.lg,
+              ),
+              children: [
                 HomeStatusCard(
                   status: status,
                   onPrimary: _statusPrimaryAction(status, canWake),
                 ),
-                const SizedBox(height: 18),
+                const SizedBox(height: AppSpacing.xl),
+                const SectionHeading(title: '快捷操作'),
+                HomeQuickActionsSection(
+                  online: online,
+                  ready: ready,
+                  irReady: irReady,
+                  shortcuts: settings.homeShortcuts,
+                  onUnlock: () => _unlock(context, ref),
+                  onTvPower: () => _tvPower(context, ref),
+                  onShortcut: (label) => _sendShortcut(context, ref, label),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                HomeCommonAppsSection(
+                  apps: homeApps,
+                  online: online,
+                  onOpenLibrary: widget.onGoToLibrary,
+                  onLaunch: (app) => _launchQuickApp(context, ref, app),
+                ),
               ],
-              const SectionHeading(title: '快捷操作', bottom: 2),
-              HomeQuickActionsSection(
-                online: online,
-                ready: ready,
-                irReady: irReady,
-                shortcuts: settings.homeShortcuts,
-                onUnlock: () => _unlock(context, ref),
-                onTvPower: () => _tvPower(context, ref),
-                onShortcut: (label) => _sendShortcut(context, ref, label),
-              ),
-              const SizedBox(height: 14),
-              const ActiveWindowSection(sectionTitle: '当前窗口'),
-              const SizedBox(height: 22),
-              HomeCommonAppsSection(
-                apps: homeApps,
-                online: online,
-                onOpenLibrary: widget.onGoToLibrary,
-                onLaunch: (app) => _launchQuickApp(context, ref, app),
-              ),
-            ],
+            ),
+          ),
+          // 窗口控制是高频操作，常驻在 TabBar 上方的拇指区（设计稿 Dock 条）。
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppMetrics.pagePadding,
+              AppSpacing.sm,
+              AppMetrics.pagePadding,
+              AppSpacing.sm,
+            ),
+            child: const WindowDockSection(),
           ),
         ],
       ),
     );
+  }
+
+  /// 状态卡副标题：在线时给出系统、锁屏与运行时长，离线时不额外解释。
+  String? _statusSubtitle({
+    required bool online,
+    required bool locked,
+    required int uptime,
+    String? uptimeText,
+  }) {
+    if (!online) return null;
+    final parts = <String>['Windows', locked ? '已锁定' : '已解锁'];
+    // 卡片右侧有「在线」药丸，副标题宽度有限：运行时长压成 3h31m 这种
+    // 紧凑写法（去掉小时与分钟之间的空格），三段落才不会被省略号截断。
+    if (uptime > 0 && uptimeText != null) {
+      parts.add('运行 ${uptimeText.replaceAll(' ', '')}');
+    }
+    return parts.join(' · ');
   }
 
   /// 下拉刷新：电脑不可用时保持无副作用，状态卡仍是显式唤醒/连接入口。

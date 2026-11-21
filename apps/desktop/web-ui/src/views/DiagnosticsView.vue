@@ -51,6 +51,11 @@ const protocolLabel = computed(() => {
   return `服务 v${actual ?? '未知'} / 桌面端 v${expected}`
 })
 
+/** 服务端版本号：优先取本次诊断报告，其次取实时状态；都未知时显示占位符 */
+const serviceVersionLabel = computed(
+  () => diagnostics.report?.service.service_app_version ?? service.serviceAppVersion ?? '—',
+)
+
 const probeLabel = computed(() => {
   const probe = diagnostics.report?.pipe_probe
   if (!probe) return '—'
@@ -180,6 +185,7 @@ async function exportBundle(): Promise<void> {
 
     <div v-else class="grid">
       <StatusRow label="桌面端版本" :value="diagnostics.report.version" mono />
+      <StatusRow label="服务端版本" :value="serviceVersionLabel" mono />
       <StatusRow label="进程 PID" :value="diagnostics.report.pid" mono />
       <StatusRow label="已运行" :value="formatDuration(diagnostics.report.uptime_secs)" mono />
       <StatusRow label="进程完整性" :value="diagnostics.report.integrity" mono />

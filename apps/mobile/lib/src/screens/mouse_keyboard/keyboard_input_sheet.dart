@@ -1,6 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../theme/app_theme.dart';
+import '../../widgets/app_text_styles.dart';
+import 'clipboard_action_buttons.dart';
 
 /// 远程软键盘面板：快捷键条 + 文字输入框 + 退格/删除/回车。
 ///
@@ -18,6 +21,8 @@ class KeyboardInputSheet extends StatelessWidget {
     required this.onBackspace,
     required this.onDelete,
     required this.onSendEnter,
+    required this.onClipboardAction,
+    this.focusHint,
   });
 
   final TextEditingController textController;
@@ -37,6 +42,14 @@ class KeyboardInputSheet extends StatelessWidget {
   final VoidCallback onBackspace;
   final VoidCallback onDelete;
   final VoidCallback onSendEnter;
+
+  /// 复制 / 粘贴 / 全选：作用于 PC 当前焦点输入框。
+  final ValueChanged<ClipboardAction> onClipboardAction;
+
+  /// 输入框下方的提示（例如"未读取到 PC 输入框内容"）。
+  ///
+  /// 用可监听对象：PC 文本后到时只重建这一行，不重建整个面板。
+  final ValueListenable<String?>? focusHint;
 
   @override
   Widget build(BuildContext context) {
@@ -58,7 +71,18 @@ class KeyboardInputSheet extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           _buildDraftField(),
+          _buildFocusHint(context),
           const SizedBox(height: 10),
+          ClipboardActionRow(
+            actions: const [
+              ClipboardAction.copy,
+              ClipboardAction.paste,
+              ClipboardAction.selectAll,
+            ],
+            enabled: enabled,
+            onAction: onClipboardAction,
+          ),
+          const SizedBox(height: 8),
           _SheetKeyRow(
             enabled: enabled,
             onBackspace: onBackspace,
@@ -70,11 +94,30 @@ class KeyboardInputSheet extends StatelessWidget {
     );
   }
 
+  Widget _buildFocusHint(BuildContext context) {
+    final listenable = focusHint;
+    if (listenable == null) return const SizedBox.shrink();
+    return ValueListenableBuilder<String?>(
+      valueListenable: listenable,
+      builder: (context, value, _) {
+        if (value == null) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            value,
+            style: AppText.meta.copyWith(color: context.palette.textSubtle),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildDraftField() {
     return TextField(
       controller: textController,
       focusNode: focusNode,
-      autofocus: true,
+      // 刻意不用 autofocus：焦点由调用方在弹层入场动画结束后统一请求。
+      // 在滑入的第一帧请求焦点，Android 会丢弃这次 showSoftInput，键盘不弹。
       minLines: 1,
       maxLines: 3,
       maxLength: 4096,
@@ -102,11 +145,17 @@ class KeyboardSheetRouteWatcher extends StatefulWidget {
   const KeyboardSheetRouteWatcher({
     super.key,
     required this.onDismissStarted,
+    this.onEnterCompleted,
     required this.child,
   });
 
   /// 弹层开始退场（反向动画或已消失）时回调，可能被调用多次。
   final VoidCallback onDismissStarted;
+
+  /// 入场动画落到 `completed`（含下拉回弹后重新落位）时回调。
+  ///
+  /// 焦点请求必须等到这一刻：滑入过程中请求焦点会让 Android 丢掉这次输入法 show。
+  final VoidCallback? onEnterCompleted;
 
   final Widget child;
 
@@ -125,10 +174,19 @@ class _KeyboardSheetRouteWatcherState extends State<KeyboardSheetRouteWatcher> {
     if (identical(route, _route)) return;
     _route?.animation?.removeStatusListener(_handleStatus);
     _route = route;
-    _route?.animation?.addStatusListener(_handleStatus);
+    route?.animation?.addStatusListener(_handleStatus);
+    // 极端情况（热重载、零时长动画）挂上监听时已经落位。
+    if (route?.animation?.status == AnimationStatus.completed) {
+      widget.onEnterCompleted?.call();
+    }
   }
 
   void _handleStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed) {
+      // 下拉一点点再松手回弹会回到 completed：调用方据此撤销"正在关闭"。
+      widget.onEnterCompleted?.call();
+      return;
+    }
     if (status == AnimationStatus.reverse ||
         status == AnimationStatus.dismissed) {
       widget.onDismissStarted();

@@ -37,6 +37,7 @@ pub fn get_foreground_window_info() -> anyhow::Result<ForegroundResponse> {
             path: window.exe_path,
             process_name,
             hwnd: window.hwnd,
+            focus_text: focus_input_text(),
         });
     }
     platform_impl::get_foreground_window_info().map(|value| ForegroundResponse {
@@ -45,7 +46,29 @@ pub fn get_foreground_window_info() -> anyhow::Result<ForegroundResponse> {
         path: value.path,
         process_name: value.process_name,
         hwnd: value.hwnd,
+        focus_text: focus_input_text(),
     })
+}
+
+/// 焦点输入框里已有的文本。
+///
+/// 读不到就当作"没有可回填的输入框"：UIA 在某些程序上必然失败（游戏、自绘控件），
+/// 那是常态，不该让整条 `get_foreground` 失败。
+fn focus_input_text() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        match qinglink_windows::platform_windows::read_focus_input_text() {
+            Ok(text) => text,
+            Err(error) => {
+                tracing::debug!(%error, "read focus input text failed");
+                None
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
 }
 
 /// 判断当前前台窗口是否处于全屏状态。

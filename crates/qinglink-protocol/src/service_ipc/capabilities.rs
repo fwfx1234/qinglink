@@ -35,4 +35,7 @@ pub struct Capabilities {
     /// `RefreshAppIcon` / `ListAppIcons`.
     #[serde(default)]
     pub app_icon_manage: bool,
+    /// `SetKeepAwake` 与快照里的 `keep_awake` 字段。
+    #[serde(default)]
+    pub keep_awake: bool,
 }

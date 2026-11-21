@@ -30,7 +30,7 @@ withDefaults(
 }
 
 .spinner--accent {
-  color: var(--accent);
+  color: var(--accent-bright);
 }
 
 .spinner--muted {

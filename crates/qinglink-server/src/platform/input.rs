@@ -82,3 +82,11 @@ pub fn key_press(key: &str) -> anyhow::Result<()> {
 pub fn key_event(usage: u8, modifiers: u8, pressed: bool) -> anyhow::Result<()> {
     platform_impl::key_event(usage, modifiers, pressed)
 }
+
+/// 读取物理鼠标左右中键的当前按下状态。
+///
+/// 不返回 `Result`：这条信息只用于界面提示与拖拽去重，读不到时按"全部抬起"处理，
+/// 不值得让调用方每次都处理错误分支。非 Windows 平台恒为全部抬起。
+pub fn mouse_buttons_state() -> qinglink_protocol::MouseButtonsState {
+    platform_impl::mouse_buttons_state()
+}

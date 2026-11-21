@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>QingLink 本地管理台</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<aside class="sidebar">
+  <div class="brand">
+    <div class="brand-logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+        <path d="M5 12a7 7 0 0 1 14 0" /><circle cx="12" cy="17" r="2.2" fill="currentColor" stroke="none" />
+      </svg>
+    </div>
+    <div class="brand-text">
+      <strong>QingLink</strong>
+      <span>本地管理台</span>
+    </div>
+  </div>
+
+  <nav class="nav">
+    <a class="nav-item" href="#overview" data-view="overview">
+      <svg viewBox="0 0 24 24" class="ico"><rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/></svg>
+      <span>概览</span>
+    </a>
+    <a class="nav-item" href="#apps" data-view="apps">
+      <svg viewBox="0 0 24 24" class="ico"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <span>应用目录</span>
+    </a>
+    <a class="nav-item" href="#logs" data-view="logs">
+      <svg viewBox="0 0 24 24" class="ico"><rect x="4" y="3" width="16" height="18" rx="2.4"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+      <span>运行日志</span>
+    </a>
+    <a class="nav-item" href="#diagnostics" data-view="diagnostics">
+      <svg viewBox="0 0 24 24" class="ico"><path d="M3 12h4l2.5-6 3.5 13 3-9 2 2h3"/></svg>
+      <span>服务诊断</span>
+    </a>
+    <a class="nav-item" href="#settings" data-view="settings">
+      <svg viewBox="0 0 24 24" class="ico"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg>
+      <span>设置</span>
+    </a>
+  </nav>
+
+  <div class="service-card">
+    <div class="service-line"><i class="dot"></i><span>服务在线</span></div>
+    <div class="service-addr">127.0.0.1:3722</div>
+  </div>
+</aside>
+
+<main class="main">
+  <!-- ================= A1 概览 ================= -->
+  <section class="view" id="view-overview">
+    <header class="page-head">
+      <div>
+        <h1>概览</h1>
+        <p class="sub">服务链路、待确认配对、目录统计与已授权设备</p>
+      </div>
+      <div class="head-actions">
+        <button class="btn ghost" type="button" data-toast="已刷新状态">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M4 12a8 8 0 0 1 13.7-5.6L20 9"/><path d="M20 4v5h-5"/><path d="M20 12a8 8 0 0 1-13.7 5.6L4 15"/><path d="M4 20v-5h5"/></svg>
+          刷新
+        </button>
+        <button class="btn primary" type="button" id="start-pairing">＋ 发起配对</button>
+      </div>
+    </header>
+
+    <div class="stat-grid">
+      <article class="stat">
+        <span class="stat-label">服务状态</span>
+        <strong class="stat-value">运行正常</strong>
+        <span class="stat-sub">已运行 3 天 4 小时</span>
+      </article>
+      <article class="stat">
+        <span class="stat-label">已配对设备</span>
+        <strong class="stat-value">3 台</strong>
+        <span class="stat-sub">最近配对 今天 09:24</span>
+      </article>
+      <article class="stat">
+        <span class="stat-label">目录条目</span>
+        <strong class="stat-value">24</strong>
+        <span class="stat-sub">游戏 9 · 应用 15</span>
+      </article>
+      <article class="stat stat-warn">
+        <span class="stat-label">待确认配对</span>
+        <strong class="stat-value">1 个请求</strong>
+        <span class="stat-sub">60 秒内有效 · 需本机确认</span>
+      </article>
+    </div>
+
+    <div class="two-col">
+      <article class="panel">
+        <div class="panel-head">
+          <h2>服务链路</h2>
+          <span class="tag tag-ok">已连接</span>
+        </div>
+        <div class="kv">
+          <div class="kv-row"><span>协议版本</span><b>v2 · HTTP + WS</b></div>
+          <div class="kv-row"><span>监听端口</span><b>3721 控制 / 3723 发现</b></div>
+          <div class="kv-row"><span>最近握手</span><b>12 秒前</b></div>
+        </div>
+      </article>
+
+      <article class="panel panel-warn">
+        <div class="panel-head">
+          <h2 class="warn">待确认配对</h2>
+        </div>
+        <div class="pair-code">482 913</div>
+        <p class="pair-note">「Pixel 8 · Android 14」请求接入，60 秒内需在本机确认</p>
+        <div class="pair-actions">
+          <button class="btn ghost" type="button" data-toast="已拒绝该配对请求">拒绝</button>
+          <button class="btn primary" type="button" data-toast="已允许 Pixel 8 接入">允许接入</button>
+        </div>
+      </article>
+    </div>
+
+    <article class="panel">
+      <table class="table">
+        <thead>
+          <tr><th class="col-name">设备</th><th>平台</th><th>最近连接</th><th class="col-end">状态</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="strong">客厅主机</td><td>Windows 11</td><td>12 秒前</td><td class="col-end"><span class="tag tag-ok">已连接</span></td></tr>
+          <tr><td class="strong">Pixel 8</td><td>Android 14</td><td>今天 09:24</td><td class="col-end"><span class="tag tag-ok">已授权</span></td></tr>
+          <tr><td class="strong">办公室 PC</td><td>Windows 10</td><td>昨天 21:10</td><td class="col-end"><span class="tag tag-idle">离线</span></td></tr>
+          <tr><td class="strong">iPhone 15</td><td>iOS 17</td><td>3 天前</td><td class="col-end"><span class="tag tag-idle">离线</span></td></tr>
+          <tr><td class="strong">小米 14</td><td>Android 14</td><td>上周</td><td class="col-end"><span class="tag tag-ok">已授权</span></td></tr>
+        </tbody>
+      </table>
+    </article>
+  </section>
+
+  <!-- ================= A2 应用目录 ================= -->
+  <section class="view" id="view-apps">
+    <header class="page-head">
+      <div>
+        <h1>应用与游戏目录</h1>
+        <p class="sub">24 个条目 · 重命名、隐藏、设为常用与图标管理都在这里完成</p>
+      </div>
+      <div class="head-actions">
+        <button class="btn ghost" type="button" data-toast="已开始重扫图标">重扫图标</button>
+        <button class="btn primary" type="button" data-toast="已打开新增目录">＋ 新增目录</button>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <label class="search">
+        <svg viewBox="0 0 24 24" class="ico"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
+        <input id="app-search" type="search" placeholder="搜索名称或安装路径" />
+      </label>
+      <div class="segmented" id="app-filter">
+        <button class="seg active" data-kind="all">全部 <em>24</em></button>
+        <button class="seg" data-kind="game">游戏 <em>9</em></button>
+        <button class="seg" data-kind="app">应用 <em>15</em></button>
+      </div>
+    </div>
+
+    <article class="panel">
+      <table class="table" id="apps-table">
+        <thead>
+          <tr>
+            <th class="col-name">名称</th>
+            <th>类型</th>
+            <th>最近启动</th>
+            <th class="col-end">首页置顶</th>
+            <th class="col-end col-action">操作</th>
+          </tr>
+        </thead>
+        <tbody id="apps-body"></tbody>
+      </table>
+      <div class="table-foot">
+        <span id="apps-count">共 24 个条目 · 每页 7 条</span>
+        <div class="pager">
+          <span id="apps-page">第 1 / 4 页</span>
+          <button class="btn ghost sm" id="apps-prev" type="button">上一页</button>
+          <button class="btn ghost sm" id="apps-next" type="button">下一页</button>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ================= A3 运行日志 ================= -->
+  <section class="view" id="view-logs">
+    <header class="page-head">
+      <div>
+        <h1>运行日志</h1>
+        <p class="sub">内存环形缓冲 + 按天轮转文本日志 · 实时推送，支持按级别与时间过滤</p>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <label class="search wide">
+        <svg viewBox="0 0 24 24" class="ico"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
+        <input id="log-search" type="search" placeholder="过滤日志内容" />
+      </label>
+      <div class="segmented" id="log-filter">
+        <button class="seg active" data-level="all">全部</button>
+        <button class="seg" data-level="INFO">INFO</button>
+        <button class="seg" data-level="WARN">WARN</button>
+        <button class="seg" data-level="ERROR">ERROR</button>
+      </div>
+      <div class="toolbar-end">
+        <button class="btn link" type="button" data-toast="日志已开始下载">下载日志</button>
+        <button class="btn link" type="button" data-toast="已清空当前视图">清空</button>
+      </div>
+    </div>
+
+    <article class="console">
+      <div class="console-head">
+        <span id="log-file">qinglink-2026-11-01.log</span>
+        <button class="live" id="log-live" type="button"><i class="dot"></i>实时 · 自动滚动</button>
+      </div>
+      <div class="console-body" id="log-body"></div>
+    </article>
+  </section>
+
+  <!-- ================= 服务诊断（导航第五项的最小实现） ================= -->
+  <section class="view" id="view-diagnostics">
+    <header class="page-head">
+      <div>
+        <h1>服务诊断</h1>
+        <p class="sub">端口占用、防火墙例外与桌面代理自检</p>
+      </div>
+      <div class="head-actions">
+        <button class="btn ghost" type="button" data-toast="自检完成，未发现问题">重新自检</button>
+      </div>
+    </header>
+
+    <article class="panel">
+      <table class="table">
+        <thead><tr><th class="col-name">检查项</th><th>结果</th><th class="col-end">耗时</th></tr></thead>
+        <tbody>
+          <tr><td class="strong">控制端口 3721</td><td>正在监听</td><td class="col-end">3 ms</td></tr>
+          <tr><td class="strong">发现端口 3723（UDP）</td><td>正在监听</td><td class="col-end">2 ms</td></tr>
+          <tr><td class="strong">Windows 防火墙例外</td><td>已放行</td><td class="col-end">11 ms</td></tr>
+          <tr><td class="strong">桌面代理进程</td><td>运行中 · PID 8420</td><td class="col-end">1 ms</td></tr>
+          <tr><td class="strong">安全输入服务</td><td>已就绪</td><td class="col-end">6 ms</td></tr>
+        </tbody>
+      </table>
+    </article>
+  </section>
+
+  <!-- ================= A4 设置 ================= -->
+  <section class="view" id="view-settings">
+    <header class="page-head">
+      <div>
+        <h1>设置</h1>
+        <p class="sub">桌面端行为、服务进程与数据目录 · 修改立即生效并写入本机配置</p>
+      </div>
+    </header>
+
+    <h3 class="group-label">桌面端行为</h3>
+    <article class="panel list-panel">
+      <label class="setting-row">
+        <span>开机自动启动桌面端</span>
+        <input type="checkbox" class="switch" checked />
+      </label>
+      <label class="setting-row">
+        <span>保持系统唤醒（阻止自动睡眠）</span>
+        <input type="checkbox" class="switch" checked />
+      </label>
+      <label class="setting-row">
+        <span>锁屏时拒绝新的配对请求</span>
+        <input type="checkbox" class="switch" checked />
+      </label>
+      <label class="setting-row">
+        <span>设备上线时弹出托盘提示</span>
+        <input type="checkbox" class="switch" />
+      </label>
+    </article>
+
+    <h3 class="group-label">服务与端口</h3>
+    <article class="panel list-panel">
+      <div class="setting-row readonly">
+        <span>控制通道端口</span>
+        <input class="field" type="text" value="3721" inputmode="numeric" />
+      </div>
+      <div class="setting-row readonly">
+        <span>局域网发现端口（UDP）</span>
+        <input class="field" type="text" value="3723" inputmode="numeric" />
+      </div>
+      <div class="setting-row readonly">
+        <span>数据目录</span>
+        <code class="path">C:\ProgramData\QingLink</code>
+      </div>
+    </article>
+
+    <h3 class="group-label danger">危险操作</h3>
+    <article class="panel list-panel panel-danger">
+      <div class="setting-row">
+        <span>重置全部配置（应用目录与配对记录保留）</span>
+        <button class="btn link danger" type="button" data-toast="已重置配置，需重启桌面端">重置</button>
+      </div>
+      <div class="setting-row">
+        <span>卸载安全输入服务</span>
+        <button class="btn link danger" type="button" data-toast="已停止安全输入服务">卸载</button>
+      </div>
+    </article>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -10,6 +10,7 @@ import 'app_ui.dart';
 import 'file_picker_sheet.dart';
 import 'icon_candidate_section.dart';
 import 'icon_picker_pc_section.dart';
+import 'app_sheet.dart';
 
 /// 图标来源的中文说明。`shell` 意味着只拿到系统默认图标，通常就是"图标不对"。
 String iconSourceLabel(String? source) {
@@ -48,11 +49,10 @@ Future<bool> showIconPickerSheet(
   required LauncherItem item,
 }) async {
   final tracker = _IconChangeTracker();
-  await showModalBottomSheet<void>(
-    context: context,
+  await showAppSheet<void>(
+    context,
     isScrollControlled: true,
     useSafeArea: true,
-    showDragHandle: true,
     builder: (_) => FractionallySizedBox(
       heightFactor: 0.86,
       child: _IconPickerSheet(item: item, tracker: tracker),

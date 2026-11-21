@@ -1,5 +1,5 @@
-/// 主壳的提示投递：底部 SnackBar 样式统一，以及「Windows 已解锁」提示的去重与
-/// 前后台延迟结算。
+/// 主壳的提示投递：统一走顶部轻提示（`widgets/top_toast.dart`），以及
+/// 「Windows 已解锁」提示的去重与前后台延迟结算。
 ///
 /// 主壳只把解锁状态变化与前后台切换转交进来，见 `home_screen.dart`；
 /// 触发提示的连接事件在 `home_connection.dart`。
@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 
 import '../models/system_status.dart';
 import '../theme/app_theme.dart';
+import '../widgets/top_toast.dart';
 
 /// 主壳提示投递器：统一底部浮动提示样式，并结算解锁成功提示。
 class HomeNotificationPresenter {
@@ -46,31 +47,20 @@ class HomeNotificationPresenter {
     _notifyUnlockSuccess();
   }
 
-  /// 底部浮动提示：文案含「上线」或「解锁」时用成功图标，否则用错误图标。
+  /// 顶部浮动提示：文案含「上线」或「解锁」时用成功图标，否则用错误图标。
+  ///
+  /// 与其它页面反馈共用 `showTopToast`：提示从状态栏下方滑入、高度随内容
+  /// 增长，短提示不会被底部导航挡住，长提示也不会被顶出屏幕。
   void showNotification(String message, Color color) {
     final context = contextOf();
     if (context == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Icon(
-              message.contains('上线') || message.contains('解锁')
-                  ? Icons.check_circle_rounded
-                  : Icons.error_rounded,
-              color: Colors.white,
-              size: 18,
-            ),
-            const SizedBox(width: 8),
-            Text(message),
-          ],
-        ),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: color,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        margin: const EdgeInsets.all(16),
-        duration: const Duration(seconds: 2),
-      ),
+    showTopToast(
+      context,
+      message: message,
+      color: color,
+      icon: message.contains('上线') || message.contains('解锁')
+          ? Icons.check_circle_rounded
+          : Icons.error_rounded,
     );
   }
 

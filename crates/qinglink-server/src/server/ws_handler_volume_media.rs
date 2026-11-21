@@ -1,6 +1,10 @@
 use super::*;
 
-pub(super) fn handle(_state: &AppState, req: &WsClientRequest, _session_token: Option<&str>) -> WsServerMessage {
+pub(super) fn handle(
+    _state: &AppState,
+    req: &WsClientRequest,
+    _session_token: Option<&str>,
+) -> WsServerMessage {
     match req {
         // === Volume & Media ===
         WsClientRequest::GetVolume => match crate::platform::get_volume() {
@@ -80,8 +84,6 @@ pub(super) fn handle(_state: &AppState, req: &WsClientRequest, _session_token: O
             }
         },
 
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
 }
-
-

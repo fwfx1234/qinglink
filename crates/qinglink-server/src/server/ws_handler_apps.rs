@@ -1,6 +1,10 @@
 use super::*;
 
-pub(super) fn handle(_state: &AppState, req: &WsClientRequest, _session_token: Option<&str>) -> WsServerMessage {
+pub(super) fn handle(
+    _state: &AppState,
+    req: &WsClientRequest,
+    _session_token: Option<&str>,
+) -> WsServerMessage {
     match req {
         // === Apps ===
         WsClientRequest::SearchApps { query } => {
@@ -26,8 +30,6 @@ pub(super) fn handle(_state: &AppState, req: &WsClientRequest, _session_token: O
             }
         }
 
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
 }
-
-

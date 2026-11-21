@@ -215,6 +215,7 @@ cargo build --release -p qinglink-desktop --bin QingLink
 | [`docs/web-api.md`](docs/web-api.md) | **桌面管理接口契约**：REST 端点、WebSocket 事件、错误码、前端约束 |
 | [`docs/development.md`](docs/development.md) | 构建、运行、`--self-check` 自检、排障、改动约定 |
 | [`protocol/v2.md`](protocol/v2.md) | 移动端对外协议（配对、发现、控制） |
+| [`protocol/requests.md`](protocol/requests.md) | 上行请求类型索引：95 个 `WsClientRequest` 变体的线格式名、载荷字段、响应类型与错误码 |
 | [`protocol/README.md`](protocol/README.md) | 跨语言 DTO 与 Schema/fixture 验证说明 |
 | [`apps/mobile/README.md`](apps/mobile/README.md) | 移动端配对与开发说明 |
 | [`.opencode/rules/`](.opencode/rules) | Rust / Dart / 架构的分语言编码规范细节 |

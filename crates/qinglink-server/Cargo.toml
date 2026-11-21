@@ -16,6 +16,7 @@ local-ip-address.workspace = true
 qinglink-domain = { path = "../qinglink-domain" }
 qinglink-protocol = { path = "../qinglink-protocol" }
 qinglink-storage = { path = "../qinglink-storage" }
+qinglink-version = { path = "../qinglink-version" }
 qinglink-windows = { path = "../qinglink-windows" }
 rusqlite.workspace = true
 serde.workspace = true

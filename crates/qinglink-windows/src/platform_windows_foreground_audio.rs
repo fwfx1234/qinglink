@@ -58,6 +58,8 @@ pub fn get_foreground_window_info() -> anyhow::Result<ForegroundResponse> {
             title,
             path,
             process_name,
+            // 焦点文本由服务端平台层单独读（UIA 有成本，且只有手机端打开键盘时才需要）。
+            focus_text: None,
         })
     }
 }

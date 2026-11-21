@@ -1,3 +1,8 @@
+/// S14 控制流程（对应设计稿 `S14-flows-*.png`）。
+///
+/// 卡片列表：流程名 + 运行按钮 + 步骤序列。长按可编辑或删除。
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -6,8 +11,8 @@ import '../../providers/ir_remote_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_ui.dart';
 import 'ir_widgets.dart';
+import '../../widgets/app_sheet.dart';
 
-/// 控制流程页：把多个按键串成可一键执行的宏。
 class IrMacroScreen extends ConsumerStatefulWidget {
   const IrMacroScreen({super.key, required this.profileId});
 
@@ -62,6 +67,75 @@ class _IrMacroScreenState extends ConsumerState<IrMacroScreen> {
     }
   }
 
+  Future<void> _deleteMacro(IrMacro macro) async {
+    await ref
+        .read(irRemoteProvider.notifier)
+        .saveMacros(
+          ref
+              .read(irRemoteProvider)
+              .macros
+              .where((item) => item.id != macro.id)
+              .toList(),
+        );
+  }
+
+  /// 长按流程卡：编辑或删除。
+  Future<void> _showMacroActions(
+    IrRemoteProfile profile,
+    IrMacro macro,
+  ) async {
+    final palette = context.palette;
+    final action = await showAppSheet<String>(
+      context,
+        builder: (sheetContext) => Container(
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.xl,
+          AppSpacing.md,
+          AppSpacing.xl,
+          MediaQuery.of(sheetContext).viewPadding.bottom + AppSpacing.lg,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: palette.lineStrong,
+                  borderRadius: BorderRadius.circular(AppRadius.pill),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            Text(
+              macro.name,
+              style: AppText.cardTitle.copyWith(color: palette.textPrimary),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            AppListRow(
+              icon: Icons.edit_outlined,
+              title: '编辑流程',
+              showChevron: true,
+              onTap: () => Navigator.of(sheetContext).pop('edit'),
+            ),
+            AppListRow(
+              icon: Icons.delete_outline_rounded,
+              title: '删除流程',
+              iconTone: palette.danger,
+              showChevron: true,
+              onTap: () => Navigator.of(sheetContext).pop('delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'edit') await _editMacro(profile, macro: macro);
+    if (action == 'delete') await _deleteMacro(macro);
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
@@ -74,124 +148,199 @@ class _IrMacroScreenState extends ConsumerState<IrMacroScreen> {
         .where((macro) => macro.profileId == profile.id)
         .toList();
     return Scaffold(
+      backgroundColor: palette.background,
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 20, 18, 28),
+          padding: const EdgeInsets.fromLTRB(
+            AppMetrics.pagePadding,
+            0,
+            AppMetrics.pagePadding,
+            AppSpacing.xxl,
+          ),
           children: [
-            PageHeading(
-              eyebrow: profile.name,
-              title: '控制流程',
-              trailing: IconBtn(
-                icon: Icons.close_rounded,
-                tooltip: '返回',
-                onPressed: () => Navigator.of(context).maybePop(),
-              ),
-            ),
-            if (macros.isEmpty)
-              const EmptyState(
-                icon: Icons.playlist_play_rounded,
-                title: '暂无控制流程',
-                message: '将多个按键串成流程，一键完成开机等操作。',
-              )
-            else
-              ...macros.map(
-                (macro) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: AppCard(
-                    radius: AppRadius.lg,
-                    padding: EdgeInsets.zero,
-                    child: AppListRow(
-                      title: macro.name,
-                      subtitle: _describe(profile, macro),
-                      icon: Icons.playlist_play_rounded,
-                      iconTone: AppColors.violet,
-                      tile: true,
-                      minHeight: 64,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
+            SizedBox(
+              height: AppMetrics.navHeight,
+              child: Row(
+                children: [
+                  IconBtn(
+                    icon: Icons.chevron_left_rounded,
+                    tooltip: '返回',
+                    tonal: true,
+                    iconSize: 22,
+                    onPressed: () => Navigator.of(context).maybePop(),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Text(
+                      '控制流程',
+                      style: AppText.pageTitle.copyWith(
+                        color: palette.textPrimary,
                       ),
-                      trailing: state.runningMacroId == macro.id
-                          ? IconBtn(
-                              icon: Icons.stop_rounded,
-                              tooltip: '停止',
-                              size: 36,
-                              iconSize: 18,
-                              color: AppColors.red,
-                              onPressed: () =>
-                                  ref.read(irRemoteProvider.notifier).cancelMacro(),
-                            )
-                          : Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconBtn(
-                                  icon: Icons.play_arrow_rounded,
-                                  tooltip: '执行',
-                                  size: 36,
-                                  iconSize: 18,
-                                  color: AppColors.primary,
-                                  onPressed: () => _runMacro(macro),
-                                ),
-                                IconBtn(
-                                  icon: Icons.edit_outlined,
-                                  tooltip: '编辑',
-                                  size: 36,
-                                  iconSize: 17,
-                                  onPressed: () =>
-                                      _editMacro(profile, macro: macro),
-                                ),
-                                IconBtn(
-                                  icon: Icons.delete_outline,
-                                  tooltip: '删除',
-                                  size: 36,
-                                  iconSize: 17,
-                                  color: AppColors.red,
-                                  onPressed: () => ref
-                                      .read(irRemoteProvider.notifier)
-                                      .saveMacros(
-                                        ref
-                                            .read(irRemoteProvider)
-                                            .macros
-                                            .where((item) => item.id != macro.id)
-                                            .toList(),
-                                      ),
-                                ),
-                              ],
-                            ),
                     ),
                   ),
-                ),
+                  SizedBox(
+                    height: 36,
+                    child: FilledButton.icon(
+                      onPressed: () => _editMacro(profile),
+                      icon: const Icon(Icons.add_rounded, size: 18),
+                      label: const Text('新增'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: palette.brand,
+                        foregroundColor: palette.onBrand,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        textStyle: AppText.label.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            const SizedBox(height: 6),
-            SecondaryButton(
-              label: '新增流程',
-              icon: Icons.add_rounded,
-              expand: true,
-              onPressed: () => _editMacro(profile),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Text(
-              '流程按顺序发送按键，可设置每步之间的延时。',
-              style: AppText.meta.copyWith(color: palette.textSubtle),
+              '一条流程按顺序发送多个按键，步骤间隔按每一步设定的延时执行',
+              style: AppText.meta.copyWith(color: palette.textMuted),
             ),
+            const SizedBox(height: AppSpacing.md),
+            if (macros.isEmpty)
+              EmptyState(
+                icon: Icons.account_tree_outlined,
+                title: '暂无控制流程',
+                message: '把开机、信号源、音量等按键串成一条流程，一键完成。',
+                action: SecondaryButton(
+                  label: '新增流程',
+                  icon: Icons.add_rounded,
+                  onPressed: () => _editMacro(profile),
+                ),
+              )
+            else
+              for (final macro in macros)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                  child: _MacroCard(
+                    macro: macro,
+                    steps: _describe(profile, macro),
+                    running: state.runningMacroId == macro.id,
+                    onRun: () => _runMacro(macro),
+                    onStop: () =>
+                        ref.read(irRemoteProvider.notifier).cancelMacro(),
+                    onLongPress: () => _showMacroActions(profile, macro),
+                  ),
+                ),
           ],
         ),
       ),
     );
   }
 
+  /// 步骤序列文案：按键之间插入「等待 Ns」，便于一眼看清节奏。
   String _describe(IrRemoteProfile profile, IrMacro macro) {
     if (macro.steps.isEmpty) return '空流程';
-    final names = macro.steps
-        .map(
-          (step) =>
-              profile.commands
-                  .where((command) => command.id == step.commandId)
-                  .firstOrNull
-                  ?.name ??
-              '失效按键',
-        )
-        .join(' → ');
-    return '${macro.steps.length} 步 · $names';
+    final parts = <String>[];
+    for (final step in macro.steps) {
+      final name = profile.commands
+          .where((command) => command.id == step.commandId)
+          .firstOrNull
+          ?.name;
+      parts.add(name ?? '失效按键');
+      final seconds = step.delayAfterMs / 1000;
+      if (seconds >= 0.5) {
+        final text = seconds % 1 == 0
+            ? seconds.toStringAsFixed(0)
+            : seconds.toStringAsFixed(1);
+        parts.add('等待 $text s');
+      }
+    }
+    return parts.join(' → ');
+  }
+}
+
+/// 流程卡：名称 + 运行/停止按钮 + 步骤序列。
+class _MacroCard extends StatelessWidget {
+  const _MacroCard({
+    required this.macro,
+    required this.steps,
+    required this.running,
+    required this.onRun,
+    required this.onStop,
+    required this.onLongPress,
+  });
+
+  final IrMacro macro;
+  final String steps;
+  final bool running;
+  final VoidCallback onRun;
+  final VoidCallback onStop;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return GestureDetector(
+      onLongPress: onLongPress,
+      child: AppCard(
+        radius: AppRadius.lg,
+        padding: const EdgeInsets.all(AppMetrics.cardPadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    macro.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.sectionTitle.copyWith(
+                      color: palette.textPrimary,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                SizedBox(
+                  height: 36,
+                  child: FilledButton(
+                    onPressed: running ? onStop : onRun,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: running
+                          ? palette.dangerTint
+                          : palette.surface2,
+                      foregroundColor: running
+                          ? palette.danger
+                          : palette.textPrimary,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      textStyle: AppText.label.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                        side: BorderSide(
+                          color: running
+                              ? palette.danger.withValues(alpha: 0.4)
+                              : palette.line,
+                        ),
+                      ),
+                    ),
+                    child: Text(running ? '停止' : '运行'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              steps,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.meta.copyWith(color: palette.textMuted),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

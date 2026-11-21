@@ -24,6 +24,14 @@ pub enum DesktopCommand {
         /// 是否暂停服务。
         paused: bool,
     },
+    /// 开启或关闭保持唤醒（阻止系统自动休眠与显示器熄屏）。
+    ///
+    /// 开关由服务进程统一持有：桌面端托盘、管理界面设置页与移动端控制中心
+    /// 都读写这一份状态，避免两个进程各持一个 `SetThreadExecutionState` 请求。
+    SetKeepAwake {
+        /// 是否开启。
+        enabled: bool,
+    },
     /// 取消一次待确认的配对。
     CancelPairing {
         /// 要取消的配对请求标识。

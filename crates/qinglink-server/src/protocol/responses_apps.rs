@@ -1,13 +1,7 @@
 // === App responses ===
 
-/// 已安装应用的基本信息。
-#[derive(Debug, Serialize)]
-pub struct AppInfo {
-    /// 应用显示名称。
-    pub name: String,
-    /// 应用可执行文件路径。
-    pub path: String,
-}
+// `AppInfo` 只有协议层一份定义，本文件只做重导出。
+pub use qinglink_protocol::AppInfo;
 
 /// 应用搜索结果响应。
 #[derive(Debug, Serialize)]

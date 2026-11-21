@@ -31,6 +31,18 @@ pub struct ServiceSnapshot {
     /// without a service-to-desktop event channel.
     #[serde(default)]
     pub scan: Option<CatalogScanState>,
+    /// 服务端产品版本号，形如 `0.1.0+13`。
+    ///
+    /// 与 [`Self::device_count`] 同样的可选约定：旧服务不返回时是 `None`（版本未知），
+    /// 界面不能把它显示成"空版本"。
+    #[serde(default)]
+    pub app_version: Option<String>,
+    /// 服务进程当前的保持唤醒开关，是桌面端与移动端共用的唯一状态源。
+    ///
+    /// 与 `device_count` 同样的可选约定：旧服务不返回时为 `None`（状态未知），
+    /// 桌面端此时不改写界面上的开关。
+    #[serde(default)]
+    pub keep_awake: Option<bool>,
 }
 
 /// 手写的 `Debug`：`pending_pairing` 只输出非敏感字段，PIN 永不出现在日志中。
@@ -54,6 +66,8 @@ impl std::fmt::Debug for ServiceSnapshot {
             )
             .field("device_count", &self.device_count)
             .field("scan", &self.scan)
+            .field("app_version", &self.app_version)
+            .field("keep_awake", &self.keep_awake)
             .finish()
     }
 }

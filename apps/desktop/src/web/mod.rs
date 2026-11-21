@@ -304,6 +304,12 @@ async fn pump_service_events(state: Arc<WebState>) {
             Ok(ServiceEvent::Devices { total }) => {
                 state.publish(ServerEvent::Devices { total });
             }
+            // 手机端或桌面端改了保持唤醒：把服务回传的生效值写进本地镜像，
+            // 让设置页与托盘和手机端控制中心保持同一个显示值。
+            Ok(ServiceEvent::KeepAwake(enabled)) => {
+                state.settings.set_keep_awake(enabled);
+                state.publish(ServerEvent::Settings(Box::new(state.settings.view())));
+            }
             // The service finished a background scan; browsers only know that
             // lists and counters are now stale.
             Ok(ServiceEvent::CatalogScanFinished) => {
@@ -318,6 +324,10 @@ async fn pump_service_events(state: Arc<WebState>) {
                 )));
                 if let Some(total) = state.service.device_count() {
                     state.publish(ServerEvent::Devices { total });
+                }
+                if let Some(enabled) = state.service.keep_awake() {
+                    state.settings.set_keep_awake(enabled);
+                    state.publish(ServerEvent::Settings(Box::new(state.settings.view())));
                 }
             }
             Err(RecvError::Closed) => return,

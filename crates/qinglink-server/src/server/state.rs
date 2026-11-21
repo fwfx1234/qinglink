@@ -80,6 +80,9 @@ pub struct AppState {
     pub pairing_events: broadcast::Sender<pairing::PairingNotification>,
 }
 
+/// 保持唤醒开关在服务数据库中的设置键。
+const KEEP_AWAKE_SETTING_KEY: &str = "power.keep_awake";
+
 impl AppState {
     /// 依据已注册的数据库构造服务端状态，并恢复缓存的目录与暂停设置。
     pub fn new(service: RemoteControlService, database: Arc<DatabaseService>) -> Self {
@@ -88,6 +91,15 @@ impl AppState {
         let scanner_config_path = service.paths().config("scanner_custom_dirs.json");
         let mut window_monitor = WindowMonitor::new();
         window_monitor.set_event_sender(tx.clone());
+        // 鼠标按键状态监控是一次性的后台线程：只在状态变化时广播，进程存活期间一直跑。
+        let mut input_state_monitor = crate::service::input_state_monitor::InputStateMonitor::new();
+        input_state_monitor.set_event_sender(tx.clone());
+        input_state_monitor.start();
+        // 焦点监控同样是常驻后台线程：只在焦点第一次进入输入框时广播一次，
+        // 手机端收到后自动弹出键盘面板。
+        let mut focus_monitor = crate::service::focus_monitor::FocusMonitor::new();
+        focus_monitor.set_event_sender(tx.clone());
+        focus_monitor.start();
         let token_store = Arc::new(auth::TokenStore::new(&database));
         let (input_move_tx, _) = tokio::sync::watch::channel((0_u64, 0_i32, 0_i32));
         // Clean up expired tokens.
@@ -160,6 +172,46 @@ impl AppState {
             launch_display: LaunchDisplayCoordinator::default(),
         };
         state.launch_display.recover(&state);
+        state.restore_keep_awake();
         state
+    }
+
+    /// 服务进程当前的保持唤醒状态，是桌面端与移动端共用的唯一状态源。
+    pub fn keep_awake(&self) -> bool {
+        crate::platform::keep_awake()
+    }
+
+    /// 切换保持唤醒并持久化意图。
+    ///
+    /// # Errors
+    /// 平台调用失败（常驻线程不可用、`SetThreadExecutionState` 失败、非 Windows）
+    /// 时返回 `Err` 且不写库。数据库写入失败只记警告：运行期开关已经生效，
+    /// 不能因为"记不住"把这次请求判成失败。
+    pub fn set_keep_awake(&self, enabled: bool) -> anyhow::Result<()> {
+        crate::platform::set_keep_awake(enabled)?;
+        if let Ok(db) = self.app_db.lock() {
+            let value = if enabled { "true" } else { "false" };
+            if let Err(error) = db.set_setting(KEEP_AWAKE_SETTING_KEY, value) {
+                tracing::warn!(%error, enabled, "持久化保持唤醒状态失败");
+            }
+        }
+        Ok(())
+    }
+
+    /// 服务启动时按持久化的意图恢复开关；失败只降级为关闭，不影响启动。
+    fn restore_keep_awake(&self) {
+        let persisted = self
+            .app_db
+            .lock()
+            .ok()
+            .and_then(|db| db.get_setting(KEEP_AWAKE_SETTING_KEY).ok().flatten())
+            .is_some_and(|value| value == "true");
+        if !persisted {
+            return;
+        }
+        match crate::platform::set_keep_awake(true) {
+            Ok(()) => tracing::info!("已按服务配置恢复保持唤醒"),
+            Err(error) => tracing::warn!(%error, "恢复保持唤醒失败，本次启动按关闭处理"),
+        }
     }
 }

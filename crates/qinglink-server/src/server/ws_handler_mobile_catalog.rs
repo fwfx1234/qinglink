@@ -29,7 +29,7 @@ pub(super) fn handle(
         WsClientRequest::ListBlockedScannerApps => handle_blocked_entries(state),
         WsClientRequest::RefreshLauncherCatalog { kind } => handle_catalog_scan(state, kind),
 
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
 }
 
@@ -56,18 +56,16 @@ fn handle_recent_items(state: &AppState, kind: &str) -> WsServerMessage {
     WsServerMessage::Response(WsServerResponse::RecentLauncherItems(items))
 }
 
-/// 返回单个条目的图标；内存目录未命中时回退为直接查库解析。
+/// 返回单个条目的图标；内存目录未命中时按需解析并记住结果。
+///
+/// 解析结果会写回数据库与内存目录（`icon_service::resolve_and_cache`），
+/// 因此同一条目在后续请求里拿到的是同一份载荷，不会因为某次提取失败而
+/// 时有时无；已屏蔽条目也走同一条兜底路径。
 fn handle_launcher_icon(state: &AppState, id: &str) -> WsServerMessage {
-    // The in-memory catalog only holds visible entries, so blocked ones
-    // (listed in the 已屏蔽 view) fall back to a direct lookup.
-    let icon_base64 = state.app_scanner.icon_base64(id).or_else(|| {
-        let entry = crate::lock_unpoisoned(&state.app_db)
-            .get_all_apps()
-            .ok()?
-            .into_iter()
-            .find(|entry| entry.id == *id)?;
-        crate::platform::resolve_icon(&entry.exe_path, entry.icon_path.as_deref()).icon_base64
-    });
+    let icon_base64 = state
+        .app_scanner
+        .icon_base64(id)
+        .or_else(|| crate::server::icon_service::resolve_and_cache(state, id));
     WsServerMessage::Response(WsServerResponse::LauncherIcon(
         crate::protocol::responses::LauncherIconResponse {
             id: id.to_string(),

@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/display_info.dart';
 import '../providers/system_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_dialogs.dart';
 import '../utils/snackbar_extension.dart';
 import '../widgets/app_ui.dart';
+import 'control_center/display_mode_sheet.dart';
+import 'control_center/display_section.dart';
+import 'control_center/keep_awake_section.dart';
+import '../widgets/app_sheet.dart';
 
 class ControlCenterScreen extends ConsumerStatefulWidget {
   const ControlCenterScreen({super.key});
@@ -28,6 +31,7 @@ class _ControlCenterScreenState extends ConsumerState<ControlCenterScreen> {
       system.refreshVolume();
       system.refreshAudioOutputs();
       system.refreshForeground();
+      system.refreshKeepAwake();
     });
   }
 
@@ -39,26 +43,18 @@ class _ControlCenterScreenState extends ConsumerState<ControlCenterScreen> {
     final selectedOutput = system.audioOutputs
         .where((d) => d.isDefault)
         .firstOrNull;
-    final display = system.displays.isNotEmpty ? system.displays.first : null;
 
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        toolbarHeight: 0,
-      ),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
+          padding: const EdgeInsets.fromLTRB(
+            AppMetrics.pagePadding,
+            AppSpacing.sm,
+            AppMetrics.pagePadding,
+            AppSpacing.xxl,
+          ),
           children: [
-            PageHeading(
-              title: '控制中心',
-              trailing: IconBtn(
-                icon: Icons.close_rounded,
-                tooltip: '返回',
-                onPressed: () => Navigator.of(context).maybePop(),
-              ),
-            ),
+            _TopBar(onRefresh: _refreshAll),
             _VolumeSection(
               volumePercent: volumePercent,
               muted: muted,
@@ -73,10 +69,19 @@ class _ControlCenterScreenState extends ConsumerState<ControlCenterScreen> {
               onPickOutput: _pickAudioOutput,
             ),
             const SizedBox(height: 12),
-            _DisplaySection(
-              display: display,
-              onPickMode: () => _pickDisplayMode(display),
+            DisplaySection(
+              displays: system.displays,
+              activeDisplay: system.activeDisplay,
+              loading: system.displaysLoading,
+              error: system.displayError,
+              onRetry: () =>
+                  ref.read(systemControllerProvider.notifier).refreshDisplays(),
+              onSelect: (id) =>
+                  ref.read(systemControllerProvider.notifier).selectDisplay(id),
+              onPickMode: _pickDisplayMode,
             ),
+            const SizedBox(height: 12),
+            const KeepAwakeSection(),
             const SizedBox(height: 12),
             _PowerSection(
               onSleep: () => confirmPowerAction(context, ref, 'sleep'),
@@ -89,6 +94,16 @@ class _ControlCenterScreenState extends ConsumerState<ControlCenterScreen> {
     );
   }
 
+  /// 顶栏刷新：把控制中心用到的五路状态一起重拉。
+  void _refreshAll() {
+    final system = ref.read(systemControllerProvider.notifier);
+    system.refreshDisplays();
+    system.refreshVolume();
+    system.refreshAudioOutputs();
+    system.refreshForeground();
+    system.refreshKeepAwake();
+  }
+
   Future<void> _pickAudioOutput() async {
     final system = ref.read(systemControllerProvider.notifier);
     if (ref.read(systemControllerProvider).audioOutputs.isEmpty) {
@@ -97,9 +112,8 @@ class _ControlCenterScreenState extends ConsumerState<ControlCenterScreen> {
     }
     final current = ref.read(systemControllerProvider).audioOutputs;
     if (!mounted || current.isEmpty) return;
-    final selectedId = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
+    final selectedId = await showAppSheet<String>(
+      context,
       builder: (sheetContext) => SafeArea(
         child: ListView(
           shrinkWrap: true,
@@ -132,51 +146,70 @@ class _ControlCenterScreenState extends ConsumerState<ControlCenterScreen> {
     }
   }
 
-  Future<void> _pickDisplayMode(DisplayInfo? display) async {
-    if (display == null || display.modes.isEmpty) {
-      if (display != null) context.showInfoSnackBar('没有可选的分辨率');
+  /// 选择分辨率与刷新率。
+  ///
+  /// 服务端返回的是 1080p 及以上的可选模式（同一分辨率最多 4 个刷新率），弹层按分辨率分组
+  /// 列出刷新率；切换成功后重新拉一次列表，因为 Windows 可能拒绝并在 15 秒确认期内回滚。
+  Future<void> _pickDisplayMode() async {
+    final notifier = ref.read(systemControllerProvider.notifier);
+    final display = ref.read(systemControllerProvider).activeDisplay;
+    if (display == null) {
+      context.showInfoSnackBar('还没有读到显示器，请先点右上角刷新');
       return;
     }
-    final current = display.currentMode;
-    final mode = await showModalBottomSheet<DisplayModeInfo>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            const ListTile(title: Text('分辨率与刷新率')),
-            ...display.modes.map(
-              (m) => ListTile(
-                leading: Icon(
-                  m.resolution == current.resolution &&
-                          m.refreshMillihz == current.refreshMillihz
-                      ? Icons.check_circle_rounded
-                      : Icons.monitor_rounded,
-                ),
-                title: Text('${m.resolution} · ${m.refreshText}'),
-                trailing:
-                    m.resolution == current.resolution &&
-                        m.refreshMillihz == current.refreshMillihz
-                    ? const StatusTag('当前')
-                    : null,
-                onTap: () => Navigator.of(sheetContext).pop(m),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    if (display.modes.isEmpty) {
+      context.showInfoSnackBar('这台显示器没有返回可用模式');
+      return;
+    }
+    final mode = await DisplayModeSheet.show(context, display);
     if (mode == null || !mounted) return;
     try {
-      await ref.read(systemControllerProvider.notifier).setDisplayMode(display.id, mode);
-      if (mounted) {
-        setState(() {});
-        context.showSuccessSnackBar('显示模式已切换');
-      }
+      await notifier.setDisplayMode(display.id, mode);
+      if (!mounted) return;
+      context.showSuccessSnackBar('已切换为 ${mode.label}');
     } catch (error) {
-      if (mounted) context.showErrorSnackBar('切换显示模式失败: $error');
+      if (!mounted) return;
+      context.showErrorSnackBar('切换显示模式失败: $error');
     }
+  }
+}
+
+/// 顶栏：返回 + 居中标题 + 刷新（设计稿 S3）。
+class _TopBar extends StatelessWidget {
+  const _TopBar({required this.onRefresh});
+
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return SizedBox(
+      height: AppMetrics.navHeight,
+      child: Row(
+        children: [
+          IconBtn(
+            icon: Icons.chevron_left_rounded,
+            tooltip: '返回',
+            tonal: true,
+            iconSize: 22,
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+          Expanded(
+            child: Text(
+              '控制中心',
+              textAlign: TextAlign.center,
+              style: AppText.sectionTitle.copyWith(color: palette.textPrimary),
+            ),
+          ),
+          IconBtn(
+            icon: Icons.refresh_rounded,
+            tooltip: '刷新',
+            tonal: true,
+            onPressed: onRefresh,
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -264,14 +297,14 @@ class _VolumeSliderRow extends StatelessWidget {
     return Row(
       children: [
         SizedBox(
-          width: 40,
-          height: 40,
+          width: AppMetrics.minTap,
+          height: AppMetrics.minTap,
           child: IconButton(
             tooltip: '静音',
             onPressed: volumeAvailable ? onToggleMute : null,
             icon: Icon(
               muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-              size: 17,
+              size: 20,
             ),
             style: IconButton.styleFrom(
               backgroundColor: AppColors.primary,
@@ -284,7 +317,7 @@ class _VolumeSliderRow extends StatelessWidget {
         Expanded(
           child: SliderTheme(
             data: SliderTheme.of(context).copyWith(
-              trackHeight: 5,
+              trackHeight: 6,
               activeTrackColor: AppColors.primary,
               inactiveTrackColor: palette.surface2,
               thumbColor: AppColors.primary,
@@ -304,69 +337,7 @@ class _VolumeSliderRow extends StatelessWidget {
         ),
         Text(
           '$volumePercent',
-          style: AppText.body.copyWith(color: palette.textMuted),
-        ),
-      ],
-    );
-  }
-}
-
-/// 显示器设置分组：当前显示器信息与分辨率入口。
-class _DisplaySection extends StatelessWidget {
-  const _DisplaySection({required this.display, required this.onPickMode});
-
-  final DisplayInfo? display;
-  final VoidCallback onPickMode;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    final info = display;
-    return SettingsGroup(
-      title: '显示器',
-      children: [
-        Row(
-          children: [
-            TileIcon(
-              icon: Icons.monitor_rounded,
-              color: AppColors.cyan,
-              size: 32,
-              radius: 9,
-              iconSize: 17,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    info?.name ?? '未检测到显示器',
-                    style: AppText.body.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: palette.textPrimary,
-                    ),
-                  ),
-                  Text(
-                    info != null
-                        ? '${info.currentMode.resolution} ${info.currentMode.refreshText}'
-                        : '请检查连接',
-                    style: AppText.meta.copyWith(
-                      color: palette.textSubtle,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (info != null && info.primary)
-              const StatusTag('主显示器'),
-          ],
-        ),
-        const SizedBox(height: 6),
-        AppListRow(
-          icon: Icons.aspect_ratio_rounded,
-          title: '分辨率与刷新率',
-          showChevron: true,
-          onTap: onPickMode,
+          style: AppText.meta.copyWith(color: palette.textMuted),
         ),
       ],
     );

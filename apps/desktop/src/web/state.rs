@@ -21,10 +21,9 @@ pub type HostReply = oneshot::Sender<Result<serde_json::Value, ApiError>>;
 
 /// Actions that must run on the application main thread.
 ///
-/// Two reasons drive this: `SetThreadExecutionState` is per-thread, so the
-/// keep-awake request has to live on a thread that outlives the call; and
-/// restart/quit have to unwind the main loop rather than kill the process from
-/// a request handler.
+/// Restart/quit have to unwind the main loop rather than kill the process from
+/// a request handler. 保持唤醒不在这里：它由服务进程统一持有，Web 层通过
+/// 服务命令直接读写，主循环只按快照同步托盘勾选。
 #[derive(Debug)]
 pub enum HostCommand {
     /// Open the admin interface in the default browser.
@@ -33,14 +32,12 @@ pub enum HostCommand {
     Restart { reply: HostReply },
     /// Quit the desktop process, leaving the service running.
     Exit { reply: HostReply },
-    /// Toggle keep-awake.
-    SetKeepAwake { enabled: bool, reply: HostReply },
 }
 
-/// Desktop settings, readable from any thread without locking.
+/// Settings exposed by the admin API.
 ///
-/// The main thread is the only writer, so a request handler never observes a
-/// half-applied change.
+/// 保持唤醒是服务快照的镜像，由 Web 事件泵写入；其余两项是桌面端本地设置。
+/// 全部用原子量，任何线程都能无锁读取。
 #[derive(Debug, Default)]
 pub struct SharedSettings {
     autostart: AtomicBool,
@@ -59,6 +56,14 @@ impl SharedSettings {
     /// Current autostart state.
     pub fn autostart(&self) -> bool {
         self.autostart.load(Ordering::Relaxed)
+    }
+
+    /// 只更新保持唤醒镜像，不触碰另外两项设置。
+    ///
+    /// 服务快照、Web 端点与托盘线程都可能写这个字段；只写它自己的原子量，
+    /// 不会把并发进行的 autostart / debug_log 更新覆盖掉。
+    pub fn set_keep_awake(&self, enabled: bool) {
+        self.keep_awake.store(enabled, Ordering::Relaxed);
     }
 
     /// Current keep-awake state.

@@ -223,6 +223,13 @@ class SettingsNotifier extends StateNotifier<ConnectionConfig> {
     _setState(state.copyWith(autoUnlockOnWake: enabled));
   }
 
+  /// 是否允许 PC 焦点进入输入框时自动弹出手机输入面板。
+  Future<void> setAutoOpenKeyboardOnFocus(bool enabled) async {
+    final prefs = await _getPrefs();
+    await prefs.setBool(SettingsKeys.autoOpenKeyboard, enabled);
+    _setState(state.copyWith(autoOpenKeyboardOnFocus: enabled));
+  }
+
   Future<void> setTvFollowPcPowerOn(bool enabled) async {
     final prefs = await _getPrefs();
     await prefs.setBool(SettingsKeys.tvFollowPcPowerOn, enabled);

@@ -304,7 +304,7 @@ impl ControlSession {
     ) -> bool {
         let token = self.conn_state.lock().await.token.clone();
         if let Some(token) = token
-            && !self.state.token_store.validate(&token)
+            && self.state.token_store.check_valid(&token) == Some(false)
         {
             tracing::info!(
                 "[远程控制] WebSocket Token 已失效, conn_id={}",

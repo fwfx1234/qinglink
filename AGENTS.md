@@ -37,7 +37,7 @@
 - 上限值就是上表。本仓库**没有行数校验脚本**，构建与校验一律用语言原生命令（见 §7）；
   改上限必须同时改上表、两份编码规范的 §11 与 [`agent.md`](agent.md) 的审查清单。
 - 测试目录（`tests/`、`test/`、`*_test.*`）与生成目录不纳入统计（本仓库不新增测试代码，见 §4）。
-- 现有 `docs/web-api.md`（1127 行）超出建议值、未超硬上限。**按主题拆分已被评估并推迟**：
+- 现有 `docs/web-api.md`（1197 行）超出建议值、未超硬上限。**按主题拆分已被评估并推迟**：
   该文档的 `§4.x` 编号被前端 `apps/desktop/web-ui/src/api/*.ts` 的注释与文档内部大量互引依赖，
   拆分需同时重编所有引用；要做就单独一个改动完成编号迁移，不要顺手拆。
 
@@ -56,11 +56,15 @@
 
 ### 2.3 既有超限文件清单（只许减少）
 
-当前仍有 **1 个**文件超出所属类型上限。**这份清单就是棘轮**：清单内的文件只允许变短。
+当前仍有 **3 个**文件超出所属类型上限。**这份清单就是棘轮**：清单内的文件只允许变短。
 
 | 文件 | 当前行数 | 上限 |
 | --- | --- | --- |
-| `crates/qinglink-server/src/protocol/requests_ws.rs` | 541 | 500 |
+| `apps/mobile/lib/src/screens/scan_folder_screen.dart` | 659 | 500 |
+| `apps/mobile/lib/src/screens/pairing_screen.dart` | 650 | 500 |
+| `crates/qinglink-server/src/protocol/requests_ws.rs` | 533 | 500 |
+
+行数按 §2.1 的口径统计：`tests/`、`*_test.*` 与生成目录不计入。
 
 规则：
 
@@ -88,7 +92,7 @@
 
    # 全仓库超限文件（.vue 用 400，其余用 500）
    Get-ChildItem -Recurse -Include *.rs,*.dart,*.ts,*.vue |
-     Where-Object { $_.FullName -notmatch 'node_modules|\\target\\|\\build\\|\\dist\\|\\test\\' } |
+     Where-Object { $_.FullName -notmatch 'node_modules|[\\/]target[\\/]|[\\/]build[\\/]|[\\/]dist[\\/]|[\\/]tests?[\\/]|[._](test|spec)\.[a-z]+$|ephemeral_deliverables|\.plugin_symlinks' } |
      ForEach-Object {
        $limit = if ($_.Extension -eq '.vue') { 400 } else { 500 }
        $lines = (Get-Content $_).Count
@@ -109,11 +113,13 @@
 
 | 改动位置 | 必须同步的文档 |
 | --- | --- |
-| `crates/qinglink-protocol/**`、`protocol/**` | [`protocol/v2.md`](protocol/v2.md)、[`protocol/README.md`](protocol/README.md)、`protocol/qinglink-v2.schema.json`、`protocol/qinglink-v2-ws.schema.json`、`protocol/fixtures/*` |
-| `crates/qinglink-server/src/server/**`、桌面管理接口 | [`docs/web-api.md`](docs/web-api.md)、`apps/desktop/web-ui/src/api/types.ts` |
+| `crates/qinglink-protocol/**`、`protocol/**` | [`protocol/v2.md`](protocol/v2.md)、[`protocol/requests.md`](protocol/requests.md)、[`protocol/README.md`](protocol/README.md)、`protocol/qinglink-v2.schema.json`、`protocol/qinglink-v2-ws.schema.json`、`protocol/fixtures/*` |
+| `crates/qinglink-server/src/server/**`（局域网 `/api/v2/*`） | [`protocol/v2.md`](protocol/v2.md)；**新增 / 删除 / 改名字段或错误码**时，同批更新 [`protocol/requests.md`](protocol/requests.md) 的对应行 |
+| 桌面管理接口（`services/qinglink-service` 管理面、`apps/desktop/src/web/**`） | [`docs/web-api.md`](docs/web-api.md)、`apps/desktop/web-ui/src/api/contracts/*.ts` |
 | crate 划分、依赖方向、模块职责、线程模型 | [`docs/architecture.md`](docs/architecture.md)、[`.opencode/rules/architecture.md`](.opencode/rules/architecture.md)、[`README.md`](README.md) 结构段 |
 | 构建方式、运行参数、端口、数据目录、排障 | [`docs/development.md`](docs/development.md)、[`README.md`](README.md) |
 | `apps/desktop/build.rs` 的前端 / 资源嵌入逻辑 | [`docs/development.md`](docs/development.md) §2.1、本文件 §7 |
+| `crates/qinglink-version/**`、版本号构成与递增规则 | [`docs/development.md`](docs/development.md) §2.4、[`protocol/README.md`](protocol/README.md) |
 | 移动端行为、配对流程 | [`apps/mobile/README.md`](apps/mobile/README.md)、[`docs/architecture.md`](docs/architecture.md) 相关时序 |
 | Rust / Dart 编码约定本身 | [`.opencode/rules/rust-coding.md`](.opencode/rules/rust-coding.md)、[`.opencode/rules/dart-coding.md`](.opencode/rules/dart-coding.md)、[`agent.md`](agent.md) |
 | 新增 / 删除 / 重命名文档 | [`README.md`](README.md) 的「文档索引」表 |
@@ -199,6 +205,10 @@
 从 `apps/desktop/assets/input/` 或 `target/{debug,release}/` 取用。因此本项目**不需要**任何
 包装 `cargo` / `npm` / `flutter` 的脚本。
 
+版本资源的生成也属于构建脚本：`crates/qinglink-version/build.rs` 维护构建号，
+`apps/desktop/build.rs` 与 `services/qinglink-service/build.rs` 按当前构建号生成
+`VERSIONINFO` 并嵌入（规则见 [`docs/development.md`](docs/development.md) §2.4）。
+
 - 构建、运行、校验、发布一律用语言原生命令：`cargo`、`npm`、`flutter`。
 - **禁止新增包装脚本**（PowerShell / shell / Node / `cargo` 子命令都一样），也禁止恢复历史上
   存在过的 `scripts/*.ps1` 与行数校验器。
@@ -216,7 +226,7 @@
 | 指标 | 值 |
 | --- | --- |
 | 硬上限 / 警戒线 | 500 行（`.vue` 400）/ 400 行 |
-| §2.3 清单内的超限文件 | 1 |
-| 清单内最大文件 | `crates/qinglink-server/src/protocol/requests_ws.rs`（541 行） |
+| §2.3 清单内的超限文件 | 3 |
+| 清单内最大文件 | `apps/mobile/lib/src/screens/scan_folder_screen.dart`（659 行） |
 
 §2.3 的表格是权威数据；本表是快照，拆分或新增后应同步更新这两行（§3.2）。

@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+mod icon_cache;
+
 /// Steam 库文件夹信息
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SteamLibrary {
@@ -365,72 +367,11 @@ impl SteamScanner {
 
     /// 查找 Steam 游戏图标
     fn find_steam_icon(&self, app_id: u32, library_path: &Path) -> Option<String> {
-        let mut cache_dirs = Vec::new();
-        if let Some(info) = &self.install_info {
-            cache_dirs.push(info.root_path.join("appcache").join("librarycache"));
-        }
-        cache_dirs.push(library_path.join("appcache").join("librarycache"));
-        cache_dirs.push(
-            library_path
-                .join("steamapps")
-                .join("appcache")
-                .join("librarycache"),
-        );
-
-        cache_dirs.sort();
-        cache_dirs.dedup();
-
-        let subdir_names = [format!("{}", app_id)];
-
-        let icon_filenames = [
-            format!("{}_icon.jpg", app_id),
-            format!("{}_header.jpg", app_id),
-            format!("{}_hero.jpg", app_id),
-            format!("{}.jpg", app_id),
-            format!("{}_icon.png", app_id),
-            format!("{}_header.png", app_id),
-        ];
-
-        for cache_dir in cache_dirs {
-            if !cache_dir.is_dir() {
-                continue;
-            }
-
-            for name in &icon_filenames {
-                let path = cache_dir.join(name);
-                if path.exists() {
-                    return Some(path.to_string_lossy().to_string());
-                }
-            }
-
-            for subdir in &subdir_names {
-                let sub_path = cache_dir.join(subdir);
-                if sub_path.is_dir() {
-                    for name in &icon_filenames {
-                        let path = sub_path.join(name);
-                        if path.exists() {
-                            return Some(path.to_string_lossy().to_string());
-                        }
-                    }
-                }
-            }
-
-            if let Ok(entries) = std::fs::read_dir(&cache_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        for name in &icon_filenames {
-                            let file_path = path.join(name);
-                            if file_path.exists() {
-                                return Some(file_path.to_string_lossy().to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        None
+        let steam_root = self
+            .install_info
+            .as_ref()
+            .map(|info| info.root_path.as_path());
+        icon_cache::find(steam_root, library_path, app_id)
     }
 }
 

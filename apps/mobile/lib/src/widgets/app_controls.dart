@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'app_buttons.dart';
 
-/// 胶囊筛选标签，对齐原型 `.filter-chip`。
+/// 胶囊筛选标签，选中态用品牌浅底 + 品牌文字。
 class FilterChipX extends StatelessWidget {
   const FilterChipX({
     super.key,
@@ -25,20 +25,24 @@ class FilterChipX extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
+        height: 32,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: active ? AppColors.primary : palette.surface,
-          border: Border.all(color: active ? AppColors.primary : palette.line),
+          color: active ? palette.brandTint : palette.surface,
+          border: Border.all(
+            color: active
+                ? palette.brand.withValues(alpha: 0.45)
+                : palette.line,
+          ),
           borderRadius: BorderRadius.circular(AppRadius.pill),
         ),
         child: Text(
           label,
           style: TextStyle(
             fontSize: 11,
-            fontWeight: active ? FontWeight.w700 : FontWeight.w400,
-            color: active ? AppColors.onPrimary : palette.textMuted,
+            fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+            color: active ? palette.brand : palette.textMuted,
           ),
         ),
       ),
@@ -151,11 +155,11 @@ class _SearchFieldState extends State<SearchField> {
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(AppRadius.md),
       child: Container(
-        height: 44,
+        height: AppMetrics.minTap,
         decoration: BoxDecoration(
-          color: palette.surface,
+          color: palette.surface2,
           border: Border.all(
-            color: _focused ? AppColors.primaryDark : palette.line,
+            color: _focused ? palette.lineStrong : palette.line,
           ),
           borderRadius: BorderRadius.circular(AppRadius.md),
         ),
@@ -164,20 +168,20 @@ class _SearchFieldState extends State<SearchField> {
             const SizedBox(width: 11),
             Icon(
               Icons.search_rounded,
-              size: 17,
-              color: _focused ? AppColors.primary : palette.textSubtle,
+              size: 18,
+              color: _focused ? palette.brand : palette.textSubtle,
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: TextField(
                 controller: widget.controller,
                 focusNode: _node,
                 onChanged: widget.onChanged,
-                style: TextStyle(fontSize: 12, color: palette.textPrimary),
-                cursorColor: AppColors.primary,
+                style: TextStyle(fontSize: 13, color: palette.textPrimary),
+                cursorColor: palette.brand,
                 decoration: InputDecoration(
                   hintText: widget.hint,
-                  hintStyle: TextStyle(fontSize: 12, color: palette.textSubtle),
+                  hintStyle: TextStyle(fontSize: 13, color: palette.textSubtle),
                   isCollapsed: true,
                   filled: false,
                   border: InputBorder.none,

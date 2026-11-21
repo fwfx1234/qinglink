@@ -63,7 +63,8 @@
         "pc_id": { "type": "string", "minLength": 1 },
         "name": { "type": "string", "minLength": 1 },
         "version": { "const": 2 },
-        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "app_version": { "type": "string", "minLength": 1, "maxLength": 32 }
       },
       "additionalProperties": false
     }

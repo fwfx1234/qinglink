@@ -124,6 +124,40 @@ pub(crate) fn install(
         )
         .with(collector.clone());
     subscriber.init();
+    install_panic_hook();
+}
+
+/// Route panics into `tracing` so they reach the log file and the in-memory buffer.
+///
+/// A GUI-subsystem release build has no console, so the default hook's stderr
+/// write goes nowhere: a panic would surface only as "the feature stopped
+/// responding", with nothing in the log to explain it. The previous hook is kept
+/// and called afterwards, so debug builds still print to the terminal.
+///
+/// Call this only after the subscriber is installed; otherwise the record has
+/// no destination and the panic stays invisible.
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info.location().map_or_else(
+            || "<unknown>".to_string(),
+            |value| format!("{}:{}:{}", value.file(), value.line(), value.column()),
+        );
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|value| (*value).to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<non-string panic payload>".to_string());
+        let thread = std::thread::current();
+        tracing::error!(
+            location = %location,
+            thread = %thread.name().unwrap_or("<unnamed>"),
+            payload = %payload,
+            "线程 panic"
+        );
+        previous(info);
+    }));
 }
 
 /// The level override from the environment, if one is set to a usable value.

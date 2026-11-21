@@ -64,47 +64,80 @@ fn mouse_input_error(error: &anyhow::Error) -> WsServerMessage {
     WsServerMessage::Response(WsServerResponse::error(code, user_message))
 }
 
-mod auth {
-    include!("ws_handler_auth.rs");
+#[path = "ws_handler_apps.rs"]
+mod apps;
+#[path = "ws_handler_auth.rs"]
+mod auth;
+#[path = "ws_handler_custom_dirs.rs"]
+mod custom_dirs;
+#[path = "ws_handler_display_input.rs"]
+mod display_input;
+#[path = "ws_handler_files.rs"]
+mod files;
+#[path = "ws_handler_mobile_catalog.rs"]
+mod mobile_catalog;
+#[path = "ws_handler_process.rs"]
+mod process;
+#[path = "ws_handler_scanner.rs"]
+mod scanner;
+#[path = "ws_handler_scanner_management.rs"]
+mod scanner_management;
+#[path = "ws_handler_steam.rs"]
+mod steam;
+#[path = "ws_handler_system.rs"]
+mod system;
+#[path = "ws_handler_tasks.rs"]
+mod tasks;
+#[path = "ws_handler_volume_media.rs"]
+mod volume_media;
+#[path = "ws_handler_windows.rs"]
+mod windows;
+
+/// 分发层未认领的请求：返回可诊断的错误，而不是 panic。
+///
+/// 各 handler 的 `_` 兜底臂原本是 `unreachable!("request routed to the wrong handler")`。
+/// 但"路由表全部匹配到位"这件事**编译器并不参与校验**——路由表与 handler 是两个
+/// 各自带兜底臂的独立 `match`，今天成立只由人的纪律保证。一旦新增协议变体漏配路由，
+/// `unreachable!` 就会在**持锁期间** panic：输入闸门中毒 → 之后所有远程指令永久失败，
+/// 而进程不死、WebSocket 仍能握手，日志里一个字都没有。
+///
+/// 改成返回错误后，同样的漏配只会让**那一条请求**失败，并且留下一条 error 日志。
+pub(super) fn unrouted_request() -> WsServerMessage {
+    tracing::error!(
+        "请求到达了未认领它的处理器：路由表与 handler 的匹配集合不一致。\
+         本次返回 UNSUPPORTED_REQUEST，请检查新增的协议变体是否在 ws_request_handler 的路由表里登记"
+    );
+    WsServerMessage::Response(WsServerResponse::error(
+        "UNSUPPORTED_REQUEST",
+        "服务端未处理该请求类型",
+    ))
 }
-mod system {
-    include!("ws_handler_system.rs");
-}
-mod display_input {
-    include!("ws_handler_display_input.rs");
-}
-mod process {
-    include!("ws_handler_process.rs");
-}
-mod apps {
-    include!("ws_handler_apps.rs");
-}
-mod mobile_catalog {
-    include!("ws_handler_mobile_catalog.rs");
-}
-mod legacy_scanner {
-    include!("ws_handler_legacy_scanner.rs");
-}
-mod steam {
-    include!("ws_handler_steam.rs");
-}
-mod custom_dirs {
-    include!("ws_handler_custom_dirs.rs");
-}
-mod tasks {
-    include!("ws_handler_tasks.rs");
-}
-mod volume_media {
-    include!("ws_handler_volume_media.rs");
-}
-mod files {
-    include!("ws_handler_files.rs");
-}
-mod windows {
-    include!("ws_handler_windows.rs");
-}
-mod scanner_management {
-    include!("ws_handler_scanner_management.rs");
+
+/// 该请求是否真的要注入平台输入，因而需要与"暂停 / 输入清理"互斥。
+///
+/// 判定必须与注入点一一对应；新增注入路径时同步登记，否则暂停与清理
+/// 可能和那次注入交错（表现为暂停后仍有一次按键落到前台窗口）。当前注入点：
+/// - `ws_handler_display_input.rs`：鼠标位移/绝对位移/按键/滚轮、文本、按键
+/// - `ws_handler_system.rs`：安全输入三项（PIN、安全桌面文本、SAS）
+///
+/// 不在表内的请求（扫描 Steam、扫描游戏目录、刷新目录、取图标、进程与
+/// 音量媒体操作等）不持锁——它们耗时可达数秒，持锁会阻塞输入工作线程，
+/// 远端鼠标会在扫描期间整段卡住。
+fn injects_input(req: &WsClientRequest) -> bool {
+    matches!(
+        req,
+        WsClientRequest::MouseMove { .. }
+            | WsClientRequest::MouseMoveAbsolute { .. }
+            | WsClientRequest::MouseButton { .. }
+            | WsClientRequest::MouseButtonState { .. }
+            | WsClientRequest::MouseWheel { .. }
+            | WsClientRequest::SendText { .. }
+            | WsClientRequest::KeyPress { .. }
+            | WsClientRequest::KeyEvent { .. }
+            | WsClientRequest::SubmitLockPin { .. }
+            | WsClientRequest::SendSecureAscii { .. }
+            | WsClientRequest::SecureAttention
+    )
 }
 
 /// 在指定输入代次内处理一次客户端请求；服务暂停或代次过期时直接拒绝。
@@ -114,20 +147,40 @@ pub fn handle_client_request_in_generation(
     session_token: Option<&str>,
     generation: u64,
 ) -> WsServerMessage {
-    let Ok(_input_guard) = state.control.input_gate.lock() else {
-        return WsServerMessage::Response(WsServerResponse::error(
-            "SERVICE_UNAVAILABLE",
-            "服务状态不可用",
-        ));
-    };
+    // `input_gate` 保护的是"输入注入 vs 暂停/清理"，而不是"一次请求"。
+    // 只注入输入的请求才取锁：取锁后立即复查暂停与代次，保证注入不会
+    // 跨越暂停边界。
+    //
+    // 中毒只说明"此前有任务在持锁期间 panic"，不代表输入闸门不可用：
+    // 用仓库统一的 `lock_unpoisoned` 恢复并记录，避免一次 panic 让
+    // 所有远程指令永久返回 SERVICE_UNAVAILABLE（且全程无日志）。
+    let _input_guard = injects_input(req).then(|| {
+        if state.control.input_gate.is_poisoned() {
+            tracing::error!(
+                "输入闸门互斥锁已中毒（此前有任务在持锁期间 panic），本次请求已恢复继续处理；请回溯更早的 panic 日志"
+            );
+        }
+        crate::lock_unpoisoned(&state.control.input_gate)
+    });
     if state.control.is_paused() || state.input_generation() != generation {
         return WsServerMessage::Response(WsServerResponse::error(
             "SERVICE_PAUSED",
             "服务已暂停或连接已过期",
         ));
     }
-    if session_token.is_some_and(|token| !state.token_store.validate(token)) {
-        return WsServerMessage::Response(WsServerResponse::error("REVOKED", "设备授权已失效"));
+    // 三态：`Err` 是"数据库不可用"，绝不能当成"令牌失效"——
+    // 后者会让客户端清掉凭据、踢掉全部在线设备。
+    if let Some(token) = session_token {
+        match state.token_store.validate(token) {
+            Ok(true) => {}
+            Ok(false) => {
+                return WsServerMessage::Response(WsServerResponse::error(
+                    "REVOKED",
+                    "设备授权已失效",
+                ));
+            }
+            Err(error) => return auth::auth_unavailable(&error),
+        }
     }
     route_client_request(state, req, session_token)
 }
@@ -150,8 +203,7 @@ fn route_client_request(
     if let Some(message) = route_host_request(state, req, session_token) {
         return message;
     }
-    route_app_management_request(state, req, session_token)
-        .unwrap_or_else(|| unreachable!("request routed to the wrong handler"))
+    route_app_management_request(state, req, session_token).unwrap_or_else(unrouted_request)
 }
 
 /// 鉴权、系统电源、显示与输入类请求的路由表；不负责该领域时返回 `None`。
@@ -173,6 +225,8 @@ fn route_control_request(
         | WsClientRequest::Restart { .. }
         | WsClientRequest::Logoff
         | WsClientRequest::Lock
+        | WsClientRequest::GetKeepAwake
+        | WsClientRequest::SetKeepAwake { .. }
         | WsClientRequest::GetUnlockStatus
         | WsClientRequest::AutoUnlock { .. }
         | WsClientRequest::GetLockInputStatus
@@ -222,14 +276,10 @@ fn route_catalog_request(
         | WsClientRequest::RefreshLauncherCatalog { .. } => {
             mobile_catalog::handle(state, req, session_token)
         }
-        WsClientRequest::GetScannerApps
-        | WsClientRequest::RefreshScannerApps
-        | WsClientRequest::RenameScannerApp { .. }
+        WsClientRequest::RenameScannerApp { .. }
         | WsClientRequest::LaunchScannerApp { .. }
         | WsClientRequest::ScanGameDirectory { .. }
-        | WsClientRequest::AddScannedGames { .. } => {
-            legacy_scanner::handle(state, req, session_token)
-        }
+        | WsClientRequest::AddScannedGames { .. } => scanner::handle(state, req, session_token),
         WsClientRequest::GetSteamGames
         | WsClientRequest::RefreshSteamGames
         | WsClientRequest::InstallSteamGame { .. }

@@ -252,6 +252,9 @@ pub(super) fn run_entry(args: &[String]) -> Result<()> {
     unsafe {
         std::env::set_var("QINGLINK_SESSION_AGENT", "1");
     }
+    // 焦点读取的 UIA 调用放到独立线程，命令路径只读缓存——否则应用卡顿时会把
+    // 串行处理的鼠标/键盘注入堵在后面。
+    super::focus_cache::spawn();
     let session = args
         .windows(2)
         .find_map(|pair| (pair[0] == "--session").then(|| pair[1].parse::<u32>().ok()))

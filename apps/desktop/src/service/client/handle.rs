@@ -42,6 +42,7 @@ impl ServiceClient {
                 state: ServiceLinkState::Unreachable,
                 expected_version: SERVICE_IPC_VERSION,
                 service_version: None,
+                service_app_version: None,
                 paused: false,
                 network_ready: false,
                 address: None,
@@ -89,6 +90,15 @@ impl ServiceClient {
             return None;
         }
         state.snapshot.device_count
+    }
+
+    /// 最近一份服务快照里的保持唤醒开关；旧服务或链路未连通时为 `None`。
+    pub fn keep_awake(&self) -> Option<bool> {
+        let state = self.inner.state.lock().ok()?;
+        state
+            .connected
+            .then_some(state.snapshot.keep_awake)
+            .flatten()
     }
 
     /// Subscribe to status changes.

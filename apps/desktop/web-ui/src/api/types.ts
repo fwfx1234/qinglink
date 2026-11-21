@@ -4,6 +4,7 @@
  *
  * 本文件是桶文件：契约按职责拆在 ./contracts/ 下，这里只做类型转出，因此
  * 既有的 `import type { X } from '@/api/types'` / `from './types'` 无需改动。
+ * 类型定义一律写在 ./contracts/ 下，本文件不放任何定义。
  *
  *   envelope.ts    §2.1 - §2.3   响应信封、错误码、分页
  *   service.ts     §4.1 - §4.9   服务状态与能力、设置、桌面端动作结果

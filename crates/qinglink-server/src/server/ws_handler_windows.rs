@@ -60,7 +60,7 @@ pub(super) fn handle(
             handle_foreground_action(state, crate::platform::close_window, "CLOSE_FAILED")
         }
 
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
 }
 

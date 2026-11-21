@@ -13,7 +13,11 @@ fn allow_secure_attention() -> bool {
     true
 }
 
-pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Option<&str>) -> WsServerMessage {
+pub(super) fn handle(
+    state: &AppState,
+    req: &WsClientRequest,
+    _session_token: Option<&str>,
+) -> WsServerMessage {
     match req {
         // === System ===
         WsClientRequest::GetSystemStatus
@@ -25,6 +29,9 @@ pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Op
         | WsClientRequest::Restart { .. }
         | WsClientRequest::Logoff
         | WsClientRequest::Lock => handle_power_request(state, req),
+        WsClientRequest::GetKeepAwake | WsClientRequest::SetKeepAwake { .. } => {
+            handle_keep_awake_request(state, req)
+        }
         WsClientRequest::GetUnlockStatus | WsClientRequest::AutoUnlock { .. } => {
             handle_unlock_request(state, req)
         }
@@ -35,7 +42,32 @@ pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Op
         WsClientRequest::SendSecureAscii { .. } | WsClientRequest::SecureAttention => {
             handle_secure_input_request(state, req)
         }
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
+    }
+}
+
+/// 保持唤醒：读取状态与开关切换。
+///
+/// 状态由服务进程统一持有并持久化，手机端与桌面端读写的是同一份；
+/// `SetThreadExecutionState` 是 per-thread 状态，真正持有请求的是平台层启动的
+/// 常驻线程，这里只做协议转发，不在 WS 工作线程上调用系统 API。
+fn handle_keep_awake_request(state: &AppState, req: &WsClientRequest) -> WsServerMessage {
+    match req {
+        WsClientRequest::GetKeepAwake => {
+            WsServerMessage::Response(WsServerResponse::KeepAwakeStatus {
+                enabled: state.keep_awake(),
+            })
+        }
+        WsClientRequest::SetKeepAwake { enabled } => match state.set_keep_awake(*enabled) {
+            Ok(()) => WsServerMessage::Response(WsServerResponse::KeepAwakeStatus {
+                enabled: state.keep_awake(),
+            }),
+            Err(error) => WsServerMessage::Response(WsServerResponse::error(
+                "KEEP_AWAKE_FAILED",
+                &error.to_string(),
+            )),
+        },
+        _ => super::unrouted_request(),
     }
 }
 
@@ -62,10 +94,12 @@ fn handle_system_query(state: &AppState, req: &WsClientRequest) -> WsServerMessa
                 "Unable to get subnet prefix",
             )),
         },
-        WsClientRequest::GetWakeNetworks => WsServerMessage::Response(
-            WsServerResponse::WakeNetworks { networks: state.system_service.get_wake_networks() }
-        ),
-        _ => unreachable!("request routed to the wrong handler"),
+        WsClientRequest::GetWakeNetworks => {
+            WsServerMessage::Response(WsServerResponse::WakeNetworks {
+                networks: state.system_service.get_wake_networks(),
+            })
+        }
+        _ => super::unrouted_request(),
     }
 }
 
@@ -108,7 +142,7 @@ fn handle_power_request(state: &AppState, req: &WsClientRequest) -> WsServerMess
                 WsServerMessage::Response(WsServerResponse::error("LOCK_FAILED", &e.to_string()))
             }
         },
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
 }
 
@@ -122,18 +156,20 @@ fn handle_unlock_request(state: &AppState, req: &WsClientRequest) -> WsServerMes
                 &e.to_string(),
             )),
         },
-        WsClientRequest::AutoUnlock { pin } => match state.system_service.auto_unlock(pin.as_deref()) {
-            Ok(()) => WsServerMessage::Response(WsServerResponse::success()),
-            Err(error) => {
-                let message = error.to_string();
-                let code = message
-                    .split_once(':')
-                    .map(|(code, _)| code)
-                    .unwrap_or("AUTO_UNLOCK_FAILED");
-                WsServerMessage::Response(WsServerResponse::error(code, &message))
+        WsClientRequest::AutoUnlock { pin } => {
+            match state.system_service.auto_unlock(pin.as_deref()) {
+                Ok(()) => WsServerMessage::Response(WsServerResponse::success()),
+                Err(error) => {
+                    let message = error.to_string();
+                    let code = message
+                        .split_once(':')
+                        .map(|(code, _)| code)
+                        .unwrap_or("AUTO_UNLOCK_FAILED");
+                    WsServerMessage::Response(WsServerResponse::error(code, &message))
+                }
             }
-        },
-        _ => unreachable!("request routed to the wrong handler"),
+        }
+        _ => super::unrouted_request(),
     }
 }
 
@@ -148,7 +184,10 @@ fn handle_lock_input_request(_state: &AppState, req: &WsClientRequest) -> WsServ
             )),
         },
         WsClientRequest::SubmitLockPin { pin } => {
-            tracing::info!(length = pin.len(), "submit_lock_pin: submitting PIN for Windows login");
+            tracing::info!(
+                length = pin.len(),
+                "submit_lock_pin: submitting PIN for Windows login"
+            );
             match crate::platform::submit_lock_pin(pin) {
                 Ok(result) => {
                     tracing::info!(%result.message, "submit_lock_pin: PIN submitted");
@@ -165,33 +204,35 @@ fn handle_lock_input_request(_state: &AppState, req: &WsClientRequest) -> WsServ
                 }
             }
         }
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
 }
 
 /// 安全桌面状态查询：是否已锁定、是否检测到 UAC 以及输入通道是否就绪。
 fn handle_secure_desktop_status(_state: &AppState, req: &WsClientRequest) -> WsServerMessage {
     match req {
-        WsClientRequest::GetSecureDesktopStatus => match crate::platform::get_secure_desktop_status() {
-            Ok(status) => {
-                tracing::debug!(
-                    desktop = %status.desktop,
-                    locked = status.locked,
-                    uac_detected = status.uac_detected,
-                    input_ready = status.input_ready,
-                    "secure desktop status requested"
-                );
-                WsServerMessage::Response(WsServerResponse::SecureDesktopStatus(status))
+        WsClientRequest::GetSecureDesktopStatus => {
+            match crate::platform::get_secure_desktop_status() {
+                Ok(status) => {
+                    tracing::debug!(
+                        desktop = %status.desktop,
+                        locked = status.locked,
+                        uac_detected = status.uac_detected,
+                        input_ready = status.input_ready,
+                        "secure desktop status requested"
+                    );
+                    WsServerMessage::Response(WsServerResponse::SecureDesktopStatus(status))
+                }
+                Err(error) => {
+                    tracing::error!(%error, "failed to get secure desktop status");
+                    WsServerMessage::Response(WsServerResponse::error(
+                        "SECURE_DESKTOP_STATUS_FAILED",
+                        &error.to_string(),
+                    ))
+                }
             }
-            Err(error) => {
-                tracing::error!(%error, "failed to get secure desktop status");
-                WsServerMessage::Response(WsServerResponse::error(
-                    "SECURE_DESKTOP_STATUS_FAILED",
-                    &error.to_string(),
-                ))
-            }
-        },
-        _ => unreachable!("request routed to the wrong handler"),
+        }
+        _ => super::unrouted_request(),
     }
 }
 
@@ -199,7 +240,10 @@ fn handle_secure_desktop_status(_state: &AppState, req: &WsClientRequest) -> WsS
 fn handle_secure_input_request(_state: &AppState, req: &WsClientRequest) -> WsServerMessage {
     match req {
         WsClientRequest::SendSecureAscii { text } => {
-            if text.is_empty() || text.len() > 256 || !text.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+            if text.is_empty()
+                || text.len() > 256
+                || !text.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
+            {
                 tracing::warn!(length = text.len(), "rejecting invalid secure ASCII input");
                 WsServerMessage::Response(WsServerResponse::error(
                     "INVALID_SECURE_TEXT",
@@ -208,7 +252,10 @@ fn handle_secure_input_request(_state: &AppState, req: &WsClientRequest) -> WsSe
             } else {
                 match crate::platform::send_secure_ascii(text) {
                     Ok(()) => {
-                        tracing::info!(length = text.len(), "secure ASCII input accepted and delivered");
+                        tracing::info!(
+                            length = text.len(),
+                            "secure ASCII input accepted and delivered"
+                        );
                         WsServerMessage::Response(WsServerResponse::success())
                     }
                     Err(error) => {
@@ -231,7 +278,9 @@ fn handle_secure_input_request(_state: &AppState, req: &WsClientRequest) -> WsSe
             } else {
                 match crate::platform::send_secure_attention() {
                     Ok(()) => {
-                        tracing::info!("secure attention sequence (Ctrl+Alt+Del) accepted and sent");
+                        tracing::info!(
+                            "secure attention sequence (Ctrl+Alt+Del) accepted and sent"
+                        );
                         WsServerMessage::Response(WsServerResponse::success())
                     }
                     Err(error) => {
@@ -244,6 +293,6 @@ fn handle_secure_input_request(_state: &AppState, req: &WsClientRequest) -> WsSe
                 }
             }
         }
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
 }

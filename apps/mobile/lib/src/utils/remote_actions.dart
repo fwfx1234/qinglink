@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
 import 'app_dialogs.dart';
 import 'snackbar_extension.dart';
+import '../widgets/app_sheet.dart';
 
 /// 对当前前台窗口执行操作（最小化/最大化/关闭），统一确认与错误反馈。
 Future<void> runWindowAction(
@@ -80,9 +81,8 @@ Future<void> showWindowListSheet(BuildContext context, WidgetRef ref) async {
       context.showInfoSnackBar('没有可切换的窗口');
       return;
     }
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
+    await showAppSheet<void>(
+      context,
       builder: (sheet) => SafeArea(
         child: ListView(
           shrinkWrap: true,
@@ -155,9 +155,8 @@ Future<void> showVolumeSheet(BuildContext context, WidgetRef ref) async {
   final system = ref.read(systemControllerProvider.notifier);
   await Future.wait([system.refreshVolume(), system.refreshAudioOutputs()]);
   if (!context.mounted) return;
-  await showModalBottomSheet<void>(
-    context: context,
-    showDragHandle: true,
+  await showAppSheet<void>(
+    context,
     isScrollControlled: true,
     builder: (_) => const _VolumeSheetBody(),
   );

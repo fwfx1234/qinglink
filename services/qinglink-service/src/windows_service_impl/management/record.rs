@@ -30,6 +30,14 @@ impl CommandError {
     }
 }
 
+/// 共用校验器（`qinglink_server::service::app_catalog`）的失败原因可以原样
+/// 用作管理命令的失败：两者都是"稳定错误码 + 文案"，无需二次映射。
+impl From<qinglink_server::service::app_catalog::CatalogError> for CommandError {
+    fn from(error: qinglink_server::service::app_catalog::CatalogError) -> Self {
+        Self::new(error.code, error.message)
+    }
+}
+
 /// Result of a single desktop command: a JSON payload, or a coded failure.
 pub(super) type CommandResult = std::result::Result<serde_json::Value, CommandError>;
 

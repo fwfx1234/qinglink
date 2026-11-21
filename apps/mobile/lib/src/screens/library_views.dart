@@ -78,14 +78,20 @@ class LibraryCommonView extends StatelessWidget {
     }
     return RefreshIndicator(
       onRefresh: onRefresh,
-      color: AppColors.primary,
-      child: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(18, 0, 18, 96),
+      color: context.palette.brand,
+      child: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(
+          AppMetrics.pagePadding,
+          0,
+          AppMetrics.pagePadding,
+          AppMetrics.tabBarInset,
+        ),
         itemCount: apps.length,
-        separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
           final item = apps[index];
-          return RepaintBoundary(
+          return LibraryRowShell(
+            first: index == 0,
+            last: index == apps.length - 1,
             child: LibraryAppTile(
               item: item,
               launching: actions.isLaunching(item.id),
@@ -133,24 +139,32 @@ class LibraryRecentView extends StatelessWidget {
     }
     return RefreshIndicator(
       onRefresh: onRefresh,
-      color: AppColors.primary,
-      child: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(18, 0, 18, 96),
+      color: context.palette.brand,
+      child: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(
+          AppMetrics.pagePadding,
+          0,
+          AppMetrics.pagePadding,
+          AppMetrics.tabBarInset,
+        ),
         itemCount: items.length,
-        separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
           final item = items[index];
           final added = favorites.items.any((e) => e.id == item.id);
           return RepaintBoundary(
-            child: LibraryCatalogTile(
-              item: item,
-              added: added,
-              launching: actions.isLaunching(item.id),
-              iconRevision: actions.iconRevision(item.id),
-              onMenu: () => actions.onCatalogMenu(item),
-              onLaunch: () => actions.onLaunch(item),
-              onAdd: () => actions.onAdd(item),
-              onRemove: () => actions.onRemove(item),
+            child: LibraryRowShell(
+              first: index == 0,
+              last: index == items.length - 1,
+              child: LibraryCatalogTile(
+                item: item,
+                added: added,
+                launching: actions.isLaunching(item.id),
+                iconRevision: actions.iconRevision(item.id),
+                onMenu: () => actions.onCatalogMenu(item),
+                onLaunch: () => actions.onLaunch(item),
+                onAdd: () => actions.onAdd(item),
+                onRemove: () => actions.onRemove(item),
+              ),
             ),
           );
         },
@@ -214,12 +228,16 @@ class LibraryCatalogView extends StatelessWidget {
     }
     return RefreshIndicator(
       onRefresh: onRefresh,
-      color: AppColors.primary,
-      child: ListView.separated(
+      color: context.palette.brand,
+      child: ListView.builder(
         controller: controller,
-        padding: const EdgeInsets.fromLTRB(18, 0, 18, 96),
+        padding: const EdgeInsets.fromLTRB(
+          AppMetrics.pagePadding,
+          0,
+          AppMetrics.pagePadding,
+          AppMetrics.tabBarInset,
+        ),
         itemCount: items.length + (hasMore ? 1 : 0),
-        separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
           if (index >= items.length) {
             return const Padding(
@@ -236,15 +254,19 @@ class LibraryCatalogView extends StatelessWidget {
           final item = items[index];
           final added = favorites.items.any((e) => e.id == item.id);
           return RepaintBoundary(
-            child: LibraryCatalogTile(
-              item: item,
-              added: added,
-              launching: actions.isLaunching(item.id),
-              iconRevision: actions.iconRevision(item.id),
-              onMenu: () => actions.onCatalogMenu(item),
-              onLaunch: () => actions.onLaunch(item),
-              onAdd: () => actions.onAdd(item),
-              onRemove: () => actions.onRemove(item),
+            child: LibraryRowShell(
+              first: index == 0,
+              last: index == items.length - 1,
+              child: LibraryCatalogTile(
+                item: item,
+                added: added,
+                launching: actions.isLaunching(item.id),
+                iconRevision: actions.iconRevision(item.id),
+                onMenu: () => actions.onCatalogMenu(item),
+                onLaunch: () => actions.onLaunch(item),
+                onAdd: () => actions.onAdd(item),
+                onRemove: () => actions.onRemove(item),
+              ),
             ),
           );
         },

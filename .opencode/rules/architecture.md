@@ -9,21 +9,25 @@
 ```
 叶子 crate（不依赖任何内部 crate）：
     qinglink-protocol      线型 DTO 与 schema 契约
-    qinglink-domain        配对状态机与能力协商
+    qinglink-domain        配对状态机
     qinglink-storage       SQLite 持久化与路径解析
+    qinglink-version       产品版本号与自增构建号
 
 中间层：
     qinglink-discovery  ──▶ qinglink-protocol
-    qinglink-windows    ──▶ qinglink-protocol, qinglink-domain
+    qinglink-windows    ──▶ qinglink-protocol
 
 核心层：
     qinglink-server     ──▶ qinglink-protocol, qinglink-domain,
-                            qinglink-storage, qinglink-windows
+                            qinglink-storage, qinglink-windows,
+                            qinglink-version
 
 应用层：
-    apps/desktop            ──▶ qinglink-protocol, qinglink-storage, qinglink-windows
+    apps/desktop            ──▶ qinglink-protocol, qinglink-storage,
+                                qinglink-windows, qinglink-version
     services/qinglink-service ──▶ qinglink-protocol, qinglink-discovery,
-                                  qinglink-server, qinglink-storage, qinglink-windows
+                                  qinglink-server, qinglink-storage,
+                                  qinglink-windows, qinglink-version
 ```
 
 **apps/desktop 不依赖 `qinglink-server`**：桌面端自带 Web 管理面，服务端逻辑只在
@@ -39,11 +43,12 @@
 | `qinglink-protocol` | 无（叶子 crate） | 任何内部 crate |
 | `qinglink-domain` | 无（叶子 crate） | 任何内部 crate |
 | `qinglink-storage` | 无（叶子 crate） | 任何内部 crate |
+| `qinglink-version` | 无（叶子 crate） | 任何内部 crate |
 | `qinglink-discovery` | `qinglink-protocol` | server, storage, domain, windows |
-| `qinglink-windows` | `qinglink-protocol`, `qinglink-domain` | server, storage, discovery |
-| `qinglink-server` | `qinglink-protocol`, `qinglink-domain`, `qinglink-storage`, `qinglink-windows` | discovery, apps/*, services/* |
-| `apps/desktop`（`qinglink-desktop`） | `qinglink-protocol`, `qinglink-storage`, `qinglink-windows` | `qinglink-server`（自带 Web 层）, services/* |
-| `services/qinglink-service`（`qinglink-service`） | `qinglink-protocol`, `qinglink-discovery`, `qinglink-server`, `qinglink-storage`, `qinglink-windows` | apps/* |
+| `qinglink-windows` | `qinglink-protocol` | server, storage, discovery, domain |
+| `qinglink-server` | `qinglink-protocol`, `qinglink-domain`, `qinglink-storage`, `qinglink-windows`, `qinglink-version` | discovery, apps/*, services/* |
+| `apps/desktop`（`qinglink-desktop`） | `qinglink-protocol`, `qinglink-storage`, `qinglink-windows`, `qinglink-version` | `qinglink-server`（自带 Web 层）, services/* |
+| `services/qinglink-service`（`qinglink-service`） | `qinglink-protocol`, `qinglink-discovery`, `qinglink-server`, `qinglink-storage`, `qinglink-windows`, `qinglink-version` | apps/* |
 
 `qinglink-domain` 与 `qinglink-storage` 是**叶子 crate**：领域逻辑与持久化都必须能
 独立编译，不得为了方便反向拉入 `qinglink-protocol` 或任何其它内部 crate。
@@ -89,7 +94,6 @@ pub struct MouseMoveRequest {
 
 **包含：**
 - 配对状态机（`Pending → Confirmed → Active → Revoked`）
-- 能力协商类型
 - 领域错误类型
 - 验证规则（token 格式、PIN 格式）
 
@@ -154,11 +158,13 @@ impl PairingState {
 - 请求分发到服务层
 - 连接注册表
 - 游戏启动显示模式协调：持久化主显示器快照，跟踪新进程与子进程并在退出后恢复
+- 保持唤醒：专用常驻线程串行持有 `SetThreadExecutionState` 请求，状态只在服务进程本次运行内有效
 
 **规则：**
 - Handler 要薄 — 5 行内委托给服务层
 - 禁止直接数据库查询（使用 repository）
 - 每个 WS handler 必须有超时
+- `SetThreadExecutionState` 是 per-thread 状态，不得在 WS handler 或 `spawn_blocking` 工作线程上调用；保持唤醒统一走常驻线程
 - 错误响应遵循 protocol 中的 `ErrorResponse` 格式
 - 所有中间件使用 `tower::Service` 模式
 
@@ -199,6 +205,19 @@ pub fn router(state: Arc<ServerState>) -> Router {
 **规则：**
 - 服务类型：`_qinglink._tcp.local.`
 - TXT 记录包含：version、platform、capabilities
+
+### 2.7 `qinglink-version` — 产品版本号
+
+**目的：** 桌面端与服务端共用的版本号，避免两处各写一份而逐渐不一致。
+
+**规则：**
+- 语义版本只有一处：`Cargo.toml` 的 `[workspace.package] version`。
+- 展示用 `qinglink_version::VERSION`（`0.1.0+13`）；不要再用 `env!("CARGO_PKG_VERSION")`
+  展示给用户——那样看不到构建号，也无法区分两次改动。
+- 构建号由本 crate 的 `build.rs` 按源码指纹自增，状态在 `build-number.txt`，**必须随改动提交**；
+  该文件刻意不在 `cargo:rerun-if-changed` 的监视集合里。
+- Windows 版本资源不要写死在 `.rc` 里，用 `qinglink_version::version_info_rc` 在构建脚本中生成。
+- 桌面端与服务端的版本号必须来自同一次构建：两者都直接依赖本 crate。
 
 ---
 

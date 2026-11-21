@@ -42,6 +42,8 @@ export interface ServiceStatus {
   expected_version: number
   /** 服务实际应答的协议版本；从未应答过时为 null */
   service_version: number | null
+  /** 服务端产品版本号（如 `0.1.0+13`）；旧服务不返回时为 null */
+  service_app_version: string | null
   paused: boolean
   network_ready: boolean
   /** 链路可用时为 null */

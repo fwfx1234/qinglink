@@ -13,7 +13,7 @@ class SectionHeading extends StatelessWidget {
     super.key,
     required this.title,
     this.trailing,
-    this.bottom = 11,
+    this.bottom = AppSpacing.md,
   });
 
   final String title;
@@ -39,7 +39,7 @@ class SectionHeading extends StatelessWidget {
   }
 }
 
-/// 空状态。
+/// 空状态：图标 + 标题 + 说明 + 引导动作（设计规则 8「空态即引导」）。
 class EmptyState extends StatelessWidget {
   const EmptyState({
     super.key,
@@ -64,28 +64,29 @@ class EmptyState extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
-            width: 46,
-            height: 46,
+            width: 52,
+            height: 52,
             decoration: BoxDecoration(
-              color: palette.surface,
-              borderRadius: BorderRadius.circular(12),
+              color: palette.surface2,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              border: Border.all(color: palette.line),
             ),
-            child: Icon(icon, size: 22, color: palette.textSubtle),
+            child: Icon(icon, size: 24, color: palette.textSubtle),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: AppSpacing.lg),
           Text(
             title,
             style: AppText.cardTitle.copyWith(color: palette.textPrimary),
           ),
           if (message != null) ...[
-            const SizedBox(height: 7),
+            const SizedBox(height: AppSpacing.sm),
             Text(
               message!,
               textAlign: TextAlign.center,
-              style: AppText.body.copyWith(color: palette.textSubtle),
+              style: AppText.meta.copyWith(color: palette.textMuted),
             ),
           ],
-          if (action != null) ...[const SizedBox(height: 14), action!],
+          if (action != null) ...[const SizedBox(height: AppSpacing.lg), action!],
         ],
       ),
     );
@@ -127,7 +128,7 @@ class PageHeading extends StatelessWidget {
                     eyebrow!,
                     style: AppText.eyebrow.copyWith(color: palette.textSubtle),
                   ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 2),
                 ],
                 Text(
                   title,
@@ -151,7 +152,7 @@ class SettingsGroup extends StatelessWidget {
     required this.children,
     this.trailing,
     this.trailingColor,
-    this.padding = const EdgeInsets.all(13),
+    this.padding = const EdgeInsets.all(AppMetrics.cardPadding),
   });
 
   final String title;

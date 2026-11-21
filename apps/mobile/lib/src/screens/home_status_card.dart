@@ -1,4 +1,4 @@
-/// 首页状态卡：指示灯、标题、进度提示与主按钮。
+/// 首页状态卡：在线时是一行紧凑卡片，中断态是整卡 + 主按钮。
 ///
 /// 状态数据与判定逻辑在 `home_status.dart`。
 library;
@@ -21,88 +21,6 @@ class HomeStatusCard extends StatelessWidget {
     final palette = context.palette;
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        boxShadow: [
-          BoxShadow(
-            color: palette.shadow,
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-            spreadRadius: -14,
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        child: Stack(
-          children: [
-            _StatusCardHalo(
-              right: -46,
-              top: -34,
-              size: 156,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: AppColors.primary.withValues(alpha: 0.13),
-                ),
-              ),
-            ),
-            _StatusCardHalo(
-              right: 34,
-              bottom: -64,
-              size: 132,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppColors.primary.withValues(alpha: 0.05),
-              ),
-            ),
-            _StatusCardPanel(status: status, onPrimary: onPrimary),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// 状态卡角落的装饰圆环或色块，由 [Positioned] 定位在卡片边缘之外。
-class _StatusCardHalo extends StatelessWidget {
-  const _StatusCardHalo({
-    required this.size,
-    required this.decoration,
-    this.right,
-    this.top,
-    this.bottom,
-  });
-
-  final double size;
-  final BoxDecoration decoration;
-  final double? right;
-  final double? top;
-  final double? bottom;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      right: right,
-      top: top,
-      bottom: bottom,
-      child: Container(width: size, height: size, decoration: decoration),
-    );
-  }
-}
-
-/// 状态卡的渐变面板：状态行、标题、可选的进度提示与主按钮。
-class _StatusCardPanel extends StatelessWidget {
-  const _StatusCardPanel({required this.status, this.onPrimary});
-
-  final HomeStatusView status;
-  final VoidCallback? onPrimary;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -114,65 +32,162 @@ class _StatusCardPanel extends StatelessWidget {
         border: Border.all(color: palette.statusBorder),
         borderRadius: BorderRadius.circular(AppRadius.lg),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _StatusCardHeader(status: status),
-          const SizedBox(height: 10),
-          Text(
-            status.title,
-            style: AppText.cardTitle.copyWith(
-              fontSize: 15,
-              color: palette.statusTitle,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          if (status.busy) ...[
-            const SizedBox(height: 12),
-            const AppProgressBar(),
-            const SizedBox(height: 8),
-            Text(
-              status.progressLabel ?? '',
-              style: AppText.meta.copyWith(
-                color: AppColors.progressText,
-              ),
-            ),
-          ],
-          const SizedBox(height: 12),
-          PrimaryButton(
-            label: status.primaryLabel,
-            icon: status.primaryIcon,
-            height: 42,
-            expand: true,
-            busy: status.busy,
-            onPressed: status.busy ? null : onPrimary,
-          ),
-        ],
+      // 设计稿卡片高 56：图标 40 + 上下各 8，横向留 12 让药丸更贴近右边。
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
       ),
+      child: status.kind == HomeStatusKind.ready
+          ? _ReadyRow(status: status)
+          : _InterruptPanel(status: status, onPrimary: onPrimary),
     );
   }
 }
 
-/// 状态行：指示灯 + 状态文案。
-class _StatusCardHeader extends StatelessWidget {
-  const _StatusCardHeader({required this.status});
+/// 在线态：图标 + 设备名/说明 + 在线药丸，不再占用主按钮位置。
+class _ReadyRow extends StatelessWidget {
+  const _ReadyRow({required this.status});
 
   final HomeStatusView status;
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     return Row(
       children: [
-        StatusDot(color: status.dot, glow: true),
-        const SizedBox(width: 7),
-        Text(
-          status.label,
-          style: AppText.label.copyWith(
-            color: status.dot,
-            fontWeight: FontWeight.w600,
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: palette.brand.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(AppRadius.md),
+          ),
+          child: Icon(
+            Icons.desktop_windows_rounded,
+            size: 20,
+            color: palette.brand,
           ),
         ),
+        const SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                status.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.cardTitle.copyWith(color: palette.textPrimary),
+              ),
+              if (status.subtitle != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  status.subtitle!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.meta.copyWith(color: palette.textMuted),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        _StatusPill(label: status.label, color: status.dot),
+      ],
+    );
+  }
+}
+
+/// 状态药丸：品牌浅底 + 品牌文字。
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 26,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+      ),
+      child: Text(
+        label,
+        style: AppText.meta.copyWith(
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+/// 中断态（离线 / 锁定 / UAC / 唤醒中）：整卡表达 + 主按钮。
+class _InterruptPanel extends StatelessWidget {
+  const _InterruptPanel({required this.status, this.onPrimary});
+
+  final HomeStatusView status;
+  final VoidCallback? onPrimary;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            StatusDot(color: status.dot, glow: true),
+            const SizedBox(width: 8),
+            Text(
+              status.label,
+              style: AppText.meta.copyWith(
+                color: status.dot,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md),
+        Text(
+          status.title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: AppText.cardTitle.copyWith(color: palette.textPrimary),
+        ),
+        if (status.subtitle != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            status.subtitle!,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: AppText.meta.copyWith(color: palette.textMuted),
+          ),
+        ],
+        if (status.busy) ...[
+          const SizedBox(height: AppSpacing.md),
+          const AppProgressBar(),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            status.progressLabel ?? '',
+            style: AppText.meta.copyWith(color: palette.textMuted),
+          ),
+        ],
+        if (status.primaryLabel.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.lg),
+          PrimaryButton(
+            label: status.primaryLabel,
+            icon: status.primaryIcon,
+            expand: true,
+            busy: status.busy,
+            onPressed: status.busy ? null : onPrimary,
+          ),
+        ],
       ],
     );
   }

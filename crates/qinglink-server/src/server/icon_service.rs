@@ -185,6 +185,90 @@ pub fn resolve_automatic(
     )
 }
 
+/// 按需读取图标时使用：解析一个条目并把结果记进数据库与内存目录。
+///
+/// 列表接口不携带图标，客户端逐行请求。如果每次请求都重新读文件资源，同一条目
+/// 会在"有图标 / 没有图标"之间摇摆（某次提取失败就没有），也会拖慢首屏。这里
+/// 缓存第一次成功的结果；失败不落库，下次请求仍会重试，不会被一条负结果固化成
+/// "永远没有图标"。`icon_path` 只在用户显式指定时才有值，所以缓存自动结果不会
+/// 被误判成用户偏好。
+pub fn resolve_and_remember(
+    state: &AppState,
+    id: &str,
+    exe_path: &str,
+    icon_path: Option<&str>,
+    source: &str,
+) -> Option<String> {
+    let (icon_base64, icon_source) = if source.eq_ignore_ascii_case("steam") {
+        match steam_cover_icon(state, id) {
+            Some(icon) => (Some(icon), "steam".to_string()),
+            None => {
+                let resolution = crate::platform::resolve_icon(exe_path, icon_path);
+                (resolution.icon_base64, resolution.source)
+            }
+        }
+    } else {
+        let resolution = crate::platform::resolve_icon(exe_path, icon_path);
+        (resolution.icon_base64, resolution.source)
+    };
+
+    let icon = icon_base64.filter(|icon| icon_fits_budget(icon))?;
+    if icon.is_empty() {
+        return None;
+    }
+    // 写库失败只影响"下次是否还要重新解析"，图标本身仍能返回给调用方；
+    // 但静默丢弃会让"每次取图标都重新解码"这种退化无从察觉，故留痕。
+    if let Err(error) = crate::lock_unpoisoned(&state.app_db).set_icon(
+        id,
+        Some(icon.as_str()),
+        Some(icon_source.as_str()),
+        icon_path,
+    ) {
+        tracing::warn!(%error, id, "图标写入目录数据库失败，本次图标仅在内存缓存中生效");
+    }
+    state
+        .app_scanner
+        .set_icon(id, Some(icon.clone()), Some(icon_source));
+    Some(icon)
+}
+
+/// 按 id 查找并缓存图标；内存目录只含可见条目，已屏蔽条目回退到库里查找。
+///
+/// 整表查找只会发生在缓存未命中的那一次，结果随后被 [`resolve_and_remember`]
+/// 记住，后续请求直接命中。
+pub fn resolve_and_cache(state: &AppState, id: &str) -> Option<String> {
+    if let Some(entry) = state.app_scanner.entry(id) {
+        return resolve_and_remember(
+            state,
+            &entry.id,
+            &entry.exe_path,
+            entry.icon_path.as_deref(),
+            &entry.source,
+        );
+    }
+    let normalized = id.replace('/', "\\").to_ascii_lowercase();
+    let entry = crate::lock_unpoisoned(&state.app_db)
+        .get_all_apps()
+        .ok()?
+        .into_iter()
+        .find(|entry| {
+            entry.id == id || entry.exe_path.replace('/', "\\").to_ascii_lowercase() == normalized
+        })?;
+    resolve_and_remember(
+        state,
+        &entry.id,
+        &entry.exe_path,
+        entry.icon_path.as_deref(),
+        &entry.source,
+    )
+}
+
+/// Steam 条目已下载封面图的图标载荷。
+fn steam_cover_icon(state: &AppState, id: &str) -> Option<String> {
+    let artwork = steam_artwork(state, id)?;
+    crate::platform::image_file_to_icon_base64(&artwork)
+}
+
 /// Resolve a catalog row for an id, including entries the user blocked.
 fn find_entry(state: &AppState, id: &str) -> Result<DbAppEntry, String> {
     let wanted = id.trim();

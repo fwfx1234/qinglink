@@ -17,7 +17,7 @@ fn store() -> (TokenStore, tempfile::TempDir) {
 fn stores_only_hash_and_validates_token() {
     let (store, _directory) = store();
     let token = store.create_permanent_token("phone").expect("token");
-    assert!(store.validate(&token));
+    assert!(store.validate(&token).expect("validate"));
     let conn = store.connection().expect("connection");
     let raw_count: i64 = conn
         .query_row(
@@ -34,12 +34,12 @@ fn same_name_legacy_revoke_is_isolated_and_invalidates_cache() {
     let (store, _directory) = store();
     let first = store.create_permanent_token("same-name").unwrap();
     let second = store.create_permanent_token("same-name").unwrap();
-    assert!(store.validate(&first));
-    assert!(store.validate(&second));
+    assert!(store.validate(&first).expect("validate"));
+    assert!(store.validate(&second).expect("validate"));
     let first_hash = token_hash(&first);
     assert_eq!(store.revoke_legacy(&first_hash), vec![first_hash.clone()]);
-    assert!(!store.validate(&first));
-    assert!(store.validate(&second));
+    assert!(!store.validate(&first).expect("validate"));
+    assert!(store.validate(&second).expect("validate"));
     assert_eq!(store.list_devices(0, 100).len(), 1);
 }
 
@@ -48,10 +48,10 @@ fn same_name_paired_revoke_targets_only_one_device() {
     let (store, _directory) = store();
     let first = store.create_paired_token("device-a", "same-name").unwrap();
     let second = store.create_paired_token("device-b", "same-name").unwrap();
-    assert!(store.validate(&first));
-    assert!(store.validate(&second));
+    assert!(store.validate(&first).expect("validate"));
+    assert!(store.validate(&second).expect("validate"));
     let hashes = store.revoke_device("device-a");
     assert_eq!(hashes, vec![token_hash(&first)]);
-    assert!(!store.validate(&first));
-    assert!(store.validate(&second));
+    assert!(!store.validate(&first).expect("validate"));
+    assert!(store.validate(&second).expect("validate"));
 }

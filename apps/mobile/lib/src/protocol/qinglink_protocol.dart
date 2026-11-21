@@ -116,6 +116,7 @@ class HealthResponseDto {
     required this.name,
     required this.version,
     required this.port,
+    this.appVersion,
   });
 
   final String pcId;
@@ -123,11 +124,15 @@ class HealthResponseDto {
   final int version;
   final int port;
 
+  /// 服务端产品版本号（如 `0.1.0+13`）；旧服务不返回该字段时为 null。
+  final String? appVersion;
+
   factory HealthResponseDto.fromJson(Map<String, dynamic> json) =>
       HealthResponseDto(
         pcId: json['pc_id'] as String,
         name: json['name'] as String,
         version: (json['version'] as num).toInt(),
         port: (json['port'] as num).toInt(),
+        appVersion: json['app_version'] as String?,
       );
 }

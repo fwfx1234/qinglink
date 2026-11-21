@@ -7,7 +7,9 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../app/routes.dart';
 import '../models/auth.dart';
 import '../models/wake_state.dart';
 import '../providers/auth_provider.dart';
@@ -17,7 +19,6 @@ import '../providers/system_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/presence_notifier.dart';
 import '../utils/snackbar_extension.dart';
-import '../widgets/pairing_dialog.dart';
 import 'home_notifications.dart';
 
 /// 主壳连接编排器：持有配对冷却、在线提示簿记与连接后的刷新动作。
@@ -90,11 +91,8 @@ class HomeConnectionCoordinator {
       return;
     }
     if (!context.mounted) return;
-    final result = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const PairingDialog(),
-    );
+    // S7 是全屏页而不是弹窗：配对码、倒计时与排障说明需要完整版面。
+    final result = await context.push<bool>(AppRoutes.pairing);
     _pairingDialogShown = false;
     if (result == true && context.mounted) {
       await handleAuthenticatedConnection();

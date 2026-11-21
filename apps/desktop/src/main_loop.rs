@@ -1,12 +1,14 @@
 //! 主循环：HostCommand、托盘事件、配对弹窗、状态同步与消息泵。
 //!
 //! 循环体必须留在 main 线程：托盘窗口只允许同线程创建/销毁，Windows 消息队列
-//! 属于这个线程，`SetThreadExecutionState` 也是 per-thread 状态。改动前请先读
-//! `docs/architecture.md` 第 4 节；Web 层不能直接碰这些状态，只能走 `HostCommand`。
+//! 属于这个线程。保持唤醒已改由服务进程统一持有，主循环只按服务快照同步托盘
+//! 勾选；其余主线程动作仍走 `HostCommand`。改动前请先读
+//! `docs/architecture.md` 第 4 节。
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use qinglink_protocol::service_ipc::DesktopCommand;
 use qinglink_windows::single_instance::SingleInstance;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -43,6 +45,8 @@ struct Loop<'a> {
     next_tooltip: Instant,
     /// 主循环结束的原因；由 HostCommand 或托盘事件写入。
     exit_request: Option<ExitRequest>,
+    /// 托盘「保持唤醒」当前勾选值，用于按服务快照做变化同步。
+    tray_keep_awake: bool,
 }
 
 /// 跑主循环，返回退出原因。
@@ -76,6 +80,7 @@ pub fn run(desktop: &mut Desktop) -> ExitRequest {
         browser_fallback_opened,
         next_tooltip: Instant::now(),
         exit_request: None,
+        tray_keep_awake: false,
     };
 
     loop {
@@ -106,26 +111,6 @@ impl Loop<'_> {
                     let _ = reply.send(result.map_err(|error| {
                         web::error::ApiError::internal(format!("无法打开管理界面：{error}"))
                     }));
-                }
-                HostCommand::SetKeepAwake { enabled, reply } => {
-                    let reply_value = match qinglink_windows::power::set_keep_awake(enabled) {
-                        Ok(()) => {
-                            self.settings.set(
-                                self.settings.autostart(),
-                                enabled,
-                                self.settings.debug_log(),
-                            );
-                            if let Some(tray) = self.tray.as_ref() {
-                                tray.set_keep_awake(enabled);
-                            }
-                            tracing::info!(enabled, "保持唤醒状态已更新");
-                            Ok(serde_json::json!({ "keep_awake": enabled }))
-                        }
-                        Err(error) => Err(web::error::ApiError::internal(format!(
-                            "设置保持唤醒失败：{error}"
-                        ))),
-                    };
-                    let _ = reply.send(reply_value);
                 }
                 HostCommand::Restart { reply } => {
                     let _ = reply.send(Ok(serde_json::json!({ "accepted": true })));
@@ -270,30 +255,32 @@ impl Loop<'_> {
             TrayAction::RestartService => restart_service(self.web_state),
             TrayAction::ToggleKeepAwake => {
                 let enabled = !self.settings.keep_awake();
-                match qinglink_windows::power::set_keep_awake(enabled) {
-                    Ok(()) => {
-                        self.settings.set(
-                            self.settings.autostart(),
-                            enabled,
-                            self.settings.debug_log(),
-                        );
-                        if let Some(tray) = self.tray.as_ref() {
-                            tray.set_keep_awake(enabled);
+                // 开关由服务进程统一持有。管道调用可能要等服务应答，放到后台线程，
+                // 不阻塞 main 线程的消息泵；成功后用回包刷新本地镜像，下一次服务
+                // 快照还会再校准（手机端看到的也是这一份状态）。
+                let client = self.client.clone();
+                let settings = Arc::clone(self.settings);
+                let web_state = Arc::clone(self.web_state);
+                std::thread::spawn(move || {
+                    match client.call_blocking(
+                        DesktopCommand::SetKeepAwake { enabled },
+                        Duration::from_secs(3),
+                    ) {
+                        Ok(value) => {
+                            let applied = value.as_bool().unwrap_or(enabled);
+                            settings.set_keep_awake(applied);
+                            web_state.publish(ServerEvent::Settings(Box::new(settings.view())));
+                            tracing::info!(applied, "托盘切换保持唤醒");
                         }
-                        // The browser's settings page shares this state.
-                        self.web_state
-                            .publish(ServerEvent::Settings(Box::new(self.settings.view())));
-                        // 开关跨重启保留；持久化丢给后台线程，main 线程不等同步 IO。
-                        let preferences = self.web_state.preferences.clone();
-                        std::thread::spawn(move || {
-                            if let Err(error) = preferences.set_keep_awake(enabled) {
-                                tracing::warn!(%error, enabled, "保存保持唤醒设置失败");
-                            }
-                        });
-                        tracing::info!(enabled, "托盘切换保持唤醒");
+                        Err(error) => {
+                            web_state.publish(ServerEvent::Toast {
+                                level: "error",
+                                message: format!("设置保持唤醒失败：{error}"),
+                            });
+                            tracing::error!(%error, "设置保持唤醒失败");
+                        }
                     }
-                    Err(error) => tracing::error!(%error, "设置保持唤醒失败"),
-                }
+                });
             }
             TrayAction::Exit => {
                 tracing::info!("托盘请求退出");
@@ -302,8 +289,7 @@ impl Loop<'_> {
         }
     }
 
-    /// Status sync for the tray tooltip, rate-limited: native updates are
-    /// comparatively expensive and the tooltip only needs to be current.
+    /// 托盘 tooltip 与「保持唤醒」勾选的状态同步，按固定间隔节流。
     fn sync_tray_status(&mut self) {
         if Instant::now() >= self.next_tooltip {
             if let Some(tray) = self.tray.as_ref() {
@@ -312,6 +298,11 @@ impl Loop<'_> {
                     service_running: status.connected && status.network_ready,
                     service_error: status.last_error,
                 });
+                let keep_awake = self.settings.keep_awake();
+                if keep_awake != self.tray_keep_awake {
+                    tray.set_keep_awake(keep_awake);
+                    self.tray_keep_awake = keep_awake;
+                }
             }
             self.next_tooltip = Instant::now() + TOOLTIP_INTERVAL;
         }

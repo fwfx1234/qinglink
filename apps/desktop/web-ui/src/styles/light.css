@@ -4,63 +4,72 @@
    - 正文与次要文本对各层底 ≥4.5:1（--text-3 用在 12px 小字上，最容易踩线）；
    - 语义色落在自己的 soft 衬底上时 ≥4.5:1，所以 soft 用低 alpha + 压深的语义色；
    - 控件边界只要"视觉可辨"（≈2:1）即可：浅色底上结构由底色分层 + focus 光环给出，
-     描边只负责勾边，不靠加粗边框撑起层次。 */
+     描边只负责勾边，不靠加粗边框撑起层次。
+
+   品牌绿为什么拆成两个值：
+   品牌本体 #12a87a 在白底上只有 3.0:1，做链接和当前导航项的字不够清楚。
+   因此文字一律走加深后的 --accent（#0a7352，白底 5.9:1），
+   只有无文字的装饰元素和品牌方块才用与 App 端一致的鲜绿 --accent-bright。
+   色相相同，只是明度不同，视觉上仍是同一个品牌绿。 */
 
 [data-theme='light'] {
   color-scheme: light;
 
   /* 背景分层：页面底 → 卡片/侧边栏 → 控件/内嵌 → 悬浮/活跃 */
-  --surface-0: #fafbfc;
+  --surface-0: #f5f7f7;
   --surface-1: #ffffff;
-  --surface-2: #f4f5f8;
-  --surface-3: #eceef3;
+  --surface-2: #eff3f1;
+  --surface-3: #e7ecea;
 
   /* 边框：发丝级。--border-2 只用在必须"看得见框"的输入类控件上 */
-  --border-1: #ecedf1;
-  --border-2: #d6dae2;
+  --border-1: #e7ecea;
+  --border-2: #c9d3ce;
 
-  /* 文本 */
-  --text-1: #101319;
-  --text-2: #59606f;
-  --text-3: #6b7280;
+  /* 文本：对白色卡片分别达到 18.9 / 7.2 / 5.7 : 1，三级层次明确拉开。
+     最弱的 --text-3 即使落在最深的 --surface-3 上也有 4.8:1。 */
+  --text-1: #0d1212;
+  --text-2: #4e5a55;
+  --text-3: #5f6965;
 
-  /* 品牌色：链接、当前导航项、焦点光环 */
-  --accent: #4a45cf;
-  --accent-strong: #3b36b5;
-  /* 实心强调块（品牌标记、强调标签）上的前景色 */
+  /* 品牌：文字场景必须 ≥4.5:1 */
+  --accent: #0a7352;
+  --accent-bright: #12a87a;
+  --accent-strong: #095f44;
+  /* 鲜绿块上的前景用近黑（6.2:1），白字在 #12a87a 上只有 3.0:1 */
   --accent-contrast: #ffffff;
-  --success: #0f7a53;
+  --accent-ink: #0d1212;
+  --success: #0a7352;
   --warning: #8a5f00;
-  --error: #d92d20;
+  --error: #c62a2c;
   --error-contrast: #ffffff;
 
   /* 实心主按钮：近黑而非品牌色，让一屏只有一处强对比锚点 */
-  --primary-bg: #14161c;
-  --primary-bg-hover: #2a2e38;
+  --primary-bg: #141917;
+  --primary-bg-hover: #242a28;
   --primary-fg: #ffffff;
 
   /* 语义色的低透明度衬底 */
-  --accent-soft: rgba(74, 69, 207, 0.1);
-  --success-soft: rgba(15, 122, 83, 0.1);
+  --accent-soft: rgba(18, 168, 122, 0.1);
+  --success-soft: rgba(10, 115, 82, 0.1);
   --warning-soft: rgba(138, 95, 0, 0.1);
-  --error-soft: rgba(217, 45, 32, 0.1);
+  --error-soft: rgba(198, 42, 44, 0.1);
 
   /* 更弱/更实的衬底与描边 */
   --warning-soft-faint: rgba(138, 95, 0, 0.05);
   --warning-soft-strong: rgba(138, 95, 0, 0.1);
-  --accent-border: rgba(74, 69, 207, 0.28);
+  --accent-border: rgba(18, 168, 122, 0.3);
   --warning-border: rgba(138, 95, 0, 0.28);
-  --error-border: rgba(217, 45, 32, 0.28);
+  --error-border: rgba(198, 42, 44, 0.28);
 
   /* 键盘焦点光环：比"只换边框色"更清楚，且不依赖边框宽度 */
-  --accent-ring: rgba(74, 69, 207, 0.22);
+  --accent-ring: rgba(18, 168, 122, 0.24);
 
   /* 模态遮罩 */
-  --overlay: rgba(16, 19, 25, 0.36);
+  --overlay: rgba(13, 18, 18, 0.36);
 
   /* 阴影：结构已经由描边给出，阴影只用来表示"浮起来"，因此都极浅 */
-  --shadow-xs: 0 1px 2px rgba(16, 19, 25, 0.05);
-  --shadow-card: 0 1px 2px rgba(16, 19, 25, 0.03);
-  --shadow-pop: 0 6px 16px -6px rgba(16, 19, 25, 0.14), 0 2px 6px rgba(16, 19, 25, 0.06);
-  --shadow-modal: 0 24px 60px -24px rgba(16, 19, 25, 0.3), 0 2px 6px rgba(16, 19, 25, 0.06);
+  --shadow-xs: 0 1px 2px rgba(13, 18, 18, 0.05);
+  --shadow-card: 0 1px 2px rgba(13, 18, 18, 0.03);
+  --shadow-pop: 0 6px 16px -6px rgba(13, 18, 18, 0.14), 0 2px 6px rgba(13, 18, 18, 0.06);
+  --shadow-modal: 0 24px 60px -24px rgba(13, 18, 18, 0.3), 0 2px 6px rgba(13, 18, 18, 0.06);
 }

@@ -77,9 +77,57 @@ PC 恢复后自动连回。完整表格见仓库根目录 `protocol/v2.md`。
   与 `Z` 会生成 `Alt + Z`，支持多修饰键、字母、数字、符号、功能键、方向键和导航键。
   方案卡片里的快捷键标签可直接加入或移出首页；首页最多固定 12 个，按加入顺序保存到本机设置，
   点首页按钮会发送该组合键。删除方案中的组合时，只有其他方案也不再引用它才会从首页移除。
-- **分辨率与刷新率**：控制中心先通过 `get_displays` 读取显示器和可用模式，选择后用扁平的
-  `display_id`、`width`、`height`、`refresh_millihz` 字段调用 `set_display_mode`；服务端返回的
-  Windows 显示 API 错误会显示在失败提示中。
+- **分辨率与刷新率**：控制中心通过 `get_displays` 读取**1080p 及以上的可选模式**——枚举到的
+  真实分辨率（1080p、1440p、1600p、带鱼屏、4K 都算）全部保留，不再按固定白名单裁剪；同一
+  分辨率下按整 Hz 归档刷新率（相差 1Hz 视为同一档，59/60、119/120 会合并），每档最多 4 个
+  刷新率并列可选；当前模式不在列表里时服务端会把它最后追加进去，保证能高亮也能切回来。
+  多显示器时先选屏再选模式；选择后用扁平的
+  `display_id`、`width`、`height`、`refresh_millihz` 字段调用 `set_display_mode`，失败原因
+  直接显示在提示里，列表读取失败时分组内会出现错误行与重试入口。
+- **保持唤醒**：控制中心新增独立分组，`get_keep_awake` 读取 PC 上服务进程的开关，
+  `set_keep_awake`（`enabled`）切换，成功后按回包的 `keep_awake_status` 更新；状态未读到时
+  开关禁用，避免把「未知」当成「已关闭」。该开关由服务进程用一条常驻线程持有
+  （`SetThreadExecutionState` 是 per-thread 状态），持久化在服务库并在启动时恢复；
+  桌面端托盘/设置页经管理 IPC 读写同一开关，按快照同步，不再各自持有独立状态；
+  协议见 `protocol/v2.md`「保持唤醒」。
+- **触控板手势**：轻点 = 左键单击，长按 400ms 不动后松手 = 右键单击，长按后移动超过 3px
+  进入拖拽（左键按下 → 移动 → 抬起）。**拖拽松手不再补发右键**：长按拖动的语义是"按住左键
+  搬运"，补一次右键会让资源管理器在放下文件后弹出上下文菜单。
+- **复制 / 粘贴 / 全选**：控制页底部与键盘面板底部各有一组按钮，作用对象是 PC 当前选中的内容
+  （发送 `Ctrl + C` / `Ctrl + V` / `Ctrl + A`），不做手机与 PC 之间的剪贴板同步。
+- **输入框回填**：面板**先滑出**，同时并行用 `get_foreground` 的 `focus_text` 读取 PC 焦点
+  输入框已有文字，回来后作为手机输入框的基线（文本通常比面板晚几十到几百毫秒出现；用户若已
+  抢先输入，迟到的原文直接丢弃、不覆盖）。服务端只认编辑框的 `ValuePattern`，密码框、只读
+  输入框、只暴露文本树的自绘控件与占位提示都按空基线处理；Chromium 系（Chrome / Edge /
+  Electron / WebView2）额外按结构判断——带子元素的 `Edit` 是富文本编辑器，`Value` 里可能混着
+  占位提示，一律不回填，而纯 `<input>` / `<textarea>`（地址栏、搜索框、普通表单）照旧回填。
+  每次打开面板都重新请求，请求失败一律当空，不复用上一次的结果，面板上会有灰字提示。尾部
+  追加/退格按差异发送；在中间改字会退化为"Ctrl+A 全选后整体重写"，代价是 PC 侧撤销栈被清空。
+- **PC 侧鼠标状态**：服务端推送 `input_state` 事件，触控板左上角显示"左键按住"之类的角标；
+  进入拖拽时若 PC 侧左键已按住，不再重复下发按下。
+- **自动唤起键盘**：PC 焦点第一次落进输入框时，服务端推送 `focus_input`，控制页收到后直接打开
+  键盘面板，把手机当输入工具用。服务端只在"进入"的边沿推送，所以客户端不做去重：焦点离开
+  不收起，同一个输入框里继续点也不会重弹；面板已经开着时忽略该事件；手机退到后台或锁屏时
+  不响应。自动弹出会抢走用户正在进行的触控操作，因此**设置页「输入」分组提供开关**
+  （`auto_open_keyboard`，默认开启）；关掉后 `focus_input` 事件一律丢弃，键盘仍可点控制页的
+  键盘按钮手动打开。**焦点在弹层入场动画结束后才请求**（首帧请求会让 Android 丢掉这次输入法 show），
+  Android 上 400ms / 800ms 仍未看到输入法时最多补发两次 `TextInput.show`；打开面板时照旧用
+  `focus_text` 建基线（密码框拿到空基线，打字仍能正常发送）。
+
+## 设置
+
+S8 是**手机端唯一的设置界面**，不再有第二处开关：
+
+- 分组顺序：电源 → 解锁与唤醒（PIN、唤醒后自动解锁、唤醒电脑）→ 输入（自动弹出键盘、
+  自然滚动、鼠标速度）→ 电视联动（跟随电脑开机 / 关机）→ 连接信息（重新发现、设备、
+  地址、版本）→ 断开当前连接 / 清除所有设置。
+- 入口只有两个，都指向同一页：控制页顶栏齿轮（`mouse_keyboard/connection_status_bar.dart`
+  的 `onOpenSettings` → `AppRoutes.settings`）与「更多」页的「设置」行。齿轮以前弹的是只含
+  「鼠标速度 + 自然滚动」的局部面板，导致「自动弹出键盘」这类开关被藏在另一条路径上。
+- 鼠标速度原先只存在于控制页的局部面板；现在并入设置页的「输入」分组，控制页仍通过
+  `settingsProvider` 的监听同步灵敏度，改完回到控制页即刻生效，那个局部面板已删除。
+- 新增开关只加在 `screens/settings_input_section.dart` / `screens/settings_tv_section.dart`，
+  不要在其他页面复制一份状态。
 
 ## 进程页图标
 
@@ -118,3 +166,90 @@ flutter analyze   # 静态检查：本仓库的交付门槛
 flutter run
 flutter test      # 既有测试，可选；AGENTS.md §4 不要求运行测试套件
 ```
+
+## 界面设计系统
+
+界面按 `docs/design/DESIGN-SPEC.md` 实现，色值、字号、尺寸的**唯一权威来源是该文档第 1~4 节**，
+代码侧只在下面几个文件里落成 token，业务代码不要写死色值和字号。
+
+| 内容 | 位置 | 说明 |
+| --- | --- | --- |
+| 语义色板 | `lib/src/theme/app_palette.dart` | `AppPalette.dark` / `.light`：背景、表面、描边、文字、品牌色、状态色、弹层遮罩等 |
+| 当前主题色门面 | `lib/src/theme/app_theme.dart` | `AppColors.primary` 等；由 `MaterialApp.builder` 按实际亮度注入，因此随明暗切换 |
+| 字号体系 | `lib/src/widgets/app_text_styles.dart` | H1 26 / H2 18 / Body 14 / Meta 12 / Caption 10 |
+| 圆角·间距·尺寸 | `lib/src/theme/app_theme.dart` | `AppRadius` / `AppSpacing` / `AppMetrics`（页面 16、点按区 44、主按钮 48、列表行 56） |
+
+几条必须遵守的落地规则：
+
+- **不要新增 `const` 里引用主题色的写法**。`AppColors.xxx` 是随主题变化的 getter，不是编译期常量；
+  需要 `const` 的地方用 `context.palette.xxx` 或写字面色值。
+- **窗口控制贴底**。首页是常驻底部 Dock 条（`WindowDockSection`），控制页在触控区下方
+  （`ActiveWindowSection`），两者共用 `lib/src/widgets/window_controls.dart` 的按钮组；
+  不要把「列表/最小化/最大化/关闭」搬回页面上部。
+- **顶栏只放“我在哪”**。`HomeTopBar` 只渲染「轻联 QingLink」+ 页面标题 + 主题切换，
+  主操作（添加、扫描、启动）一律落在拇指区。
+- **图标用真实图形**。程序图标走 `AppIcon` / `ProcessIcon` 按需从 PC 取，取不到才退回图标底衬，
+  不要用“色块 + 一个字母”占位。
+- **长文本一律 `maxLines: 1` + `overflow: ellipsis`**（窗口标题、路径、进程名）。
+- **轻提示走顶部覆盖层**。所有 `show*SnackBar` 扩展方法最终调用 `widgets/top_toast.dart` 的
+  `showTopToast`：提示钉在安全区顶部、高度随内容增长，同一时刻只保留一条。不要再给
+  `SnackBar` 配一个"接近屏高"的底部 margin 把它顶到上方——提示一旦换行就会超出屏幕、
+  内容被裁掉（历史缺陷）。
+
+### 屏幕实现状态
+
+S1~S14 已按设计稿逐张实现（暗/亮两套走同一套 token，切换不重建页面）：
+
+| 屏 | 页面 | 关键文件 |
+| --- | --- | --- |
+| S1 | 首页 | `screens/home_*.dart`、`widgets/window_controls.dart` |
+| S2 | 库 | `screens/library_*.dart` |
+| S3 | 控制中心 | `screens/control_center_screen.dart`、`screens/control_center/*` |
+| S4 | 控制（触控板） | `screens/mouse_keyboard*` |
+| S5 | 更多 | `screens/more_tab.dart` |
+| S6 | 进程管理 | `screens/processes_tab.dart` |
+| S7 | 配对与连接 | `screens/pairing_screen.dart`（全屏页，非弹窗） |
+| S8 | 设置 | `screens/settings_tab.dart`、`screens/settings_*.dart` |
+| S9 | 快捷键方案 | `screens/shortcuts_screen.dart` |
+| S10 | 电视遥控 | `screens/ir/tv_remote_screen.dart`、`ir/ir_remote_panel.dart` |
+| S11 | 遥控器管理 | `screens/ir/ir_remote_manage_screen.dart` |
+| S12 | 扫描结果 | `screens/scan_folder_screen.dart` |
+| S13 | 按键与信号 | `screens/ir/ir_command_screen.dart` |
+| S14 | 控制流程 | `screens/ir/ir_macro_screen.dart` |
+
+- **次级页顶栏**统一为「返回键（44 tonal）+ 左对齐 H1 标题 + 右侧一个主操作」，
+  主操作是品牌色文字按钮或 `＋新增` 实心小按钮，不再用居中 AppBar。
+- **弹层**一律走 `widgets/app_sheet.dart` 的 `showAppSheet`：圆角 22、把手 36×4、
+  左右 20、底部安全区 +16、遮罩 `scrim`；内容用 `SheetHeader` / `SheetOption` 拼，
+  不要各自调用 `showModalBottomSheet`。
+- 管理端四屏（A1~A4）是独立静态工作台，见 `apps/admin/`（`index.html` 直接打开即可）。
+
+## 尺寸密度与真机核对（2026-11）
+
+设计稿画布是 **390dp 宽**（iPhone 类机型），而目标安卓机逻辑宽度多为 **360dp**，
+同一套 dp 值在 360dp 屏上会被整体放大 ~8%，观感偏「大」。因此全站尺寸在 SPEC 基础上
+统一收了一档（≈0.92）：H1 26→24、H2 18→16、Body/Card/Row 14→13、Meta/Label 12→11、
+行高 60→56、列表图标 44→40、快捷瓦片 48→44、常用应用图标 56→48、底部导航 68→62、
+窗口键 40×36→36×32。点按区下限仍是 `AppMetrics.minTap = 44`，不要再往下压。
+
+**量尺寸别靠眼睛**：`.shots/_measure.py` 会打印截图的横向边界 / 内容行带（`bands` 与
+`edges` 两种模式），配合 `_crop.py` 放大局部，能直接比对设计稿与真机的 dp 值。首页就是
+靠它定位到三处「多出来」的留白：状态卡 78→56（内边距 16→8、图标 44→40）、快捷网格行距
+90→76（`mainAxisExtent` 76→70、间距 14→6）、常用应用行距 100→84（extent 84→74、
+间距 16→10）。**设计稿的行距是硬指标，别用 `SizedBox` 随手估。**
+
+同类问题还有两处结构性偏差，已按设计稿改正：
+
+- 进程列表原本「每行一张卡片 + 6dp 间隔」，设计稿是「每个分组一张整卡、行间 1dp 分隔线」，
+  现在按 `_ProcessGroup` 分组渲染。
+- 电视遥控的方向盘原为固定 280，占屏宽 84%（设计稿约 50%），摇杆 72×184（设计稿 60×84）。
+  现在方向盘取 `min(可用短边, 屏宽×0.56, 200)`，摇杆 60×84、电源键 60、静音键 52。
+
+两个真机踩到的坑，记在这里避免重犯：
+
+- **`BoxDecoration` 同时给 `border` 和 `borderRadius` 时，子内容会整块不绘制。**
+  表现是列表首/末行变成一条空白卡片（高度对、内容全无）。库列表的「一张卡片多行」因此
+  改成：`DecoratedBox` 只画直角描边，圆角由外层 `ClipRRect` 裁（见 `library_tiles.dart`）。
+- **飞书/系统通知会盖住顶栏**。真机截图对不上顶栏时，先确认不是「已连接到无线调试」这类
+  抬头通知，必要时临时 `adb shell settings put global heads_up_notifications_enabled 0`，
+  拍完记得改回 1。

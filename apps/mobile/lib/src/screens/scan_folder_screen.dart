@@ -1,3 +1,12 @@
+/// S12 扫描结果（对应设计稿 `S12-scan-result-*.png`）。
+///
+/// 结构：顶栏（返回 + 标题 + 全选）→ 目录与统计卡 → 推荐/全部分段 →
+/// 结果卡（复选 + 图标 + 名称 + exe 文件名与推荐标记）→ 底部「加入应用库」。
+///
+/// 默认只勾选推荐项：每个目录挑一个最像主程序的 exe，避免把崩溃上报、
+/// 安装器之类的可执行文件一起加入库。
+library;
+
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -15,12 +24,6 @@ import '../widgets/file_picker_sheet.dart';
 /// 扫描目录时只看推荐项还是看全部候选。
 enum _CandidateFilter { recommended, all }
 
-/// Dedicated flow for scanning a folder and reviewing executable candidates.
-///
-/// 之前这个流程有两个让人放弃的问题：
-///  1. 扫描出的所有 exe 默认全选，一个游戏目录能勾出几十个崩溃上报/安装器；
-///  2. 加入库时一律归类为"游戏"，扫一遍软件目录就把游戏列表灌满。
-/// 现在默认只勾选每个目录里最像主程序的那一个，并且由用户先选类型。
 class ScanFolderScreen extends ConsumerStatefulWidget {
   const ScanFolderScreen({super.key, this.initialKind = 'game'});
 
@@ -36,7 +39,9 @@ class _ScanFolderScreenState extends ConsumerState<ScanFolderScreen> {
   String _kind = 'game';
   List<LauncherItem> _candidates = const [];
   final Set<String> _selected = <String>{};
-  final Map<String, TextEditingController> _names = {};
+
+  /// 长按改名后的显示名称（key 为 exe 路径）；不改动服务端数据，提交时再带上。
+  final Map<String, String> _renamed = <String, String>{};
   _CandidateFilter _viewFilter = _CandidateFilter.recommended;
   bool _loading = false;
   bool _saving = false;
@@ -45,14 +50,6 @@ class _ScanFolderScreenState extends ConsumerState<ScanFolderScreen> {
   void initState() {
     super.initState();
     _kind = widget.initialKind == 'app' ? 'app' : 'game';
-  }
-
-  @override
-  void dispose() {
-    for (final controller in _names.values) {
-      controller.dispose();
-    }
-    super.dispose();
   }
 
   List<LauncherItem> get _visibleCandidates => _viewFilter == _CandidateFilter.all
@@ -69,11 +66,8 @@ class _ScanFolderScreenState extends ConsumerState<ScanFolderScreen> {
       _folder = folder;
       _candidates = const [];
       _selected.clear();
+      _renamed.clear();
       _viewFilter = _CandidateFilter.recommended;
-      for (final controller in _names.values) {
-        controller.dispose();
-      }
-      _names.clear();
     });
     await _scan(folder);
   }
@@ -99,16 +93,13 @@ class _ScanFolderScreenState extends ConsumerState<ScanFolderScreen> {
       return;
     }
     final candidates = result.candidates;
-    // 默认只勾选推荐项：每个目录挑一个最像主程序的 exe。
     final recommended = candidates
         .where((item) => item.recommended)
         .map((item) => item.executablePath)
         .toSet();
-    for (final controller in _names.values) {
-      controller.dispose();
-    }
     setState(() {
       _candidates = candidates;
+      _renamed.clear();
       _selected
         ..clear()
         ..addAll(recommended);
@@ -119,20 +110,42 @@ class _ScanFolderScreenState extends ConsumerState<ScanFolderScreen> {
       _viewFilter = recommended.isEmpty
           ? _CandidateFilter.all
           : _CandidateFilter.recommended;
-      _names
-        ..clear()
-        ..addEntries(
-          candidates.map(
-            (item) => MapEntry(
-              item.executablePath,
-              TextEditingController(text: item.name),
-            ),
-          ),
-        );
     });
     if (candidates.isEmpty) {
       context.showInfoSnackBar('该文件夹内没有可添加的程序');
     }
+  }
+
+  /// 长按改名：加入库前先调整显示名称。
+  Future<void> _rename(LauncherItem item) async {
+    final controller = TextEditingController(text: item.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('重命名'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: '显示名称'),
+          onSubmitted: (value) =>
+              Navigator.of(dialogContext).pop(value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty || !mounted) return;
+    setState(() => _renamed[item.executablePath] = name);
   }
 
   Future<void> _save() async {
@@ -146,7 +159,7 @@ class _ScanFolderScreenState extends ConsumerState<ScanFolderScreen> {
     final files = ref.read(fileControllerProvider);
     final paths = selected.map((item) => item.executablePath).toList();
     final names = selected
-        .map((item) => _names[item.executablePath]?.text.trim() ?? item.name)
+        .map((item) => _renamed[item.executablePath] ?? item.name)
         .toList(growable: false);
     var added = 0;
     try {
@@ -182,144 +195,199 @@ class _ScanFolderScreenState extends ConsumerState<ScanFolderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     final visible = _visibleCandidates;
     final allSelected =
-        visible.isNotEmpty && visible.every((item) => _selected.contains(item.executablePath));
+        visible.isNotEmpty &&
+        visible.every((item) => _selected.contains(item.executablePath));
     return Scaffold(
-      resizeToAvoidBottomInset: true,
-      appBar: AppBar(title: Text(_kind == 'game' ? '扫描游戏文件夹' : '扫描软件文件夹')),
-      body: Column(
-        children: [
-          _buildKindSelector(),
-          _buildFolderCard(),
-          if (_loading) const LinearProgressIndicator(minHeight: 2),
-          if (_candidates.isNotEmpty) ...[
-            _buildScanSummaryRow(allSelected, visible),
-            _buildViewFilterRow(),
-          ],
-          Expanded(
-            child: visible.isEmpty
-                ? _buildEmptyCandidateHint()
-                : _buildCandidateList(visible),
-          ),
-          if (_candidates.isNotEmpty) _buildSaveBar(),
-        ],
-      ),
-    );
-  }
-
-  /// 顶部「游戏 / 软件」类型选择行。
-  Widget _buildKindSelector() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
-      child: Row(
-        children: [
-          FilterChipX(
-            label: '游戏',
-            active: _kind == 'game',
-            onTap: () => _selectKind('game'),
-          ),
-          const SizedBox(width: 7),
-          FilterChipX(
-            label: '软件',
-            active: _kind == 'app',
-            onTap: () => _selectKind('app'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 切换扫描类型；已有目录时按新类型重新扫描。
-  void _selectKind(String kind) {
-    if (_kind == kind || _loading) return;
-    setState(() => _kind = kind);
-    final folder = _folder;
-    if (folder != null) _scan(folder);
-  }
-
-  /// 目录选择卡片：显示当前目录并提供选择入口。
-  Widget _buildFolderCard() {
-    final palette = context.palette;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
-      child: AppCard(
-        padding: const EdgeInsets.all(12),
-        child: Row(
+      backgroundColor: palette.background,
+      body: SafeArea(
+        child: Column(
           children: [
-            const TileIcon(
-              icon: Icons.folder_open_rounded,
-              color: AppColors.amber,
-              size: 38,
-            ),
-            const SizedBox(width: 10),
+            _buildNavBar(allSelected, visible),
+            if (_loading)
+              LinearProgressIndicator(
+                minHeight: 2,
+                color: palette.brand,
+                backgroundColor: Colors.transparent,
+              ),
             Expanded(
-              child: Text(
-                _folder ?? '先选择需要扫描的文件夹',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: AppText.body.copyWith(color: palette.textPrimary),
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  AppMetrics.pagePadding,
+                  0,
+                  AppMetrics.pagePadding,
+                  AppSpacing.lg,
+                ),
+                children: [
+                  _buildFolderCard(),
+                  if (_candidates.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    _FilterSegment(
+                      recommendedCount: _recommendedCount,
+                      totalCount: _candidates.length,
+                      value: _viewFilter,
+                      onChanged: (value) =>
+                          setState(() => _viewFilter = value),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    if (visible.isEmpty)
+                      _buildEmptyCandidateHint()
+                    else
+                      _buildCandidateCard(visible),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      '长按某一行可先重命名再加入',
+                      style: AppText.meta.copyWith(color: palette.textSubtle),
+                    ),
+                  ] else if (!_loading)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 60),
+                      child: _buildEmptyCandidateHint(),
+                    ),
+                ],
               ),
             ),
-            IconBtn(
-              icon: Icons.folder_rounded,
-              tooltip: '选择文件夹',
-              onPressed: _loading || _saving ? null : _chooseFolder,
-            ),
+            if (_candidates.isNotEmpty) _buildSaveBar(),
           ],
         ),
       ),
     );
   }
 
-  /// 扫描结果概要行：数量说明与「全选 / 全不选」。
-  Widget _buildScanSummaryRow(bool allSelected, List<LauncherItem> visible) {
+  /// 顶栏：返回 + 标题 + 全选/选择文件夹。
+  Widget _buildNavBar(bool allSelected, List<LauncherItem> visible) {
     final palette = context.palette;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 0, 12, 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              '扫描到 ${_candidates.length} 个程序，推荐 $_recommendedCount 个',
-              style: AppText.cardTitle.copyWith(color: palette.textPrimary),
+    return SizedBox(
+      height: AppMetrics.navHeight,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppMetrics.pagePadding,
+        ),
+        child: Row(
+          children: [
+            IconBtn(
+              icon: Icons.chevron_left_rounded,
+              tooltip: '返回',
+              tonal: true,
+              iconSize: 22,
+              onPressed: () => Navigator.of(context).maybePop(),
             ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Text(
+                '扫描结果',
+                style: AppText.pageTitle.copyWith(color: palette.textPrimary),
+              ),
+            ),
+            if (_candidates.isEmpty)
+              TextButton(
+                onPressed: _loading || _saving ? null : _chooseFolder,
+                child: Text(
+                  '选择文件夹',
+                  style: AppText.body.copyWith(
+                    color: palette.brand,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              )
+            else
+              TextButton(
+                onPressed: () => setState(() {
+                  if (allSelected) {
+                    for (final item in visible) {
+                      _selected.remove(item.executablePath);
+                    }
+                  } else {
+                    _selected.addAll(visible.map((e) => e.executablePath));
+                  }
+                }),
+                child: Text(
+                  allSelected ? '全不选' : '全选',
+                  style: AppText.body.copyWith(
+                    color: palette.brand,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 目录与统计卡：路径 + 发现/已选数量。
+  Widget _buildFolderCard() {
+    final palette = context.palette;
+    final folder = _folder;
+    return AppCard(
+      radius: AppRadius.lg,
+      padding: const EdgeInsets.all(AppMetrics.cardPadding),
+      onTap: _loading || _saving ? null : _chooseFolder,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  folder ?? '还没选择文件夹',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.meta.copyWith(color: palette.textMuted),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Icon(
+                Icons.folder_open_rounded,
+                size: 16,
+                color: palette.textSubtle,
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () => setState(() {
-              if (allSelected) {
-                for (final item in visible) {
-                  _selected.remove(item.executablePath);
-                }
-              } else {
-                _selected.addAll(visible.map((e) => e.executablePath));
-              }
-            }),
-            child: Text(allSelected ? '全不选' : '全选'),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            folder == null
+                ? '选择电脑上的程序目录后开始扫描'
+                : '发现 ${_candidates.length} 个可执行文件 · '
+                      '已选 ${_selected.length}',
+            style: AppText.sectionTitle.copyWith(color: palette.textPrimary),
           ),
         ],
       ),
     );
   }
 
-  /// 「仅推荐 / 全部」视图过滤行。
-  Widget _buildViewFilterRow() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 0, 18, 6),
-      child: Row(
+  /// 候选列表：单卡内多行，行间分隔线。
+  Widget _buildCandidateCard(List<LauncherItem> visible) {
+    final palette = context.palette;
+    return AppCard(
+      radius: AppRadius.lg,
+      padding: EdgeInsets.zero,
+      child: Column(
         children: [
-          FilterChipX(
-            label: '仅推荐',
-            active: _viewFilter == _CandidateFilter.recommended,
-            onTap: () =>
-                setState(() => _viewFilter = _CandidateFilter.recommended),
-          ),
-          const SizedBox(width: 7),
-          FilterChipX(
-            label: '全部',
-            active: _viewFilter == _CandidateFilter.all,
-            onTap: () => setState(() => _viewFilter = _CandidateFilter.all),
-          ),
+          for (var i = 0; i < visible.length; i++) ...[
+            if (i > 0)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppMetrics.cardPadding,
+                ),
+                child: Divider(height: 1, color: palette.line),
+              ),
+            _CandidateRow(
+              item: visible[i],
+              displayName:
+                  _renamed[visible[i].executablePath] ?? visible[i].name,
+              selected: _selected.contains(visible[i].executablePath),
+              onToggle: () => setState(() {
+                final path = visible[i].executablePath;
+                if (!_selected.remove(path)) _selected.add(path);
+              }),
+              onLongPress: () => _rename(visible[i]),
+            ),
+          ],
         ],
       ),
     );
@@ -327,114 +395,228 @@ class _ScanFolderScreenState extends ConsumerState<ScanFolderScreen> {
 
   /// 候选列表为空时的占位提示。
   Widget _buildEmptyCandidateHint() {
+    return EmptyState(
+      icon: Icons.search_off_rounded,
+      title: _folder == null ? '选择文件夹后开始扫描' : '没有可添加的 EXE',
+      message: _folder == null
+          ? '扫描会列出目录下的可执行文件，并挑出每个目录的主程序作为推荐项。'
+          : '这类目里没有推荐项，切到「全部」查看所有可执行文件。',
+      action: _folder == null
+          ? SecondaryButton(
+              label: '选择文件夹',
+              icon: Icons.folder_open_rounded,
+              onPressed: _chooseFolder,
+            )
+          : null,
+    );
+  }
+
+  /// 底部提交栏：已选数量 + 加入应用库。
+  Widget _buildSaveBar() {
     final palette = context.palette;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Text(
-          _folder == null
-              ? '选择文件夹后开始扫描'
-              : _candidates.isEmpty
-                  ? '没有可添加的 EXE'
-                  : '这类目里没有推荐项，切到「全部」查看所有可执行文件',
-          textAlign: TextAlign.center,
-          style: AppText.body.copyWith(color: palette.textSubtle),
-        ),
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        AppMetrics.pagePadding,
+        AppSpacing.md,
+        AppMetrics.pagePadding,
+        MediaQuery.of(context).viewPadding.bottom + AppSpacing.md,
+      ),
+      color: palette.background,
+      child: Row(
+        children: [
+          Text(
+            '已选 ${_selected.length} 项',
+            style: AppText.body.copyWith(color: palette.textMuted),
+          ),
+          const Spacer(),
+          SizedBox(
+            width: 180,
+            child: PrimaryButton(
+              label: '加入应用库',
+              expand: true,
+              busy: _saving,
+              onPressed: _saving || _selected.isEmpty ? null : _save,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 推荐 / 全部 分段控件（设计稿 S12 中段）。
+class _FilterSegment extends StatelessWidget {
+  const _FilterSegment({
+    required this.recommendedCount,
+    required this.totalCount,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final int recommendedCount;
+  final int totalCount;
+  final _CandidateFilter value;
+  final ValueChanged<_CandidateFilter> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Container(
+      height: AppMetrics.minTap,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: palette.surface2,
+        border: Border.all(color: palette.line),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Row(
+        children: [
+          _segment(
+            context,
+            label: '推荐 $recommendedCount',
+            active: value == _CandidateFilter.recommended,
+            onTap: () => onChanged(_CandidateFilter.recommended),
+          ),
+          _segment(
+            context,
+            label: '全部 $totalCount',
+            active: value == _CandidateFilter.all,
+            onTap: () => onChanged(_CandidateFilter.all),
+          ),
+        ],
       ),
     );
   }
 
-  /// 候选程序列表：每项含勾选框、图标、名称输入框与路径信息。
-  Widget _buildCandidateList(List<LauncherItem> visible) {
+  Widget _segment(
+    BuildContext context, {
+    required String label,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
     final palette = context.palette;
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-      itemCount: visible.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final item = visible[index];
-        final path = item.executablePath;
-        return AppCard(
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: active ? palette.brandTint : Colors.transparent,
+            border: active
+                ? Border.all(color: palette.brand.withValues(alpha: 0.45))
+                : null,
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+          ),
+          child: Text(
+            label,
+            style: AppText.label.copyWith(
+              color: active ? palette.brand : palette.textMuted,
+              fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 单个候选行：复选 + 图标 + 名称 + 文件名与推荐状态。
+class _CandidateRow extends StatelessWidget {
+  const _CandidateRow({
+    required this.item,
+    required this.displayName,
+    required this.selected,
+    required this.onToggle,
+    required this.onLongPress,
+  });
+
+  final LauncherItem item;
+  final String displayName;
+  final bool selected;
+  final VoidCallback onToggle;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final fileName = item.executablePath.split(RegExp(r'[\\/]')).last;
+    final state = item.recommended
+        ? '推荐'
+        : selected
+        ? '已选中'
+        : '未选中';
+    return GestureDetector(
+      onLongPress: onLongPress,
+      child: InkWell(
+        onTap: onToggle,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 72),
           padding: const EdgeInsets.symmetric(
-            horizontal: 8,
-            vertical: 6,
+            horizontal: AppMetrics.cardPadding,
+            vertical: AppSpacing.md,
           ),
           child: Row(
             children: [
-              Checkbox(
-                value: _selected.contains(path),
-                onChanged: (value) => setState(() {
-                  if (value == true) {
-                    _selected.add(path);
-                  } else {
-                    _selected.remove(path);
-                  }
-                }),
-              ),
+              _SelectBox(selected: selected),
+              const SizedBox(width: AppSpacing.md),
               _CandidateIcon(item.iconBase64),
-              const SizedBox(width: 10),
+              const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: TextField(
-                            controller: _names[path],
-                            decoration: const InputDecoration(
-                              labelText: '显示名称',
-                              isDense: true,
-                              border: InputBorder.none,
-                            ),
-                          ),
-                        ),
-                        if (item.recommended)
-                          const StatusTag('推荐'),
-                      ],
-                    ),
                     Text(
-                      _candidateSubtitle(item),
+                      displayName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: AppText.meta.copyWith(
-                        color: palette.textSubtle,
+                      style: AppText.rowTitle.copyWith(
+                        color: palette.textPrimary,
                       ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$fileName · $state',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.meta.copyWith(color: palette.textMuted),
                     ),
                   ],
                 ),
               ),
             ],
           ),
-        );
-      },
-    );
-  }
-
-  /// 底部提交栏：显示已选数量并提交添加。
-  Widget _buildSaveBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
-      child: PrimaryButton(
-        label: _selected.isEmpty
-            ? '请选择程序'
-            : '添加 ${_selected.length} 个程序到常用',
-        icon: Icons.add_rounded,
-        expand: true,
-        busy: _saving,
-        onPressed: _saving || _selected.isEmpty ? null : _save,
+        ),
       ),
     );
   }
+}
 
-  String _candidateSubtitle(LauncherItem item) {
-    final size = item.sizeBytes;
-    if (size == null || size <= 0) return item.executablePath;
-    final megabytes = size / 1024 / 1024;
-    final readable = megabytes >= 1
-        ? '${megabytes.toStringAsFixed(0)} MB'
-        : '${(size / 1024).toStringAsFixed(0)} KB';
-    return '$readable · ${item.executablePath}';
+/// 方形复选框：选中时品牌填充 + 对勾。
+class _SelectBox extends StatelessWidget {
+  const _SelectBox({required this.selected});
+
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Container(
+      width: 24,
+      height: 24,
+      decoration: BoxDecoration(
+        color: selected ? palette.brand : Colors.transparent,
+        border: Border.all(
+          color: selected ? palette.brand : palette.lineStrong,
+          width: 1.4,
+        ),
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: selected
+          ? Icon(Icons.check_rounded, size: 16, color: palette.onBrand)
+          : null,
+    );
   }
 }
 
@@ -444,6 +626,7 @@ class _CandidateIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
     Uint8List? bytes;
     if (base64Icon != null) {
       try {
@@ -455,19 +638,20 @@ class _CandidateIcon extends StatelessWidget {
       height: 40,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: AppColors.cyan.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(10),
+        color: palette.info.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
       ),
       child: bytes == null
-          ? const Icon(Icons.desktop_windows_outlined, color: AppColors.cyan)
+          ? Icon(Icons.desktop_windows_outlined, color: palette.info, size: 20)
           : Image.memory(
               bytes,
               fit: BoxFit.contain,
               filterQuality: FilterQuality.high,
               cacheWidth: (40 * MediaQuery.devicePixelRatioOf(context)).round(),
-              errorBuilder: (_, _, _) => const Icon(
+              errorBuilder: (_, _, _) => Icon(
                 Icons.desktop_windows_outlined,
-                color: AppColors.cyan,
+                color: palette.info,
+                size: 20,
               ),
             ),
     );

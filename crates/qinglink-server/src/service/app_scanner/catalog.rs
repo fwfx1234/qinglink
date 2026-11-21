@@ -47,6 +47,23 @@ impl AppScanner {
         *cache = Some(Self::dedupe_entries(all));
     }
 
+    /// 把一次按需解析出来的图标写回内存目录。
+    ///
+    /// 列表接口不带图标，客户端逐个请求；只有把结果记在目录里，后续请求
+    /// （以及同一进程内的其它客户端）才会拿到同一份载荷，而不是每次都重新
+    /// 读一遍文件资源。整体重建目录由 `reload_visible_catalog` 负责，这里
+    /// 只改一条，避免每次取图标都触发全量重载。
+    pub fn set_icon(&self, id: &str, icon_base64: Option<String>, icon_source: Option<String>) {
+        let mut cache = crate::lock_unpoisoned(&self.cache);
+        let Some(apps) = cache.as_mut() else {
+            return;
+        };
+        for app in apps.iter_mut().filter(|app| app.id == id) {
+            app.icon_base64 = icon_base64.clone();
+            app.icon_source = icon_source.clone();
+        }
+    }
+
     pub(super) fn dedupe_entries(entries: Vec<AppEntry>) -> Vec<AppEntry> {
         let mut unique = HashMap::<String, AppEntry>::new();
         for entry in entries {

@@ -7,6 +7,7 @@ import '../providers/settings_models.dart';
 import '../services/shortcut_mapper.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_ui.dart';
+import '../widgets/app_sheet.dart';
 
 class ShortcutPresetEditResult {
   const ShortcutPresetEditResult({
@@ -21,11 +22,10 @@ Future<ShortcutPresetEditResult?> showShortcutPresetSheet(
   BuildContext context, {
   ShortcutPreset? preset,
   List<String> homeShortcuts = const [],
-}) => showModalBottomSheet<ShortcutPresetEditResult>(
-  context: context,
+}) => showAppSheet<ShortcutPresetEditResult>(
+  context,
   isScrollControlled: true,
   useSafeArea: true,
-  showDragHandle: true,
   builder: (_) => FractionallySizedBox(
     heightFactor: 0.92,
     child: _ShortcutPresetSheet(preset: preset, homeShortcuts: homeShortcuts),

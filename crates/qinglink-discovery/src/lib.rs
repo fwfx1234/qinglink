@@ -13,13 +13,8 @@ use std::{
 };
 
 use anyhow::Result;
-use qinglink_protocol::{DEFAULT_PORT, DISCOVERY_MAGIC, DISCOVERY_PORT};
+use qinglink_protocol::{DISCOVERY_MAGIC, DISCOVERY_PORT};
 use uuid::Uuid;
-
-/// 返回设备对外提供协议服务的默认端口。
-pub fn default_port() -> u16 {
-    DEFAULT_PORT
-}
 
 /// 监听发现端口并应答广播探测的 UDP 响应器，析构时停止后台线程。
 #[derive(Debug)]

@@ -1,6 +1,10 @@
 use super::*;
 
-pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Option<&str>) -> WsServerMessage {
+pub(super) fn handle(
+    state: &AppState,
+    req: &WsClientRequest,
+    _session_token: Option<&str>,
+) -> WsServerMessage {
     match req {
         // === Processes ===
         WsClientRequest::GetProcesses {
@@ -59,8 +63,6 @@ pub(super) fn handle(state: &AppState, req: &WsClientRequest, _session_token: Op
             WsServerMessage::Response(WsServerResponse::ProcessIcon(state.process_icon(query.pid)))
         }
 
-        _ => unreachable!("request routed to the wrong handler"),
+        _ => super::unrouted_request(),
     }
 }
-
-

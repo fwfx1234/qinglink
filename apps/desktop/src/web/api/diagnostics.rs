@@ -116,7 +116,7 @@ fn diagnostics_payload(state: &WebState) -> Value {
     };
 
     json!({
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": qinglink_version::VERSION,
         "pid": std::process::id(),
         "uptime_secs": state.uptime_secs(),
         "data_dir": data_dir,

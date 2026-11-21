@@ -5,7 +5,9 @@ import 'package:go_router/go_router.dart';
 import '../providers/auth_provider.dart';
 import '../providers/settings_provider.dart';
 import '../theme/app_theme.dart';
+import '../utils/snackbar_extension.dart';
 import '../widgets/app_ui.dart';
+import 'connection_diagnose_screen.dart';
 import 'control_center_screen.dart';
 import 'processes_tab.dart';
 import 'settings_tab.dart';
@@ -22,7 +24,12 @@ class MoreTab extends ConsumerWidget {
     final settings = ref.watch(settingsProvider);
     final connected = ref.watch(connectionProvider.select((s) => s.isAuthenticated));
     return ListView(
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 96),
+      padding: const EdgeInsets.fromLTRB(
+        AppMetrics.pagePadding,
+        AppSpacing.md,
+        AppMetrics.pagePadding,
+        AppMetrics.tabBarInset,
+      ),
       children: [
         _DeviceSummary(
           name: settings.pcName?.isNotEmpty == true ? settings.pcName! : '客厅电脑',
@@ -58,7 +65,10 @@ class MoreTab extends ConsumerWidget {
                 icon: Icons.link_rounded,
                 tone: AppColors.cyan,
                 title: '配对与连接',
-                onTap: () => _push(context, const SettingsTab()),
+                // 已配对时看连接信息即可；未配对才需要走配对流程。
+                onTap: connected
+                    ? () => _push(context, const SettingsTab())
+                    : () => _pair(context, ref),
               ),
               _MenuRow(
                 icon: Icons.keyboard_command_key_rounded,
@@ -76,44 +86,14 @@ class MoreTab extends ConsumerWidget {
                 icon: Icons.health_and_safety_outlined,
                 tone: AppColors.amber,
                 title: '连接诊断',
+                onTap: () => _push(context, const ConnectionDiagnoseScreen()),
+              ),
+              // 所有偏好的唯一入口：开关不在这里重复出现，避免两处状态各写一份。
+              _MenuRow(
+                icon: Icons.settings_outlined,
+                tone: AppColors.slate,
+                title: '设置',
                 onTap: () => _push(context, const SettingsTab()),
-                isLast: true,
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 18),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            color: palette.surface,
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: palette.line),
-          ),
-          child: Column(
-            children: [
-              _ToggleRow(
-                title: '唤醒后自动解锁',
-                value: settings.autoUnlockOnWake,
-                onChanged: (value) => ref
-                    .read(settingsProvider.notifier)
-                    .setAutoUnlockOnWake(value),
-              ),
-              _ToggleRow(
-                title: '跟随电脑开电视',
-                subtitle: '发送唤醒时同步按下遥控器电源键',
-                value: settings.tvFollowPcPowerOn,
-                onChanged: (value) => ref
-                    .read(settingsProvider.notifier)
-                    .setTvFollowPcPowerOn(value),
-              ),
-              _ToggleRow(
-                title: '跟随电脑关电视',
-                subtitle: '关机或睡眠时同步按下遥控器电源键',
-                value: settings.tvFollowPcPowerOff,
-                onChanged: (value) => ref
-                    .read(settingsProvider.notifier)
-                    .setTvFollowPcPowerOff(value),
                 isLast: true,
               ),
             ],
@@ -123,6 +103,18 @@ class MoreTab extends ConsumerWidget {
     );
   }
 
+  /// 未配对时走配对流程：先让服务端进入配对态，再进全屏配对页。
+  Future<void> _pair(BuildContext context, WidgetRef ref) async {
+    try {
+      await ref.read(connectionProvider.notifier).beginPairing();
+    } catch (error) {
+      if (context.mounted) context.showErrorSnackBar('开始配对失败: $error');
+      return;
+    }
+    if (!context.mounted) return;
+    await context.push<bool>(AppRoutes.pairing);
+  }
+
   void _push(BuildContext context, Widget page) {
     final route = switch (page.runtimeType) {
       const (ControlCenterScreen) => AppRoutes.controlCenter,
@@ -130,6 +122,7 @@ class MoreTab extends ConsumerWidget {
       const (SettingsTab) => AppRoutes.settings,
       const (ShortcutsScreen) => AppRoutes.shortcuts,
       const (TvRemoteScreen) => AppRoutes.tvRemote,
+      const (ConnectionDiagnoseScreen) => AppRoutes.diagnose,
       _ => AppRoutes.home,
     };
     context.push(route);
@@ -224,42 +217,14 @@ class _MenuRow extends StatelessWidget {
       icon: icon,
       iconTone: tone,
       tile: true,
-      minHeight: 58,
+      minHeight: AppMetrics.listRow,
       showChevron: true,
       enabled: onTap != null,
       onTap: onTap,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      border: Border(
-        bottom: BorderSide(color: isLast ? Colors.transparent : palette.line),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
       ),
-    );
-  }
-}
-
-class _ToggleRow extends StatelessWidget {
-  const _ToggleRow({
-    required this.title,
-    required this.value,
-    required this.onChanged,
-    this.subtitle,
-    this.isLast = false,
-  });
-
-  final String title;
-  final String? subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-  final bool isLast;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    return AppListRow(
-      title: title,
-      subtitle: subtitle,
-      minHeight: 56,
-      trailing: AppToggle(value: value, onChanged: onChanged),
-      padding: const EdgeInsets.symmetric(vertical: 8),
       border: Border(
         bottom: BorderSide(color: isLast ? Colors.transparent : palette.line),
       ),

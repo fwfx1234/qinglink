@@ -1,378 +1,459 @@
-/// 标准遥控面板外壳：状态头 + 重点键 + 方向键 + 音量频道 + 数字键盘。
+/// S10 电视遥控面板（对应设计稿 `S10-tv-remote-*.png`）。
+///
+/// 自上而下：圆形方向盘（含确认键）→ 音量/电源/静音/频道 → 返回·首页·菜单。
+/// 面板只负责布局，按键是否可用由 [profile] 中是否存在对应指令决定。
 library;
 
 import 'package:flutter/material.dart';
 
 import '../../models/ir_remote.dart';
 import '../../theme/app_theme.dart';
+import '../../utils/tv_power_follow.dart';
 import '../../widgets/app_ui.dart';
-import 'ir_remote_key.dart';
 
-/// 标准遥控面板：电源/信号源/静音 + 方向键 + 音量频道 + 数字键盘。
-///
-/// 面板本身不关心数据来源，只通过 [onCommand] 回传被按下的按键。
-class IrRemotePanel extends StatelessWidget {
-  const IrRemotePanel({
+/// 电视遥控面板：方向盘 + 音量频道摇杆 + 底部三键。
+class TvRemotePad extends StatelessWidget {
+  const TvRemotePad({
     super.key,
     required this.profile,
-    required this.capability,
     required this.onCommand,
   });
 
   final IrRemoteProfile profile;
-  final bool capability;
   final ValueChanged<IrCommand> onCommand;
-
-  static const _panelIds = {
-    'power',
-    'input',
-    'mute',
-    'up',
-    'down',
-    'left',
-    'right',
-    'ok',
-    'volume_up',
-    'volume_down',
-    'channel_up',
-    'channel_down',
-    'menu',
-    'back',
-    'num_0',
-    'num_1',
-    'num_2',
-    'num_3',
-    'num_4',
-    'num_5',
-    'num_6',
-    'num_7',
-    'num_8',
-    'num_9',
-  };
 
   @override
   Widget build(BuildContext context) {
-    return AppCard(
-      radius: AppRadius.xl,
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _PanelHeader(profile: profile, capability: capability),
-          const SizedBox(height: 14),
-          _PowerRow(profile: profile, onCommand: onCommand),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _DirectionPad(profile: profile, onCommand: onCommand),
-              ),
-              const SizedBox(width: 12),
-              SizedBox(
-                width: 74,
-                child: _VolumeChannelColumn(
+    return Column(
+      children: [
+        Expanded(
+          child: Center(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // 方向盘宽度取屏幕的一半左右（设计稿是 390 画布上的 195），
+                // 上限 200：再大就会把摇杆挤到屏幕底部。
+                final size = [
+                  constraints.maxWidth,
+                  constraints.maxHeight,
+                  MediaQuery.sizeOf(context).width * 0.56,
+                  200.0,
+                ].reduce((a, b) => a < b ? a : b);
+                return _DirectionWheel(
+                  size: size,
                   profile: profile,
                   onCommand: onCommand,
-                ),
-              ),
-            ],
+                );
+              },
+            ),
           ),
-          const SizedBox(height: 12),
-          _NumberPad(profile: profile, onCommand: onCommand),
+        ),
+        const SizedBox(height: AppSpacing.xl),
+        _ControlRow(profile: profile, onCommand: onCommand),
+        const SizedBox(height: AppSpacing.xl),
+        _BottomKeys(profile: profile, onCommand: onCommand),
+      ],
+    );
+  }
+}
+
+/// 圆形方向盘：外圈 + 上下左右箭头 + 中央确认键。
+class _DirectionWheel extends StatelessWidget {
+  const _DirectionWheel({
+    required this.size,
+    required this.profile,
+    required this.onCommand,
+  });
+
+  final double size;
+  final IrRemoteProfile profile;
+  final ValueChanged<IrCommand> onCommand;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final center = size * 0.40;
+    final arrowExtent = size * 0.20;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: palette.surface,
+              shape: BoxShape.circle,
+              border: Border.all(color: palette.line),
+            ),
+          ),
+          _WheelArrow(
+            alignment: const Alignment(0, -0.74),
+            extent: arrowExtent,
+            icon: Icons.keyboard_arrow_up_rounded,
+            profile: profile,
+            commandId: 'up',
+            onCommand: onCommand,
+          ),
+          _WheelArrow(
+            alignment: const Alignment(0, 0.74),
+            extent: arrowExtent,
+            icon: Icons.keyboard_arrow_down_rounded,
+            profile: profile,
+            commandId: 'down',
+            onCommand: onCommand,
+          ),
+          _WheelArrow(
+            alignment: const Alignment(-0.74, 0),
+            extent: arrowExtent,
+            icon: Icons.keyboard_arrow_left_rounded,
+            profile: profile,
+            commandId: 'left',
+            onCommand: onCommand,
+          ),
+          _WheelArrow(
+            alignment: const Alignment(0.74, 0),
+            extent: arrowExtent,
+            icon: Icons.keyboard_arrow_right_rounded,
+            profile: profile,
+            commandId: 'right',
+            onCommand: onCommand,
+          ),
+          _WheelOk(
+            size: center,
+            profile: profile,
+            onCommand: onCommand,
+          ),
         ],
       ),
     );
   }
-
-  /// 面板未覆盖的按键，供「更多按键」区域使用。
-  static List<IrCommand> extraCommands(IrRemoteProfile profile) => profile.commands
-      .where((command) => !_panelIds.contains(command.id))
-      .toList(growable: false);
 }
 
-/// 面板标题行：遥控器名称与红外能力状态。
-class _PanelHeader extends StatelessWidget {
-  const _PanelHeader({required this.profile, required this.capability});
+/// 方向盘上的方向箭头：命中区比图形大，保证可点。
+class _WheelArrow extends StatelessWidget {
+  const _WheelArrow({
+    required this.alignment,
+    required this.extent,
+    required this.icon,
+    required this.profile,
+    required this.commandId,
+    required this.onCommand,
+  });
+
+  final Alignment alignment;
+  final double extent;
+  final IconData icon;
+  final IrRemoteProfile profile;
+  final String commandId;
+  final ValueChanged<IrCommand> onCommand;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final command = findIrCommand(profile, commandId);
+    return Align(
+      alignment: alignment,
+      child: SizedBox(
+        width: extent,
+        height: extent,
+        child: InkResponse(
+          onTap: command == null ? null : () => onCommand(command),
+          radius: extent / 2,
+          child: Icon(
+            icon,
+            size: extent * 0.62,
+            color: command == null ? palette.textSubtle : palette.textPrimary,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 方向盘中央的确认键。
+class _WheelOk extends StatelessWidget {
+  const _WheelOk({
+    required this.size,
+    required this.profile,
+    required this.onCommand,
+  });
+
+  final double size;
+  final IrRemoteProfile profile;
+  final ValueChanged<IrCommand> onCommand;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final command = findIrCommand(profile, 'ok');
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Material(
+        color: palette.surface2,
+        shape: CircleBorder(side: BorderSide(color: palette.line)),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: command == null ? null : () => onCommand(command),
+          child: Center(
+            child: Text(
+              '确定',
+              style: AppText.body.copyWith(
+                color: command == null
+                    ? palette.textSubtle
+                    : palette.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 中段控制区：音量摇杆 ·（电源 + 静音）· 频道摇杆。
+class _ControlRow extends StatelessWidget {
+  const _ControlRow({required this.profile, required this.onCommand});
 
   final IrRemoteProfile profile;
-  final bool capability;
+  final ValueChanged<IrCommand> onCommand;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _Rocker(
+          profile: profile,
+          onCommand: onCommand,
+          upperCommandId: 'volume_up',
+          lowerCommandId: 'volume_down',
+          upperIcon: Icons.add_rounded,
+          lowerIcon: Icons.remove_rounded,
+        ),
+        const SizedBox(width: AppSpacing.xl),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _RoundKey(
+              profile: profile,
+              onCommand: onCommand,
+              commandId: 'power',
+              icon: Icons.power_settings_new_rounded,
+              size: 60,
+              danger: true,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _RoundKey(
+              profile: profile,
+              onCommand: onCommand,
+              commandId: 'mute',
+              icon: Icons.volume_off_rounded,
+              size: 52,
+            ),
+          ],
+        ),
+        const SizedBox(width: AppSpacing.xl),
+        _Rocker(
+          profile: profile,
+          onCommand: onCommand,
+          upperCommandId: 'channel_up',
+          lowerCommandId: 'channel_down',
+          upperIcon: Icons.keyboard_arrow_up_rounded,
+          lowerIcon: Icons.keyboard_arrow_down_rounded,
+        ),
+      ],
+    );
+  }
+}
+
+/// 竖向摇杆：上半 + 下半，中间一条分隔线。
+class _Rocker extends StatelessWidget {
+  const _Rocker({
+    required this.profile,
+    required this.onCommand,
+    required this.upperCommandId,
+    required this.lowerCommandId,
+    required this.upperIcon,
+    required this.lowerIcon,
+  });
+
+  final IrRemoteProfile profile;
+  final ValueChanged<IrCommand> onCommand;
+  final String upperCommandId;
+  final String lowerCommandId;
+  final IconData upperIcon;
+  final IconData lowerIcon;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Container(
+      width: 60,
+      height: 84,
+      decoration: BoxDecoration(
+        color: palette.surface2,
+        border: Border.all(color: palette.line),
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+      ),
+      child: Column(
+        children: [
+          Expanded(
+            child: _RockerHalf(
+              icon: upperIcon,
+              command: findIrCommand(profile, upperCommandId),
+              onCommand: onCommand,
+            ),
+          ),
+          Container(
+            height: 1,
+            margin: const EdgeInsets.symmetric(horizontal: 14),
+            color: palette.line,
+          ),
+          Expanded(
+            child: _RockerHalf(
+              icon: lowerIcon,
+              command: findIrCommand(profile, lowerCommandId),
+              onCommand: onCommand,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RockerHalf extends StatelessWidget {
+  const _RockerHalf({
+    required this.icon,
+    required this.command,
+    required this.onCommand,
+  });
+
+  final IconData icon;
+  final IrCommand? command;
+  final ValueChanged<IrCommand> onCommand;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return InkWell(
+      onTap: command == null ? null : () => onCommand(command!),
+      borderRadius: BorderRadius.circular(AppRadius.pill),
+      child: Center(
+        child: Icon(
+          icon,
+          size: 26,
+          color: command == null ? palette.textSubtle : palette.textPrimary,
+        ),
+      ),
+    );
+  }
+}
+
+/// 圆形重点键：电源（危险色）与静音。
+class _RoundKey extends StatelessWidget {
+  const _RoundKey({
+    required this.profile,
+    required this.onCommand,
+    required this.commandId,
+    required this.icon,
+    required this.size,
+    this.danger = false,
+  });
+
+  final IrRemoteProfile profile;
+  final ValueChanged<IrCommand> onCommand;
+  final String commandId;
+  final IconData icon;
+  final double size;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final command = findIrCommand(profile, commandId);
+    final enabled = command != null;
+    final color = !enabled
+        ? palette.textSubtle
+        : danger
+        ? palette.danger
+        : palette.textPrimary;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Material(
+        color: danger ? palette.dangerTint : palette.surface2,
+        shape: CircleBorder(
+          side: BorderSide(
+            color: danger
+                ? palette.danger.withValues(alpha: 0.35)
+                : palette.line,
+          ),
+        ),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: enabled ? () => onCommand(command) : null,
+          child: Icon(icon, size: size * 0.4, color: color),
+        ),
+      ),
+    );
+  }
+}
+
+/// 底部三键：返回 / 首页 / 菜单。
+class _BottomKeys extends StatelessWidget {
+  const _BottomKeys({required this.profile, required this.onCommand});
+
+  final IrRemoteProfile profile;
+  final ValueChanged<IrCommand> onCommand;
+
+  static const _keys = [('back', '返回'), ('home', '首页'), ('menu', '菜单')];
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     return Row(
       children: [
-        TileIcon(
-          icon: Icons.tv_rounded,
-          color: AppColors.cyan,
-          size: 34,
-          radius: 9,
-          iconSize: 18,
-        ),
-        const SizedBox(width: 9),
-        Expanded(
-          child: Text(
-            profile.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppText.cardTitle.copyWith(color: palette.textPrimary),
-          ),
-        ),
-        StatusDot(
-          color: capability ? AppColors.success : AppColors.warning,
-          glow: capability,
-        ),
-        const SizedBox(width: 6),
-        Text(
-          capability ? '红外就绪' : '仅编辑',
-          style: AppText.meta.copyWith(
-            color: capability ? AppColors.success : AppColors.warning,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 电源 / 信号源 / 静音三个重点键。
-class _PowerRow extends StatelessWidget {
-  const _PowerRow({required this.profile, required this.onCommand});
-
-  final IrRemoteProfile profile;
-  final ValueChanged<IrCommand> onCommand;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _PanelKey(
-            profile: profile,
-            onCommand: onCommand,
-            commandId: 'power',
-            label: '电源',
-            icon: Icons.power_settings_new_rounded,
-            accent: true,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _PanelKey(
-            profile: profile,
-            onCommand: onCommand,
-            commandId: 'input',
-            label: '信号源',
-            icon: Icons.input_rounded,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _PanelKey(
-            profile: profile,
-            onCommand: onCommand,
-            commandId: 'mute',
-            label: '静音',
-            icon: Icons.volume_off_rounded,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 方向键簇：上 / 左 / 确认 / 右 / 下。
-class _DirectionPad extends StatelessWidget {
-  const _DirectionPad({required this.profile, required this.onCommand});
-
-  final IrRemoteProfile profile;
-  final ValueChanged<IrCommand> onCommand;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _PanelKey(
-          profile: profile,
-          onCommand: onCommand,
-          commandId: 'up',
-          label: '上',
-          icon: Icons.keyboard_arrow_up_rounded,
-        ),
-        const SizedBox(height: 6),
-        Row(
-          children: [
-            Expanded(
-              child: _PanelKey(
-                profile: profile,
-                onCommand: onCommand,
-                commandId: 'left',
-                label: '左',
-                icon: Icons.keyboard_arrow_left_rounded,
-              ),
+        for (var i = 0; i < _keys.length; i++) ...[
+          if (i > 0) const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Builder(
+              builder: (context) {
+                final command = findIrCommand(profile, _keys[i].$1);
+                return SizedBox(
+                  height: 52,
+                  child: Material(
+                    color: palette.surface2,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      side: BorderSide(color: palette.line),
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      onTap: command == null
+                          ? null
+                          : () => onCommand(command),
+                      child: Center(
+                        child: Text(
+                          _keys[i].$2,
+                          style: AppText.body.copyWith(
+                            color: command == null
+                                ? palette.textSubtle
+                                : palette.textPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: _PanelKey(
-                profile: profile,
-                onCommand: onCommand,
-                commandId: 'ok',
-                label: '确认',
-                accent: true,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: _PanelKey(
-                profile: profile,
-                onCommand: onCommand,
-                commandId: 'right',
-                label: '右',
-                icon: Icons.keyboard_arrow_right_rounded,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        _PanelKey(
-          profile: profile,
-          onCommand: onCommand,
-          commandId: 'down',
-          label: '下',
-          icon: Icons.keyboard_arrow_down_rounded,
-        ),
-      ],
-    );
-  }
-}
-
-/// 右侧竖排：音量加减与频道加减。
-class _VolumeChannelColumn extends StatelessWidget {
-  const _VolumeChannelColumn({required this.profile, required this.onCommand});
-
-  final IrRemoteProfile profile;
-  final ValueChanged<IrCommand> onCommand;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _PanelKey(
-          profile: profile,
-          onCommand: onCommand,
-          commandId: 'volume_up',
-          label: '音量 +',
-          icon: Icons.add_rounded,
-        ),
-        const SizedBox(height: 6),
-        _PanelKey(
-          profile: profile,
-          onCommand: onCommand,
-          commandId: 'volume_down',
-          label: '音量 -',
-          icon: Icons.remove_rounded,
-        ),
-        const SizedBox(height: 6),
-        _PanelKey(
-          profile: profile,
-          onCommand: onCommand,
-          commandId: 'channel_up',
-          label: '频道 +',
-          icon: Icons.keyboard_arrow_up_rounded,
-        ),
-        const SizedBox(height: 6),
-        _PanelKey(
-          profile: profile,
-          onCommand: onCommand,
-          commandId: 'channel_down',
-          label: '频道 -',
-          icon: Icons.keyboard_arrow_down_rounded,
-        ),
-      ],
-    );
-  }
-}
-
-/// 数字键网格，末尾补菜单键与返回键。
-class _NumberPad extends StatelessWidget {
-  const _NumberPad({required this.profile, required this.onCommand});
-
-  final IrRemoteProfile profile;
-  final ValueChanged<IrCommand> onCommand;
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.count(
-      crossAxisCount: 3,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 2.5,
-      mainAxisSpacing: 6,
-      crossAxisSpacing: 6,
-      children: [
-        for (var index = 1; index <= 9; index++)
-          _PanelKey(
-            profile: profile,
-            onCommand: onCommand,
-            commandId: 'num_$index',
-            label: '$index',
           ),
-        _PanelKey(
-          profile: profile,
-          onCommand: onCommand,
-          commandId: 'menu',
-          label: '菜单',
-        ),
-        _PanelKey(
-          profile: profile,
-          onCommand: onCommand,
-          commandId: 'num_0',
-          label: '0',
-        ),
-        _PanelKey(
-          profile: profile,
-          onCommand: onCommand,
-          commandId: 'back',
-          label: '返回',
-        ),
+        ],
       ],
     );
   }
-}
-
-/// 面板按键：按 [commandId] 在 [profile] 中查表，缺失时置灰不可点。
-class _PanelKey extends StatelessWidget {
-  const _PanelKey({
-    required this.profile,
-    required this.onCommand,
-    required this.commandId,
-    required this.label,
-    this.icon,
-    this.accent = false,
-  });
-
-  final IrRemoteProfile profile;
-  final ValueChanged<IrCommand> onCommand;
-  final String commandId;
-  final String label;
-  final IconData? icon;
-  final bool accent;
-
-  @override
-  Widget build(BuildContext context) {
-    final command = _commandOf(profile, commandId);
-    return IrRemoteKey(
-      label: label,
-      icon: icon,
-      accent: accent,
-      onPressed: command == null ? null : () => onCommand(command),
-    );
-  }
-}
-
-/// 在 [profile] 中查找 id 为 [id] 的按键；不存在时返回 null。
-IrCommand? _commandOf(IrRemoteProfile profile, String id) {
-  for (final command in profile.commands) {
-    if (command.id == id) return command;
-  }
-  return null;
 }

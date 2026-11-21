@@ -9,7 +9,9 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE};
 mod authorization;
 mod desktop;
 mod dispatch;
-mod helpers;
+mod dispatch_input;
+mod dispatch_session;
+mod focus_cache;
 mod input;
 mod lifecycle_monitor;
 mod management;
@@ -17,8 +19,6 @@ mod network;
 mod pipe;
 mod scm;
 mod session_agent;
-
-pub use helpers::{helper_button, helper_button_state, helper_key, helper_move, helper_wheel};
 
 pub fn run() -> Result<()> {
     scm::run()

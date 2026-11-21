@@ -22,7 +22,7 @@ pub fn run(paths: &AppPaths) -> Result<()> {
     let log_directory = log_file.parent().map(Path::to_path_buf).unwrap_or_default();
 
     let mut report = serde_json::Map::new();
-    report.insert("version".into(), json!(env!("CARGO_PKG_VERSION")));
+    report.insert("version".into(), json!(qinglink_version::VERSION));
     report.insert("pid".into(), json!(std::process::id()));
     report.insert(
         "data_dir".into(),
@@ -90,7 +90,7 @@ pub fn run_service_probe() -> Result<()> {
     };
 
     let mut document = serde_json::Map::new();
-    document.insert("version".into(), json!(env!("CARGO_PKG_VERSION")));
+    document.insert("version".into(), json!(qinglink_version::VERSION));
     document.insert("pid".into(), json!(std::process::id()));
     document.insert("pipe".into(), json!(crate::service_lifecycle::PIPE_NAME));
     document.insert("probe".into(), report);

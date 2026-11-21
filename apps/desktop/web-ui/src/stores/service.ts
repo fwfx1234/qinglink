@@ -33,6 +33,8 @@ export const useServiceStore = defineStore('service', () => {
   const needsRepair = computed(() => protocolMismatch.value || unauthorized.value)
   const expectedVersion = computed(() => status.value?.expected_version ?? null)
   const serviceVersion = computed(() => status.value?.service_version ?? null)
+  /** 服务端产品版本号（与服务端 `/health` 的 app_version 同源），null 表示旧服务 */
+  const serviceAppVersion = computed(() => status.value?.service_app_version ?? null)
   const paused = computed(() => status.value?.paused === true)
   const networkReady = computed(() => status.value?.network_ready === true)
   const address = computed(() => status.value?.address ?? null)
@@ -172,6 +174,7 @@ export const useServiceStore = defineStore('service', () => {
     needsRepair,
     expectedVersion,
     serviceVersion,
+    serviceAppVersion,
     paused,
     networkReady,
     address,

@@ -114,6 +114,7 @@ impl ServiceState {
             }
             DesktopCommand::AddApp { .. } => capabilities.app_add,
             DesktopCommand::LaunchApp { .. } => capabilities.app_launch,
+            DesktopCommand::SetKeepAwake { .. } => capabilities.keep_awake,
         }
     }
 
@@ -124,6 +125,7 @@ impl ServiceState {
             state: self.link_state,
             expected_version: SERVICE_IPC_VERSION,
             service_version: self.service_version,
+            service_app_version: self.snapshot.app_version.clone(),
             paused: self.snapshot.paused,
             network_ready: self.snapshot.network_ready,
             address: self.snapshot.address.clone(),
@@ -148,6 +150,11 @@ pub struct ServiceStatus {
     pub expected_version: u32,
     /// Protocol version the service reported, if it answered at all.
     pub service_version: Option<u32>,
+    /// 服务端产品版本号（如 `0.1.0+13`）；旧服务不返回时为 `None`。
+    ///
+    /// 与 [`Self::service_version`] 区分：那个是本地管理协议的版本，这个是服务端
+    /// 可执行文件自身的版本，用于确认"桌面端与服务端是不是同一次构建"。
+    pub service_app_version: Option<String>,
     pub paused: bool,
     pub network_ready: bool,
     pub address: Option<String>,
@@ -166,6 +173,8 @@ pub enum ServiceEvent {
     Devices { total: usize },
     /// A background catalog scan finished.
     CatalogScanFinished,
+    /// 服务进程的保持唤醒开关变化，携带当前生效值。
+    KeepAwake(bool),
 }
 
 /// Redacts the pairing PIN.
@@ -182,6 +191,10 @@ impl std::fmt::Debug for ServiceEvent {
                 .field("total", total)
                 .finish(),
             Self::CatalogScanFinished => formatter.write_str("ServiceEvent::CatalogScanFinished"),
+            Self::KeepAwake(enabled) => formatter
+                .debug_tuple("ServiceEvent::KeepAwake")
+                .field(enabled)
+                .finish(),
         }
     }
 }

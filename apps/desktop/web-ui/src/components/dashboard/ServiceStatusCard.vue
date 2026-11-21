@@ -32,6 +32,8 @@ const pausedLabel = computed(() => (service.paused ? '对外服务已暂停' : '
 const addressLabel = computed(() => service.address ?? '—')
 const networkLabel = computed(() => (service.networkReady ? '就绪，移动端可发现' : '未就绪'))
 const version = computed(() => overview.health?.version ?? '—')
+/** 服务端版本号；旧服务不返回时显示占位符而不是假装为空 */
+const serviceVersionLabel = computed(() => service.serviceAppVersion ?? '—')
 const uptime = computed(() => formatDuration(overview.health?.uptime_secs ?? null))
 const webPort = computed(() => overview.health?.web_port ?? null)
 const protocolLabel = computed(() => {
@@ -89,6 +91,8 @@ function refresh(): void {
       </StatusRow>
 
       <StatusRow label="桌面端版本" :value="version" mono />
+
+      <StatusRow label="服务端版本" :value="serviceVersionLabel" mono />
 
       <StatusRow label="已运行" :value="uptime" mono />
 

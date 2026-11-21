@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/network/remote_command_exception.dart';
 import '../models/app_info.dart';
 import '../models/display_info.dart';
 import 'remote_command_bus.dart';
@@ -132,8 +133,20 @@ class LauncherController {
         .toList(growable: false);
   }
 
-  Future<void> refreshCatalog(String kind) =>
-      _bus.request({'type': 'refresh_launcher_catalog', 'kind': kind}).then((_) {});
+  /// 请求 PC 重新扫描目录。`kind` 为 `game` 或 `app`。
+  ///
+  /// 服务端会拒绝这类请求（最常见的是检测到游戏在运行，回 `GAME_ACTIVE`），
+  /// 因此必须把错误帧转成异常抛出去：早先这里是 `then((_) {})`，拒绝会被
+  /// 悄悄吞掉，调用方分不清"已开始扫描"和"被拒绝"，用户看到的是一句成功提示。
+  Future<void> refreshCatalog(String kind) async {
+    final response = await _bus.request({
+      'type': 'refresh_launcher_catalog',
+      'kind': kind,
+    });
+    if (response['type'] == 'error') {
+      throw RemoteCommandException.fromResponse(response);
+    }
+  }
 
   /// 把用户选的程序加入目录。`category` 是服务端必填字段：忽略大小写等于 `game`
   /// 归入游戏，其余归入软件，缺字段会被判为无效请求。

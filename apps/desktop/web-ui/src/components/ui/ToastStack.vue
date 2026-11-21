@@ -60,7 +60,7 @@ const { items, dismiss } = useToast()
 }
 
 .toast--info .toast__marker {
-  background: var(--accent);
+  background: var(--accent-bright);
 }
 
 .toast--warn .toast__marker {

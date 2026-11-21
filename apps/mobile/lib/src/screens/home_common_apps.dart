@@ -1,4 +1,4 @@
-/// 首页「常用应用」区：置顶应用网格、列表行与空态。
+/// 首页「常用应用」区：4 列应用网格与空态引导。
 ///
 /// 数据来源与启动动作由 `home_tab.dart` 接线。
 library;
@@ -31,91 +31,85 @@ class HomeCommonAppsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 5),
-          child: Row(
-            children: [
-              Text(
-                '应用',
-                style: AppText.sectionTitle.copyWith(
-                  color: palette.textPrimary,
-                ),
-              ),
-              const Spacer(),
-              if (apps.isNotEmpty)
-                GestureDetector(
+        SectionHeading(
+          title: '常用应用',
+          bottom: AppSpacing.md,
+          trailing: apps.isEmpty
+              ? null
+              : GestureDetector(
+                  behavior: HitTestBehavior.opaque,
                   onTap: onOpenLibrary,
-                  child: Text(
-                    '管理',
-                    style: AppText.meta.copyWith(color: AppColors.primary),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Text(
+                      '管理',
+                      style: AppText.meta.copyWith(color: palette.textMuted),
+                    ),
                   ),
                 ),
-            ],
-          ),
         ),
         if (apps.isEmpty)
           _EmptyApps(onTap: onOpenLibrary)
         else
-          GridView.count(
-            crossAxisCount: 2,
+          GridView.builder(
             padding: EdgeInsets.zero,
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-            childAspectRatio: 2.7,
-            children: apps
-                .take(12)
-                .map(
-                  (item) => _PinnedApp(
-                    item: item,
-                    lastUsed: apps.first.id == item.id,
-                    enabled: online,
-                    onTap: () => onLaunch(item),
-                  ),
-                )
-                .toList(),
+            itemCount: apps.take(12).length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 4,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              // 48 图标 + 8 间隙 + 16 文字行高 = 72，行距合计 84（对齐设计稿）。
+              mainAxisExtent: 74,
+            ),
+            itemBuilder: (context, index) {
+              final item = apps[index];
+              return _PinnedApp(
+                item: item,
+                enabled: online,
+                onTap: () => onLaunch(item),
+              );
+            },
           ),
       ],
     );
   }
 }
 
-/// 没有置顶应用时的占位行。
+/// 没有置顶应用时的空态：一行说明 + 去库里的入口。
 class _EmptyApps extends StatelessWidget {
   const _EmptyApps({this.onTap});
   final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     return Container(
       constraints: const BoxConstraints(minHeight: 56),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
         border: Border.all(color: palette.line),
         borderRadius: BorderRadius.circular(AppRadius.md),
       ),
       child: Row(
         children: [
-          Text(
-            '还没有置顶应用',
-            style: AppText.label.copyWith(color: palette.textSubtle),
+          Expanded(
+            child: Text(
+              '还没有常用应用',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.meta.copyWith(color: palette.textMuted),
+            ),
           ),
-          const Spacer(),
           TextButton(
             onPressed: onTap,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  '去库里添加',
-                  style: AppText.body.copyWith(color: AppColors.primary),
-                ),
-                const Icon(
-                  Icons.north_east_rounded,
-                  size: 14,
-                  color: AppColors.primary,
-                ),
+                Text('去库里添加', style: AppText.label.copyWith(color: palette.brand)),
+                const SizedBox(width: 4),
+                Icon(Icons.north_east_rounded, size: 14, color: palette.brand),
               ],
             ),
           ),
@@ -125,64 +119,45 @@ class _EmptyApps extends StatelessWidget {
   }
 }
 
-/// 单个置顶应用卡片：图标、名称与来源标签。
+/// 单个应用入口：真实图标 + 名称（设计稿为 4 列图标网格，无卡片底）。
 class _PinnedApp extends StatelessWidget {
   const _PinnedApp({
     required this.item,
-    required this.lastUsed,
     required this.enabled,
     required this.onTap,
   });
+
   final LauncherItem item;
-  final bool lastUsed;
   final bool enabled;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    final meta = lastUsed ? '上次使用' : '置顶应用';
     return Opacity(
       opacity: enabled ? 1 : 0.5,
       child: PressableScale(
         enabled: enabled,
-        child: AppCard(
-          minHeight: 58,
-          padding: const EdgeInsets.all(9),
-          radius: AppRadius.lg,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: enabled ? onTap : null,
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              AppIcon(id: item.id, size: 34, radius: 9),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      item.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppText.label.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: palette.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      meta,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppText.tiny.copyWith(color: palette.textSubtle),
-                    ),
-                  ],
-                ),
+              AppIcon(
+                id: item.id,
+                size: 48,
+                radius: AppRadius.md,
+                tone: palette.brand,
+                fallback: Icons.sports_esports_rounded,
               ),
-              const Icon(
-                Icons.play_arrow_rounded,
-                size: 14,
-                color: AppColors.primary,
+              const SizedBox(height: 8),
+              Text(
+                item.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: AppText.meta.copyWith(color: palette.textMuted),
               ),
             ],
           ),

@@ -86,7 +86,7 @@ defineEmits<{
   top: 0;
   bottom: 0;
   width: 3px;
-  background: var(--accent);
+  background: var(--accent-bright);
 }
 
 .data-row--muted {

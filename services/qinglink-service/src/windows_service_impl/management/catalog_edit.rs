@@ -28,8 +28,13 @@ pub(super) fn rename_app(state: &AppState, id: &str, name: &str) -> CommandResul
             .app_db
             .lock()
             .map_err(|_| CommandError::internal("catalog unavailable"))?;
-        db.rename_app(&entry.id, &name)
-            .map_err(CommandError::internal)?;
+        if db
+            .rename_app(&entry.id, &name)
+            .map_err(CommandError::internal)?
+            == 0
+        {
+            return Err(CommandError::not_found());
+        }
     }
     publish_catalog_change(state);
     let entry = find_entry(state, &entry.id)?;
@@ -48,8 +53,13 @@ pub(super) fn set_app_hidden(state: &AppState, id: &str, hidden: bool) -> Comman
             .app_db
             .lock()
             .map_err(|_| CommandError::internal("catalog unavailable"))?;
-        db.set_hidden(&entry.id, hidden)
-            .map_err(CommandError::internal)?;
+        if db
+            .set_hidden(&entry.id, hidden)
+            .map_err(CommandError::internal)?
+            == 0
+        {
+            return Err(CommandError::not_found());
+        }
     }
     publish_catalog_change(state);
     value(serde_json::json!({"id": entry.id, "hidden": hidden}))
@@ -63,8 +73,13 @@ pub(super) fn set_app_favorite(state: &AppState, id: &str, favorite: bool) -> Co
             .app_db
             .lock()
             .map_err(|_| CommandError::internal("catalog unavailable"))?;
-        db.set_favorite(&entry.id, favorite)
-            .map_err(CommandError::internal)?;
+        if db
+            .set_favorite(&entry.id, favorite)
+            .map_err(CommandError::internal)?
+            == 0
+        {
+            return Err(CommandError::not_found());
+        }
     }
     publish_catalog_change(state);
     value(serde_json::json!({"id": entry.id, "favorite": favorite}))
@@ -78,8 +93,13 @@ pub(super) fn set_app_pinned(state: &AppState, id: &str, pinned: bool) -> Comman
             .app_db
             .lock()
             .map_err(|_| CommandError::internal("catalog unavailable"))?;
-        db.set_pinned(&entry.id, pinned)
-            .map_err(CommandError::internal)?;
+        if db
+            .set_pinned(&entry.id, pinned)
+            .map_err(CommandError::internal)?
+            == 0
+        {
+            return Err(CommandError::not_found());
+        }
     }
     publish_catalog_change(state);
     value(serde_json::json!({"id": entry.id, "pinned": pinned}))
@@ -93,7 +113,9 @@ pub(super) fn delete_app(state: &AppState, id: &str) -> CommandResult {
             .app_db
             .lock()
             .map_err(|_| CommandError::internal("catalog unavailable"))?;
-        db.delete_app(&entry.id).map_err(CommandError::internal)?;
+        if db.delete_app(&entry.id).map_err(CommandError::internal)? == 0 {
+            return Err(CommandError::not_found());
+        }
     }
     publish_catalog_change(state);
     value(serde_json::json!({"deleted":true,"id":entry.id}))

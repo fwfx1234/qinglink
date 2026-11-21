@@ -68,7 +68,6 @@ pub fn shutdown(desktop: Desktop, request: ExitRequest) {
         ..
     } = desktop;
 
-    let _ = qinglink_windows::power::set_keep_awake(false);
     runtime.shutdown();
     if let Err(error) = lifecycle.shutdown(quit) {
         tracing::warn!(%error, "关闭服务租约失败");

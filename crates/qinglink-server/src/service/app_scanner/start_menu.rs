@@ -8,21 +8,33 @@ use crate::service::app_scanner::{AppEntry, AppScanner};
 impl AppScanner {
     pub(super) fn scan_start_menu(&self, renames: &HashMap<String, String>) -> Vec<AppEntry> {
         let mut apps = Vec::new();
-        let paths = [
-            PathBuf::from(std::env::var("APPDATA").unwrap_or_default())
-                .join("Microsoft")
-                .join("Windows")
-                .join("Start Menu")
-                .join("Programs"),
-            PathBuf::from(std::env::var("PROGRAMDATA").unwrap_or_default())
-                .join("Microsoft")
-                .join("Windows")
-                .join("Start Menu")
-                .join("Programs"),
-        ];
+        // 环境变量缺失时必须留痕：以前用 `unwrap_or_default()` 得到空路径，
+        // 拼出来的相对路径自然不存在，于是该来源稳定产出 0 条——
+        // 与"本机真的没装程序"完全无法区分。
+        let mut paths = Vec::new();
+        for variable in ["APPDATA", "PROGRAMDATA"] {
+            match std::env::var_os(variable) {
+                Some(value) if !value.is_empty() => paths.push(
+                    PathBuf::from(value)
+                        .join("Microsoft")
+                        .join("Windows")
+                        .join("Start Menu")
+                        .join("Programs"),
+                ),
+                _ => tracing::warn!(
+                    variable,
+                    "开始菜单扫描缺少环境变量，该来源本次产出 0 条（不代表本机没有安装程序）"
+                ),
+            }
+        }
         for base in &paths {
             if base.exists() {
                 self.scan_dir(base, renames, &mut apps);
+            } else {
+                tracing::debug!(
+                    path = %base.display(),
+                    "开始菜单目录不存在，跳过该来源"
+                );
             }
         }
         apps

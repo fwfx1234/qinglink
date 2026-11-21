@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
-/// 卡片容器：`surface` 背景 + `line` 边框 + 圆角。
+/// 卡片容器：`surface` 背景 + `line` 描边 + 圆角 14。
+///
+/// 设计稿里的卡片是平面块，默认不带投影；需要悬浮感的少数位置
+/// （状态卡、窗口 Dock）显式传 [elevated]。
 class AppCard extends StatelessWidget {
   const AppCard({
     super.key,
@@ -18,6 +21,7 @@ class AppCard extends StatelessWidget {
     this.minHeight,
     this.gradient,
     this.boxShadow,
+    this.elevated = false,
   });
 
   final Widget child;
@@ -29,6 +33,7 @@ class AppCard extends StatelessWidget {
   final double? minHeight;
   final Gradient? gradient;
   final List<BoxShadow>? boxShadow;
+  final bool elevated;
 
   @override
   Widget build(BuildContext context) {
@@ -41,20 +46,9 @@ class AppCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: gradient == null ? (color ?? palette.surface) : null,
         gradient: gradient,
-        border: Border.all(
-          color: borderColor ?? palette.line.withValues(alpha: 0.7),
-        ),
+        border: Border.all(color: borderColor ?? palette.line),
         borderRadius: BorderRadius.circular(radius),
-        boxShadow:
-            boxShadow ??
-            [
-              BoxShadow(
-                color: palette.shadow,
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-                spreadRadius: -12,
-              ),
-            ],
+        boxShadow: boxShadow ?? (elevated ? _shadow(palette) : null),
       ),
       child: child,
     );
@@ -69,18 +63,29 @@ class AppCard extends StatelessWidget {
       ),
     );
   }
+
+  List<BoxShadow> _shadow(AppPalette palette) => [
+    BoxShadow(
+      color: palette.shadow,
+      blurRadius: 24,
+      offset: const Offset(0, 12),
+      spreadRadius: -14,
+    ),
+  ];
 }
 
 /// 彩色圆角图标底衬（quick tile / menu icon / app icon 等）。
+///
+/// 设计稿用的是平涂浅底（不是渐变），圆角 12。
 class TileIcon extends StatelessWidget {
   const TileIcon({
     super.key,
     required this.icon,
     required this.color,
-    this.size = 33,
-    this.radius = 9,
-    this.iconSize = 17,
-    this.alpha = 0.13,
+    this.size = 40,
+    this.radius = 12,
+    this.iconSize = 20,
+    this.alpha = 0.14,
     this.filled = true,
   });
 
@@ -98,17 +103,7 @@ class TileIcon extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: filled ? null : Colors.transparent,
-        gradient: filled
-            ? LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  color.withValues(alpha: (alpha * 1.35).clamp(0, 1)),
-                  color.withValues(alpha: (alpha * 0.65).clamp(0, 1)),
-                ],
-              )
-            : null,
+        color: filled ? color.withValues(alpha: alpha) : Colors.transparent,
         borderRadius: BorderRadius.circular(radius),
       ),
       child: Icon(icon, size: iconSize, color: color),

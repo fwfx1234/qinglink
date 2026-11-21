@@ -104,7 +104,7 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 dbg_macro = "deny"
-todo = "warn"
+todo = "deny"
 unwrap_used = "deny"
 redundant_clone = "warn"
 needless_pass_by_value = "warn"
