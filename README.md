@@ -194,12 +194,9 @@ Get-AuthenticodeSignature .\target\release\QingLinkService.exe
 # 3. 刷新桌面端的发布资源
 Copy-Item .\target\release\QingLinkService.exe .\apps\desktop\assets\input\QingLinkService.exe -Force
 
-# 4. 构建桌面端，缺资源直接失败
+# 4. 构建桌面端，缺资源直接失败（自更新执行器已内置于本 exe）
 $env:QINGLINK_REQUIRE_INPUT_ASSETS = '1'
 cargo build --release -p qinglink-desktop --bin QingLink
-
-# 5. 构建自更新助手（随 release 一起分发）
-cargo build --release -p qinglink-updater --bin qinglink-updater
 ```
 
 产物 `target\release\QingLink.exe` 已内嵌 Web 界面，单文件即可分发；服务安装到
@@ -213,8 +210,12 @@ cargo build --release -p qinglink-updater --bin qinglink-updater
 
 | 流水线 | 触发 tag | 产物 |
 | --- | --- | --- |
-| `.github/workflows/desktop-release.yml` | `desktop-v0.1.0+29` | `QingLink.exe` + `QingLinkUpdater.exe` + 各自 `.sha256` + zip |
-| `.github/workflows/mobile-release.yml` | `mobile-v1.0.0+3` | Android APK + `.sha256` |
+| `.github/workflows/desktop-release.yml` | `desktop-v0.1.0+29` | `QingLink.exe` + `SHA256SUMS` |
+| `.github/workflows/mobile-release.yml` | `mobile-v1.0.0+4` | Android APK + `SHA256SUMS` |
+
+两端各只发布两个资产：程序本体与统一校验清单（GNU sha256sum 行格式）。桌面端自更新
+由下载好的新 exe 副本以 `--self-update` 启动完成，不再单独发布更新器 exe；旧版本客户端
+无法从新 release 自动更新，需手动下载安装。`SHA256SUMS` 可用 `sha256sum -c` 校验。
 
 tag 是版本号唯一真相源：桌面流水线从 tag 解析构建号注入 `QINGLINK_CI_BUILD_NUMBER`，
 保证产物版本与 tag 一致（详见 [`docs/development.md`](docs/development.md) §2.4）。

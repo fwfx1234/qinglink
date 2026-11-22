@@ -1,40 +1,46 @@
-//! 安装编排：启动独立更新器，然后让主程序退出，把替换 exe 的工作交给更新器。
+//! 安装编排：启动下载好的新 exe 副本作为自更新执行器，然后让主程序退出。
 //!
-//! 运行中的 exe 无法覆盖自己，所以替换为独立 `QingLinkUpdater.exe` 完成：它从更新包
-//! 解压目录启动，等本进程退出后把新 exe 覆盖到目标路径、重新登记服务信任并拉起新进程。
+//! 运行中的 exe 无法覆盖自己，所以替换必须由另一个进程完成。新 exe 副本从更新目录
+//! 以 `--self-update` 启动（执行器逻辑已编译进桌面端本体），等本进程退出后把自身覆盖
+//! 到目标路径、重新登记服务信任并拉起新进程。因为执行器从下载目录运行，即使主 exe
+//! 之后被覆盖，也不影响它继续执行。
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use anyhow::{Context, ensure};
 
-/// 更新包里更新器与桌面端 exe 的固定文件名。
-const UPDATER_EXE: &str = "QingLinkUpdater.exe";
+/// 更新包里桌面端 exe 的固定文件名。
 const DESKTOP_EXE: &str = "QingLink.exe";
 
-/// 校验待安装目录齐全，启动更新器。
+/// 校验待安装目录里有新 exe，启动自更新执行器。
 ///
 /// `extracted_dir` 是下载后的目录；`current_exe` 是正在运行的桌面端路径，也是替换目标。
-/// 更新器从该目录启动，因此即使主 exe 之后被覆盖，也不影响它继续运行。
+/// 新 exe 副本从该目录启动，其 `--source` 缺省为自身。
 pub fn launch(extracted_dir: &Path, current_exe: &Path) -> anyhow::Result<()> {
-    let updater = extracted_dir.join(UPDATER_EXE);
     let new_desktop = extracted_dir.join(DESKTOP_EXE);
-    ensure!(updater.is_file(), "更新包缺少 {UPDATER_EXE}，无法继续安装");
     ensure!(
         new_desktop.is_file(),
         "更新包缺少 {DESKTOP_EXE}，无法继续安装"
     );
 
     let current = current_exe.canonicalize().context("无法解析当前程序路径")?;
+    let new_canon = new_desktop.canonicalize().context("无法解析新程序路径")?;
+    // 不变式：更新执行器必须从下载目录的新副本启动，绝不能覆盖正在运行的自己。
+    ensure!(
+        new_canon != current,
+        "更新源与目标相同，拒绝安装：{}",
+        new_canon.display()
+    );
+
     let parent_pid = std::process::id();
     let result = std::env::temp_dir().join(format!("qinglink-update-{parent_pid}.txt"));
 
-    let mut command = std::process::Command::new(&updater);
+    let mut command = std::process::Command::new(&new_desktop);
     command
+        .arg("--self-update")
         .arg("--parent-pid")
         .arg(parent_pid.to_string())
-        .arg("--source")
-        .arg(&new_desktop)
         .arg("--target")
         .arg(&current)
         .arg("--result")
@@ -43,7 +49,7 @@ pub fn launch(extracted_dir: &Path, current_exe: &Path) -> anyhow::Result<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    // 更新器是控制台程序，直接启动会闪一个黑窗口；下载请求也做了同样处理。
+    // 更新执行器以 GUI 子系统构建，无控制台；仍设置无窗口标志以防调试构建闪窗。
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -52,9 +58,9 @@ pub fn launch(extracted_dir: &Path, current_exe: &Path) -> anyhow::Result<()> {
     }
     let _child = command
         .spawn()
-        .with_context(|| format!("无法启动更新器 {}", updater.display()))?;
+        .with_context(|| format!("无法启动自更新执行器 {}", new_desktop.display()))?;
 
-    // 更新器已脱离父进程独立运行，句柄无需保留。
+    // 执行器已脱离父进程独立运行，句柄无需保留。
     drop(_child);
     Ok(())
 }

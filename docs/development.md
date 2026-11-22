@@ -204,14 +204,15 @@ Windows 版本资源不再写死在 `.rc` 里：`apps/desktop/qinglink.rc` 只�
 
 | 流水线 | 触发 | 校验 | 构建与产物 |
 | --- | --- | --- | --- |
-| `.github/workflows/desktop-release.yml` | `desktop-v<语义版本>+<构建号>` | tag 语义版本 == `Cargo.toml` 的 `workspace.package.version` | Windows runner：服务 → 刷新内嵌资源 → 桌面端 → 更新助手；产出两个 exe、各自 `.sha256`、zip |
-| `.github/workflows/mobile-release.yml` | `mobile-v<语义版本>+<构建号>` | tag 版本 == `pubspec.yaml` 的 `version` | Ubuntu + Flutter：APK + `.sha256`；先跑 `flutter analyze` |
+| `.github/workflows/desktop-release.yml` | `desktop-v<语义版本>+<构建号>` | tag 语义版本 == `Cargo.toml` 的 `workspace.package.version` | Windows runner：服务 → 刷新内嵌资源 → 桌面端；产出 `QingLink.exe` + `SHA256SUMS` |
+| `.github/workflows/mobile-release.yml` | `mobile-v<语义版本>+<构建号>` | tag 版本 == `pubspec.yaml` 的 `version` | Ubuntu + Flutter：APK + `SHA256SUMS`；先跑 `flutter analyze` |
 
 桌面流水线把 tag 里的构建号写入 `QINGLINK_CI_BUILD_NUMBER`（见 §2.4），否则 CI checkout
 后文件时间全变、指纹自增会让产物版本与 tag 对不上。**新增更新相关代码时**，发布前记得：
 版本号递进（`Cargo.toml` / `pubspec.yaml`）、按本机构建更新并提交 `build-number.txt`、
-确认 release asset 含精确命名的 `QingLink.exe` 与 `QingLinkUpdater.exe` 及各自 `.sha256`
-（桌面客户端按精确文件名匹配这两个裸 exe）。
+确认两端 release asset 各只含两个文件：程序本体（`QingLink.exe` / APK）与统一校验清单
+`SHA256SUMS`（GNU sha256sum 行格式，可用 `sha256sum -c` 校验）。客户端按精确文件名匹配
+这两个资产；不再发布独立更新器 exe，旧客户端无法从新 release 自动更新。
 
 ---
 

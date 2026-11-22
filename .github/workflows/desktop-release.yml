@@ -4,11 +4,11 @@
 # tag 是版本号的唯一真相源：CI 从 tag 解析构建号，经 QINGLINK_CI_BUILD_NUMBER
 # 注入构建，确保产物版本（文件属性、/health、诊断页）与 tag 严格一致。
 #
-# 产物：一个 GitHub Release，含以下 asset：
-#   QingLink.exe / QingLink.exe.sha256
-#   QingLinkUpdater.exe / QingLinkUpdater.exe.sha256
-#   QingLink-desktop-<版本>-windows-x86_64.zip（供手动下载的打包变体）
-# 桌面端检查更新时按精确文件名匹配两个裸 exe；zip 只用于人工下载。
+# 产物：一个 GitHub Release，含两个 asset：
+#   QingLink.exe（桌面端本体，内含自更新执行器）
+#   SHA256SUMS（统一校验清单，GNU sha256sum 行格式）
+# 桌面端检查更新时按精确文件名匹配这两个资产；自更新由新 exe 副本以 --self-update
+# 启动完成，不再单独发布更新器 exe。旧客户端无法从新 release 自动更新，需手动下载。
 
 name: 桌面端发布
 
@@ -73,7 +73,6 @@ jobs:
         shell: pwsh
         env:
           QINGLINK_CI_BUILD_NUMBER: ${{ steps.version.outputs.build }}
-          QINGLINK_SKIP_WEB_BUILD: '1'
         run: cargo build --release -p qinglink-service --bin QingLinkService
 
       - name: 刷新桌面端内嵌服务资源
@@ -89,31 +88,21 @@ jobs:
           QINGLINK_REQUIRE_INPUT_ASSETS: '1'
         run: cargo build --release -p qinglink-desktop --bin QingLink
 
-      - name: 构建更新助手
-        shell: pwsh
-        run: cargo build --release -p qinglink-updater --bin qinglink-updater
-
       - name: 组装发布资产
         shell: pwsh
         run: |
-          $version = '${{ steps.version.outputs.version }}'
           $stage = 'release-assets'
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
-          # 裸 exe：客户端检查更新按精确文件名匹配这两个文件。
+          # 客户端按精确文件名匹配 QingLink.exe 与 SHA256SUMS。
           Copy-Item target\release\QingLink.exe "$stage\QingLink.exe"
-          Copy-Item target\release\qinglink-updater.exe "$stage\QingLinkUpdater.exe"
 
-          # zip 变体：仅供人工下载存档，客户端自更新不读取 zip。
-          $zipName = "QingLink-desktop-$version-windows-x86_64.zip"
-          Compress-Archive -Path "$stage\QingLink.exe", "$stage\QingLinkUpdater.exe" `
-            -DestinationPath "$stage\$zipName"
-
-          # 为每个资产生成 .sha256（内容第一行是 64 位十六进制哈希）。
-          Get-ChildItem -File $stage | Where-Object { $_.Extension -ne '.sha256' } | ForEach-Object {
-            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
-            Set-Content -LiteralPath "$($_.FullName).sha256" -Value "$hash  $($_.Name)" -NoNewline
-          }
+          # 统一校验清单：GNU sha256sum 行格式（64 位哈希 + 两个空格 + 裸文件名）。
+          # 用 WriteAllText + 显式 LF：WriteAllLines 在 Windows 会写 CRLF，导致 Linux
+          # sha256sum -c 把行尾 \r 当成文件名的一部分而校验失败。UTF-8 无 BOM。
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "$stage\QingLink.exe").Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$stage\SHA256SUMS", "$hash  QingLink.exe`n", [System.Text.UTF8Encoding]::new($false))
           Get-ChildItem -File $stage | Select-Object Name, Length
 
       - name: 创建 Release 并上传资产
@@ -125,10 +114,11 @@ jobs:
             桌面端版本 `${{ steps.version.outputs.version }}`（构建号 ${{ steps.version.outputs.build }}）。
 
             资产说明：
-            - `QingLink.exe` + `QingLinkUpdater.exe`：自更新所需的裸程序（客户端按精确文件名匹配）。
-            - `QingLink-desktop-*.zip`：打包变体，供手动下载。
-            - 每个文件同名的 `.sha256` 是校验文件。
+            - `QingLink.exe`：桌面端本体，自更新执行器已内置其中。
+            - `SHA256SUMS`：统一校验清单（GNU sha256sum 行格式）。
 
-            更新流程：应用内「更新」页检查 → 后台下载 → 手动安装。
+            更新流程：应用内「更新」页检查 → 后台下载 → 手动安装。自更新由新 exe 副本
+            以 `--self-update` 启动完成，不再单独发布更新器 exe。
+            注：旧版本客户端无法从本 release 自动更新，请手动下载安装。
           files: release-assets/*
           fail_on_unmatched_files: true

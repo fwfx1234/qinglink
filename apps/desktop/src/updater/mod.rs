@@ -12,10 +12,12 @@ use serde::Serialize;
 
 use github::UpdateInfo;
 
+pub mod checksum;
 pub mod download;
 pub mod github;
 pub mod http;
 pub mod install;
+pub mod self_update;
 
 /// 更新流程阶段，序列化给前端的稳定字符串。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]

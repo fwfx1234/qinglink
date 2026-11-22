@@ -377,7 +377,6 @@ apps/desktop/src/
 | `crates/qinglink-domain` | 纯领域类型与状态机（设备配对状态机、领域错误） | 无（叶子） |
 | `crates/qinglink-storage` | SQLite 连接池与迁移、`AppPaths`、数据目录 ACL | 无（叶子） |
 | `crates/qinglink-version` | 桌面端与服务端共用的产品版本号：语义版本 + 自增构建号，含 Windows 版本资源生成；`is_newer` 供检查更新比较版本 | 无（叶子） |
-| `crates/qinglink-updater`（`QingLinkUpdater.exe`） | 桌面端自更新助手：等旧进程退出 → 替换 exe → 提权重新登记服务信任 → 拉起新进程 | `qinglink-windows` |
 | `crates/qinglink-discovery` | 局域网发现（UDP 3723 / mDNS 广播） | `qinglink-protocol` |
 | `crates/qinglink-windows` | Windows 平台封装：输入注入、显示/音频、进程与电源、安全桌面、单实例、完整性 | `qinglink-protocol` |
 | `crates/qinglink-server` | 局域网 `/api/v2/*` 的 HTTP/WS、认证、扫描与目录服务、`scanner_apps` 读写 | `qinglink-protocol`、`qinglink-domain`、`qinglink-storage`、`qinglink-version`、`qinglink-windows` |
@@ -386,15 +385,14 @@ apps/desktop/src/
 
 ### 5.4 三端职责与构建编排
 
-仓库里有三门语言、六个可独立构建的单元。**产物被谁内嵌，就住在谁下面**——这与 Tauri
+仓库里有三门语言、五个可独立构建的单元。**产物被谁内嵌，就住在谁下面**——这与 Tauri
 把 Rust 放进 `src-tauri/` 是同一种安排：
 
 | 单元 | 目录 | 构建器 | 产物 | 约束 |
 | --- | --- | --- | --- | --- |
 | Rust 库 | `crates/` | Cargo | 无独立产物 | 依赖方向见 §5.3 与 [`.opencode/rules/architecture.md`](../.opencode/rules/architecture.md) §1 |
 | Rust 服务 | `services/qinglink-service` | Cargo | `target\*\QingLinkService.exe` | sidecar：签名后进 `apps/desktop/assets/input/`，由桌面端内嵌安装；该副本是构建产物，**不入库** |
-| Rust 桌面端 | `apps/desktop` | Cargo + `build.rs` | `target\*\QingLink.exe` | 内嵌 web 产物与服务 exe；**不依赖** `qinglink-server` |
-| Rust 更新助手 | `crates/qinglink-updater` | Cargo | `target\*\QingLinkUpdater.exe` | 随桌面端 release 一起分发，供应用内自更新使用；不内嵌任何资源 |
+| Rust 桌面端 | `apps/desktop` | Cargo + `build.rs` | `target\*\QingLink.exe` | 内嵌 web 产物、服务 exe 与自更新执行器；**不依赖** `qinglink-server` |
 | Vue 前端 | `apps/desktop/web-ui` | npm / Vite | `apps/desktop/web-ui/dist` | **没有独立交付物**，被 `build.rs` 内嵌；`dist/` 不入库 |
 | Flutter | `apps/mobile` | Flutter | `apps/mobile/build/**` | android / ios 是交付目标；`windows/` 仅本地调试 |
 
@@ -825,14 +823,18 @@ releases 列表，按通道前缀过滤，用 `qinglink_version::is_newer`（桌
 1. 自动检查或 `POST /update/check`：后台请求 GitHub API，发现新版本后进入 `available`，
    通过 `system/update_state` 事件推送完整状态快照。三个完成分支（发现更新 / 已是最新 /
    失败）都会推送，避免界面卡在 `checking`。
-2. 自动触发或 `POST /update/download`：下载 `QingLink.exe` 与 `QingLinkUpdater.exe` 及各自
-   `.sha256`，逐文件核对哈希后落到 `%LOCALAPPDATA%\QingLink\updates\<版本>\`，进入 `ready`。
+2. 自动触发或 `POST /update/download`：先下载统一清单 `SHA256SUMS` 并解析，再下载
+   `QingLink.exe`，按清单里的期望哈希核对后落到 `%LOCALAPPDATA%\QingLink\updates\<版本>\`，
+   进入 `ready`。清单缺失、格式无效、缺条目或哈希不符都进入 `error`，绝不使用未校验文件。
    REST 接口主要供校验失败后手动重试。
-3. `POST /update/install`：启动更新器并请求主循环退出。更新器等旧进程结束 → 用新 exe
-   覆盖目标 → **提权重跑"修复服务安装"** → 拉起新进程。第三步不可省：服务用
+3. `POST /update/install`：以下载目录里的**新 exe 副本**加 `--self-update` 启动独立进程，
+   然后请求主循环退出。新副本等旧进程结束 → 用自身覆盖目标 → **提权重跑"修复服务安装"**
+   → 拉起新进程。替换必须由另一个进程完成（Windows 无法覆盖运行中的 exe），执行器逻辑
+   已编译进桌面端本体，不再单独发布更新器 exe。提权重登记不可省：服务用
    `trusted-desktop.json` 登记桌面端 SHA256，不重新登记新 exe 会被判定为未授权。UAC
-   弹窗由服务重新安装触发，需用户确认；用户取消时更新器仍尝试拉起新进程，界面可再走
-   "修复服务"补登记。
+   弹窗由服务重新安装触发，需用户确认；用户取消时仍尝试拉起新进程，界面可再走
+   "修复服务"补登记。结果经 `--result` 文件回传：先写结果再拉起，新进程启动时消费该文件，
+   失败原因推送到更新状态。
 
 下载用 PowerShell `Invoke-WebRequest` 而非引入 HTTP client crate：本项目是纯 Windows
 程序，reqwest 会为 wasm 目标拖进用不到的依赖（web-sys 等），在受限网络下拉不下来；

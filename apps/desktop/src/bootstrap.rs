@@ -31,6 +31,7 @@ use crate::service_lifecycle::ServiceLifecycleManager;
 use crate::startup::StartupOptions;
 use crate::startup_trace::trace_step;
 use crate::tray::{TrayController, TrayEvent};
+use crate::updater::self_update;
 use crate::web;
 use crate::web::state::{HostCommand, SharedSettings, WebState, WebStateParts};
 
@@ -199,6 +200,7 @@ fn assemble(
         &install_state,
         environment.preferences.clone(),
         &environment.logs,
+        options.update_result.as_ref(),
         started_at,
     )?;
 
@@ -242,6 +244,7 @@ fn start_web(
     install_state: &SharedInputInstallState,
     preferences: Preferences,
     logs: &Arc<LogSystem>,
+    update_result: Option<&std::path::PathBuf>,
     started_at: Instant,
 ) -> Result<WebStart> {
     let (host_tx, host_rx) = web::host_channel();
@@ -258,9 +261,15 @@ fn start_web(
     trace_step(started_at, "web state assembled");
     let thread = web::run_on_thread(WEB_PORT, Arc::clone(&web_state))?;
     trace_step(started_at, "web listener reporting ready");
-    // 后台检查更新：发现新版本即自动下载，安装仍由用户在更新页手动触发。
-    // 失败只影响更新状态，不阻断桌面端启动。
-    web::api::update::auto_check(Arc::clone(&web_state));
+    // 自更新后的新进程先消费结果文件：失败原因推送到更新状态并跳过本次自动检查，
+    // 避免后台检查立刻把错误提示冲掉。
+    let update_failed = self_update::consume_update_result(&web_state.update_state, update_result);
+    web_state.publish_update_state();
+    if !update_failed {
+        // 后台检查更新：发现新版本即自动下载，安装仍由用户在更新页手动触发。
+        // 失败只影响更新状态，不阻断桌面端启动。
+        web::api::update::auto_check(Arc::clone(&web_state));
+    }
     Ok(WebStart {
         state: web_state,
         host_rx,

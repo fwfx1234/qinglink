@@ -192,7 +192,7 @@ Content-Type: application/json
 | GET | `/update` | 当前程序更新状态快照 |
 | POST | `/update/check` | 后台检查 GitHub Release 是否有新版本 |
 | POST | `/update/download` | 后台下载已发现版本并校验 SHA256 |
-| POST | `/update/install` | 启动更新器安装并退出桌面端 |
+| POST | `/update/install` | 启动新 exe 副本自更新安装并退出桌面端 |
 | WS | `/events` | 实时事件推送 |
 
 ---
@@ -1046,20 +1046,21 @@ Steam 条目落库时的 `exe_path` 是**猜**出来的（清单里没有这项�
 
 ### 4.39 `POST /update/download`
 
-后台下载已发现的版本：两个裸 exe（`QingLink.exe`、`QingLinkUpdater.exe`）及各自
-`.sha256`。校验文件第一行是 64 位十六进制哈希，不符则进入 `error` 阶段，绝不使用
-未通过校验的文件。无请求体，返回 `{ "accepted": true }`；进度与结果经事件回流。
-下载保存在 `%LOCALAPPDATA%\QingLink\updates\<版本>\`。
+后台下载已发现的版本：先取统一清单 `SHA256SUMS`（GNU sha256sum 行格式）并解析，
+再下载 `QingLink.exe`，按清单里的期望哈希核对。清单缺失/格式无效/缺条目或哈希不符
+都进入 `error` 阶段，绝不使用未通过校验的文件。无请求体，返回 `{ "accepted": true }`；
+进度与结果经事件回流。下载保存在 `%LOCALAPPDATA%\QingLink\updates\<版本>\`。
 
 这条接口主要用于**下载失败后的手动重试**：正常情况下 §4.38 发现更新时已经自动触发。
 非 `ready` 也没有已发现版本时调用会返回 `accepted` 但不产生动作。
 
 ### 4.40 `POST /update/install`
 
-仅在 `phase=ready` 时执行：启动更新器并请求主循环退出。更新器等待旧进程退出后替换
-exe、提权重新登记服务信任（服务校验桌面端 SHA256）、再拉起新进程。无请求体，成功
-返回 `{ "accepted": true }`。非 `ready` 阶段返回 `409 CONFLICT`（码 `CONFLICT`）。
-UAC 弹窗由服务重新登记触发，需用户确认。
+仅在 `phase=ready` 时执行：以下载目录里的**新 exe 副本**加 `--self-update` 启动独立进程，
+然后请求主循环退出。新副本等待旧进程退出后用自身覆盖目标 exe、提权重新登记服务信任
+（服务校验桌面端 SHA256）、再拉起新进程；结果经 `--result` 文件回传，新进程启动时消费，
+失败原因推送到更新状态。无请求体，成功返回 `{ "accepted": true }`。非 `ready` 阶段返回
+`409 CONFLICT`（码 `CONFLICT`）。UAC 弹窗由服务重新登记触发，需用户确认。
 
 ---
 

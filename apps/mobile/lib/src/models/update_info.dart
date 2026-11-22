@@ -49,6 +49,7 @@ class ReleaseInfo {
     required this.notes,
     required this.apkUrl,
     required this.apkName,
+    required this.checksumUrl,
   });
 
   /// 完整 tag，例如 `mobile-v1.0.0+3`。
@@ -69,5 +70,8 @@ class ReleaseInfo {
   /// APK 文件名。
   final String apkName;
 
-  bool get hasApk => apkUrl.isNotEmpty;
+  /// 校验清单 `SHA256SUMS` 的下载地址。
+  final String checksumUrl;
+
+  bool get hasApk => apkUrl.isNotEmpty && checksumUrl.isNotEmpty;
 }

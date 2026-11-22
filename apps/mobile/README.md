@@ -142,7 +142,7 @@ S8 是**手机端唯一的设置界面**，不再有第二处开关：
 
 更新来源是本项目 GitHub Releases，只认 `mobile-v` 前缀的 tag：
 
-- tag 格式 `mobile-v<语义版本>+<构建号>`，例如 `mobile-v1.0.0+3`；语义版本部分
+- tag 格式 `mobile-v<语义版本>+<构建号>`，例如 `mobile-v1.0.0+4`；语义版本部分
   必须与 `pubspec.yaml` 的 `version` 前半段一致，CI 会校验，不一致直接失败。
 - 构建号参与版本比较：先比 `major.minor.patch`，相等再比 `+` 后的构建号。
   只接受 tag 版本**严格新于**当前版本且带 APK 资产的正式 release（跳过 draft
@@ -151,9 +151,9 @@ S8 是**手机端唯一的设置界面**，不再有第二处开关：
 
 **Android** 是完整链路：检查 → 后台下载 → 校验 → 手动安装。
 
-- CI 产出的 APK 名为 `QingLink-mobile-<版本>-android.apk`，同名 `.sha256` 是校验文件；
-  客户端按 `.apk` 后缀匹配资产，下载前先取校验文件的哈希，下载完成后逐块计算 SHA256，
-  不一致就报错且不保留安装入口。
+- CI 产出两个资产：`QingLink-mobile-<版本>-android.apk` 与统一校验清单 `SHA256SUMS`
+  （GNU sha256sum 行格式）。客户端按 `.apk` 后缀匹配 APK、按精确名匹配清单，下载前先
+  解析清单取 APK 的期望哈希，下载完成后逐块计算 SHA256，不一致就报错且不保留安装入口。
 - APK 落在应用私有目录 `updates/`，用 `open_filex` 拉起系统安装器；`open_filex`
   自带 FileProvider 覆盖该目录，不需要再自定义 FileProvider。
 - `AndroidManifest.xml` 声明 `REQUEST_INSTALL_PACKAGES`，Android 8+ 首次安装仍需用户在

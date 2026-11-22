@@ -1,6 +1,6 @@
 /// 更新数据源：GitHub Releases 的读取与 APK 下载。
 ///
-/// 通道约定：移动端只认 `mobile-v` 前缀的 tag；从 asset 里找 `.apk` 与同名 `.sha256`。
+/// 通道约定：移动端只认 `mobile-v` 前缀的 tag；从 asset 里找 `.apk` 与 `SHA256SUMS`。
 /// 下载走 `http` 包的流式响应，逐块写入文件并回报进度，避免整包进内存。
 library;
 
@@ -23,6 +23,7 @@ class UpdateRepository {
       : _client = client ?? http.Client();
 
   static const _tagPrefix = 'mobile-v';
+  static const _manifestAsset = 'SHA256SUMS';
 
   final http.Client _client;
 
@@ -99,19 +100,34 @@ class UpdateRepository {
     }
   }
 
-  /// 读取校验文件的第一行哈希。
-  Future<String> fetchChecksum(String url) async {
+  /// 读取并解析 SHA256SUMS 清单，返回 `小写文件名 → 小写哈希` 映射。
+  Future<Map<String, String>> fetchChecksums(String url) async {
     final response = await _client
         .get(Uri.parse(url), headers: const {'User-Agent': 'QingLink-Mobile'})
         .timeout(const Duration(seconds: 30));
     if (response.statusCode != 200) {
-      throw '获取校验文件失败（HTTP ${response.statusCode}）';
+      throw '获取校验清单失败（HTTP ${response.statusCode}）';
     }
-    final hash = response.body.trim().split(RegExp(r'\s+')).firstOrNull ?? '';
-    if (hash.length != 64 || !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(hash)) {
-      throw '校验文件格式无效';
+    final result = <String, String>{};
+    for (final rawLine in response.body.split(RegExp(r'\r?\n'))) {
+      final line = rawLine.trim();
+      if (line.isEmpty) continue;
+      if (line.startsWith('\\')) throw '校验清单含不支持的转义文件名';
+      final parts = line.split(RegExp(r'\s+'));
+      if (parts.length < 2) throw '校验清单格式无效';
+      final hash = parts[0];
+      if (!RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(hash)) {
+        throw '校验清单存在无效哈希';
+      }
+      // GNU sha256sum 二进制模式输出 `hash *file`，文本模式输出 `hash  file`；
+      // 剥掉可能粘在文件名前的星号分隔符。
+      var name = parts.sublist(1).join(' ').toLowerCase();
+      if (name.startsWith('*')) name = name.substring(1);
+      if (result.containsKey(name)) throw '校验清单存在重复文件名';
+      result[name] = hash.toLowerCase();
     }
-    return hash;
+    if (result.isEmpty) throw '校验清单为空';
+    return result;
   }
 
   List<dynamic> _decodeList(String body) {
@@ -127,16 +143,19 @@ class UpdateRepository {
   ) {
     final assets = map['assets'] as List<dynamic>? ?? [];
     Map<String, dynamic>? apk;
+    Map<String, dynamic>? manifest;
     for (final item in assets) {
       final asset = item as Map<String, dynamic>?;
       if (asset == null) continue;
       final name = asset['name'] as String? ?? '';
       if (name.endsWith('.apk')) {
         apk = asset;
-        break;
+      } else if (name == _manifestAsset) {
+        manifest = asset;
       }
     }
-    if (apk == null) return null;
+    // 单文件校验已改为统一清单：APK 与 SHA256SUMS 缺一不可，否则跳过该 release。
+    if (apk == null || manifest == null) return null;
     return ReleaseInfo(
       tag: tag,
       version: version,
@@ -144,6 +163,7 @@ class UpdateRepository {
       notes: map['body'] as String? ?? '',
       apkUrl: apk['browser_download_url'] as String? ?? '',
       apkName: apk['name'] as String? ?? 'app-release.apk',
+      checksumUrl: manifest['browser_download_url'] as String? ?? '',
     );
   }
 }

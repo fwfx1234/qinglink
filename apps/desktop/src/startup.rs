@@ -1,5 +1,7 @@
 //! 可执行文件原生的启动选项：启动行为永远不依赖脚本。
 
+use std::path::PathBuf;
+
 use anyhow::{Context, Result, bail};
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -12,6 +14,8 @@ pub struct StartupOptions {
     pub self_check: bool,
     /// Probe the service pipe, print the result, and exit.
     pub check_service: bool,
+    /// 自更新完成后由新进程带回的结果文件，装配 Web 后消费并删除。
+    pub update_result: Option<PathBuf>,
 }
 
 impl StartupOptions {
@@ -31,6 +35,13 @@ impl StartupOptions {
                             .parse()
                             .context("invalid restart parent process ID")?,
                     );
+                }
+                "--update-result" => {
+                    options.update_result = Some(PathBuf::from(
+                        arguments
+                            .next()
+                            .context("--update-result requires a file path")?,
+                    ));
                 }
                 other => bail!("未知启动参数: {other}"),
             }

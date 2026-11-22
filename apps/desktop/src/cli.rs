@@ -31,6 +31,13 @@ pub fn classify(arguments: &[String], started_at: Instant) -> Result<Preflight> 
         return Ok(Preflight::Done(result));
     }
 
+    // 自更新执行器：下载好的新 exe 副本以 --self-update 启动，在装配任何子系统之前
+    // 等待旧进程退出并替换文件。必须先于 StartupOptions::parse（这些参数不在白名单里）。
+    if let Some(result) = crate::updater::self_update::handle_self_update_command(arguments) {
+        trace_step(started_at, "self-update command dispatched");
+        return Ok(Preflight::Done(result));
+    }
+
     let options = StartupOptions::parse(arguments)?;
     trace_step(started_at, "startup options parsed");
 

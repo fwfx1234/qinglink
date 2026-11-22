@@ -4,8 +4,8 @@
 //! 移动端 release 不会混进来。tag 去掉前缀后就是完整版本号，交给
 //! `qinglink_version::is_newer` 与本地版本比较。
 //!
-//! 每个 release 带四个 asset：桌面端 `QingLink.exe`、更新助手 `QingLinkUpdater.exe`
-//! 及各自的 `.sha256` 校验文件。按精确文件名匹配，避免多平台 release 里取错。
+//! 每个 release 带两个 asset：桌面端 `QingLink.exe` 与统一校验清单 `SHA256SUMS`。
+//! 按精确文件名匹配，避免多平台 release 里取错。
 
 use serde::Deserialize;
 
@@ -14,9 +14,10 @@ use super::http;
 /// GitHub Releases API 地址。
 const API_URL: &str = "https://api.github.com/repos/fwfx1234/qinglink/releases?per_page=30";
 
-/// 桌面端与更新助手在 release 中的资产名。
+/// 桌面端在 release 中的资产名。
 pub const DESKTOP_ASSET: &str = "QingLink.exe";
-pub const UPDATER_ASSET: &str = "QingLinkUpdater.exe";
+/// 统一校验清单的资产名。
+const MANIFEST_ASSET: &str = "SHA256SUMS";
 
 /// 一个 asset 的元信息。
 #[derive(Clone, Debug, Deserialize)]
@@ -36,12 +37,11 @@ struct Release {
     assets: Vec<Asset>,
 }
 
-/// 单个可下载文件及其校验地址。
+/// 单个可下载文件。
 #[derive(Clone, Debug)]
 pub struct DownloadAsset {
     pub name: String,
     pub url: String,
-    pub checksum_url: String,
 }
 
 /// 检查到的更新结果。
@@ -53,8 +53,10 @@ pub struct UpdateInfo {
     pub release_url: String,
     /// 更新说明（release body），可能为空。
     pub notes: String,
-    /// 需要下载的文件（桌面端 exe + 更新助手 exe）。
+    /// 需要下载的文件（只有桌面端 exe）。
     pub assets: Vec<DownloadAsset>,
+    /// 校验清单 `SHA256SUMS` 的下载地址。
+    pub manifest_url: String,
 }
 
 /// 查询 GitHub，判断是否有比本地更新的桌面端 release。
@@ -91,26 +93,81 @@ pub fn check(current: &str) -> anyhow::Result<Option<UpdateInfo>> {
     Ok(newest.map(|(_, info)| info))
 }
 
-/// 从 release 中取出两个 exe 及其校验文件；缺任一个就跳过该 release。
+/// 从 release 中取出桌面端 exe 与校验清单；缺任一个就跳过该 release。
 fn build_info(version: &str, release: &Release) -> Option<UpdateInfo> {
-    let mut assets = Vec::new();
-    for name in [DESKTOP_ASSET, UPDATER_ASSET] {
-        let file = release.assets.iter().find(|asset| asset.name == name)?;
-        let checksum_name = format!("{name}.sha256");
-        let checksum = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == checksum_name)?;
-        assets.push(DownloadAsset {
-            name: name.to_string(),
-            url: file.browser_download_url.clone(),
-            checksum_url: checksum.browser_download_url.clone(),
-        });
-    }
+    let file = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == DESKTOP_ASSET)?;
+    let manifest = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == MANIFEST_ASSET)?;
     Some(UpdateInfo {
         version: version.to_string(),
         release_url: release.html_url.clone(),
         notes: release.body.clone().unwrap_or_default(),
-        assets,
+        assets: vec![DownloadAsset {
+            name: DESKTOP_ASSET.to_string(),
+            url: file.browser_download_url.clone(),
+        }],
+        manifest_url: manifest.browser_download_url.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn asset(name: &str) -> Asset {
+        Asset {
+            name: name.to_string(),
+            browser_download_url: format!("https://example.test/{name}"),
+        }
+    }
+
+    fn release(names: &[&str]) -> Release {
+        Release {
+            tag_name: "desktop-v0.2.0+40".to_string(),
+            html_url: "https://example.test/release".to_string(),
+            body: None,
+            draft: false,
+            prerelease: false,
+            assets: names.iter().map(|name| asset(name)).collect(),
+        }
+    }
+
+    #[test]
+    fn accepts_manifest_and_exe() {
+        let info = build_info("0.2.0+40", &release(&["QingLink.exe", "SHA256SUMS"])).unwrap();
+        assert_eq!(info.assets.len(), 1);
+        assert_eq!(info.assets[0].name, DESKTOP_ASSET);
+        assert_eq!(info.manifest_url, "https://example.test/SHA256SUMS");
+    }
+
+    #[test]
+    fn ignores_updater_and_sidecar_assets() {
+        let info = build_info(
+            "0.2.0+40",
+            &release(&[
+                "QingLink.exe",
+                "QingLink.exe.sha256",
+                "QingLinkUpdater.exe",
+                "QingLinkUpdater.exe.sha256",
+                "SHA256SUMS",
+            ]),
+        )
+        .unwrap();
+        assert_eq!(info.assets.len(), 1);
+    }
+
+    #[test]
+    fn skips_when_manifest_missing() {
+        assert!(build_info("0.2.0+40", &release(&["QingLink.exe"])).is_none());
+    }
+
+    #[test]
+    fn skips_when_exe_missing() {
+        assert!(build_info("0.2.0+40", &release(&["SHA256SUMS"])).is_none());
+    }
 }

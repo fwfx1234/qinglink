@@ -132,7 +132,9 @@ class UpdateNotifier extends AsyncNotifier<UpdateState> {
           clearError: true,
         ));
     try {
-      final expected = await _repo.fetchChecksum('${release.apkUrl}.sha256');
+      final sums = await _repo.fetchChecksums(release.checksumUrl);
+      final expected = sums[release.apkName.toLowerCase()] ??
+          (throw '校验清单缺少 APK 条目：${release.apkName}');
       final dir = await getApplicationDocumentsDirectory();
       final updatesDir = Directory('${dir.path}${Platform.pathSeparator}updates');
       await updatesDir.create(recursive: true);
