@@ -109,8 +109,8 @@ class UpdateScreen extends ConsumerWidget {
       ],
       const SizedBox(height: AppSpacing.lg),
       Text(
-        '更新包来自本项目的 GitHub Release。下载完成后会先核对校验清单，'
-        '哈希不一致的安装包不会进入安装环节。',
+        '更新包来自本项目的 GitHub Release。下载完成后会依次核对字节数、SHA256、'
+        '包名、版本号与签名指纹，任一项不符都不会进入安装环节。',
         style: AppText.meta.copyWith(color: palette.textSubtle),
       ),
     ];
@@ -166,13 +166,19 @@ class UpdateScreen extends ConsumerWidget {
   }
 
   Future<void> _install(BuildContext context, WidgetRef ref) async {
-    final outcome = await ref.read(updateProvider.notifier).install();
+    final notifier = ref.read(updateProvider.notifier);
+    final outcome = await notifier.install();
     if (!context.mounted) return;
+    // 失败原因由原生侧带回（含系统状态码），这里直接展示，别再用笼统的「安装失败」。
+    final message = ref.read(updateProvider).valueOrNull?.error;
     switch (outcome) {
       case InstallOutcome.permissionDenied:
-        context.showWarningSnackBar('请先允许「安装未知来源应用」');
+        context.showWarningSnackBar('请先允许「安装未知应用」，正在为你打开设置');
+        await notifier.openInstallSettings();
       case InstallOutcome.failed:
-        context.showErrorSnackBar('无法拉起系统安装器');
+        context.showErrorSnackBar(message ?? '安装没有完成，请重试');
+      case InstallOutcome.aborted:
+        context.showInfoSnackBar('已取消安装');
       case InstallOutcome.unsupported:
         context.showInfoSnackBar('当前平台不支持应用内安装，请前往发布页');
       case InstallOutcome.launched:

@@ -106,5 +106,10 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // 应用内安装走 PackageInstaller 而不是 ACTION_VIEW：只有这条路径能把系统
+        // 的真实失败原因（如 INSTALL_PARSE_FAILED_NO_CERTIFICATES）带回来。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, InstallChannel.CHANNEL)
+            .setMethodCallHandler(InstallChannel(this))
     }
 }

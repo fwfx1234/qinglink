@@ -222,9 +222,22 @@ Android 只允许同包名 + 同签名的 APK 覆盖安装，而 runner 每次�
 随源码提交（`apps/mobile/android/keystore/qinglink-release.jks` + `key.properties`）。
 另外 AGP 在 `minSdk >= 24` 时默认关闭 v1（JAR）签名，产物不含 `META-INF/*.RSA`，
 部分安装器会提示「没有签名文件」，所以显式打开 v1/v2/v3。CI 打包后用
-`apksigner verify -v --print-certs` 校验证书 SHA-256 并断言 v1、v2 均存在，任一不符
-直接失败。轮换密钥等于让老用户卸载重装，改指纹时要同步改工作流。详见
-`apps/mobile/README.md`。
+`apksigner verify -v --print-certs` 校验证书 SHA-256 并断言 v1、v2 均存在，另外跑
+`unzip -t` 与 `zipalign -c 4`，任一不符直接失败。轮换密钥等于让老用户卸载重装，
+改指纹时要同步改工作流。详见 `apps/mobile/README.md`。
+
+移动端安装链路的两个约束：
+
+- **只打真机 ABI**（`--target-platform android-arm,android-arm64`）。universal 包默认
+  还带 x86_64 引擎（约 20 MB），只有模拟器会用；去掉后包体从 ~58 MB 降到 ~36 MB，
+  慢链路下被截断的概率显著下降。
+- **应用内安装走 `PackageInstaller`**（`apps/mobile/android/.../InstallChannel.kt`），
+  不再用 `open_filex` 的 `ACTION_VIEW`：只有前者能把系统的真实失败原因
+  （`INSTALL_PARSE_FAILED_NO_CERTIFICATES` 等）带回来。安装前客户端还会核对
+  字节数 → SHA-256 → 包名 → versionCode → 签名者，坏包不会交给安装器。
+  「安装包未包含任何证书」的语义是**一个证书都收不到**（文件被截断/不是 APK），
+  与「签名不一致」（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`）是两回事，排查见
+  `apps/mobile/README.md`。
 
 ---
 

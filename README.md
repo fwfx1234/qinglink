@@ -211,7 +211,7 @@ cargo build --release -p qinglink-desktop --bin QingLink
 | 流水线 | 触发 tag | 产物 |
 | --- | --- | --- |
 | `.github/workflows/desktop-release.yml` | `desktop-v0.1.0+29` | `QingLink.exe` + `SHA256SUMS` |
-| `.github/workflows/mobile-release.yml` | `mobile-v1.0.0+8` | Android APK + 同名 `.apk.sha256` |
+| `.github/workflows/mobile-release.yml` | `mobile-v1.0.0+9` | Android APK + 同名 `.apk.sha256` |
 
 两端各只发布两个资产：程序本体与校验清单（GNU sha256sum 行格式）。桌面端自更新
 由下载好的新 exe 副本以 `--self-update` 启动完成，不再单独发布更新器 exe；旧版本客户端
@@ -222,6 +222,9 @@ cargo build --release -p qinglink-desktop --bin QingLink
 签名配置随源码提交），CI 发版前会校验证书指纹——Android 只允许同签名的包覆盖安装，
 签名一变老用户就只能卸载重装。`1.0.0+7` 是第一个固定签名的版本，从更早版本升级需先
 卸载一次；`1.0.0+8` 起签名方案再补齐 v1（JAR 签名），避免部分安装器提示「没有签名文件」。
+`1.0.0+9` 起只打真机 ABI（包体 ~58 MB → ~36 MB），应用内安装改走 `PackageInstaller`
+并带系统原始失败原因；若手动下载后提示「安装包未包含任何证书」，基本都是文件没下完整，
+对照 Release 说明里的字节数重新下载即可。
 
 tag 是版本号唯一真相源：桌面流水线从 tag 解析构建号注入 `QINGLINK_CI_BUILD_NUMBER`，
 保证产物版本与 tag 一致（详见 [`docs/development.md`](docs/development.md) §2.4）。

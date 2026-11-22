@@ -202,13 +202,33 @@ CI 里的期望指纹。
 `1.0.0+7` 是第一个使用固定签名的版本，从更早的版本升级必须先卸载一次；
 `1.0.0+8` 起签名方案补齐 v1，从 +7 起可正常覆盖升级。
 
+### 安装报「没有证书」怎么查
+
+`INSTALL_PARSE_FAILED_NO_CERTIFICATES`（系统文案「安装包未包含任何证书」）说的
+不是「签名方案不对」，而是**一个证书都收不到**：只有文件缺尾部（下载被截断）、
+或者根本不是 APK（被代理/中转替换成 HTML 错误页、从云盘里直接打开流式副本）才会
+出现。签名不一致是另一句报错（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`）。
+
+按这个顺序查：
+
+1. 对照 Release 说明里的**字节数**，明显偏小就是没下完，重新下载；
+2. 用同名的 `.apk.sha256` 清单核对 SHA-256；
+3. 应用内安装已改走 `PackageInstaller`（`android/.../InstallChannel.kt`）：失败时
+   会带系统原始原因与状态码，而且下载完成后先核对**字节数 → SHA-256 → 包名 →
+   versionCode → 签名者**，不合格的包根本不会交给安装器。
+
+为降低慢链路被截断的概率，`1.0.0+9` 起只打真机用得到的 ABI
+（`android-arm` + `android-arm64`），包体从约 58 MB 降到约 36 MB；代价是
+x86_64 模拟器装不了，需要时本地自行指定 `--target-platform`。
+
 **iOS** 只做检查和跳转：GitHub Release 无法用于 iOS 侧载，release 里也没有 iOS 安装包，
 所以检测到新版本后只展示版本号、更新说明和「前往发布页」按钮，不提供下载与安装。
 当前自动流水线也只产出 Android APK；iOS 包仍按原有方式单独发布。
 
 相关实现：`models/update_info.dart`（版本解析与 release 模型）、
 `data/repositories/update_repository.dart`（GitHub API、流式下载、SHA256 校验）、
-`providers/update_provider.dart`（状态机与安装动作）。
+`providers/update_provider.dart`（状态机、下载自检与安装动作）、
+`services/apk_installer.dart`（原生安装通道的 Dart 封装）。
 
 ## 进程页图标
 

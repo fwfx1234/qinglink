@@ -15,6 +15,9 @@
 # 签名：使用仓库内的固定密钥（android/keystore/qinglink-release.jks，配置见
 # android/key.properties）。Android 只允许同签名的 APK 覆盖安装，而 runner 每次
 # 都是全新的、默认 debug 密钥每次现生成，因此发版前会硬校验签名指纹。
+#
+# 体积：只打 android-arm / android-arm64（真机 ABI）。universal 包还会带 x86_64
+# 引擎，仅模拟器会用；去掉后包体从 ~58 MB 降到 ~36 MB，慢链路下更不容易被截断。
 
 name: 移动端发布
 
@@ -86,7 +89,11 @@ jobs:
           SEMVER: ${{ steps.version.outputs.semver }}
           BUILD: ${{ steps.version.outputs.build }}
         run: |
+          # 只打真机用得到的两个 ABI。universal 包默认还带 x86_64（约 19.8 MB），
+          # 那只有模拟器会用；去掉后包体从 ~58 MB 降到 ~48 MB，慢链路下被截断的
+          # 概率明显下降——而截断的 APK 装起来正是「安装包未包含任何证书」。
           flutter build apk --release \
+            --target-platform android-arm,android-arm64 \
             --build-name "$SEMVER" \
             --build-number "$BUILD"
 
@@ -146,7 +153,25 @@ jobs:
           fi
           echo "签名指纹校验通过：$ACTUAL"
 
+          # 完整性：截断的 APK 仍然能通过签名校验（apksigner 会直接报无法验证），
+          # 但更常见的表现是产物本身是坏 zip。这两条能挡在发版之前。
+          unzip -t "$APK" > /dev/null || {
+            echo "APK 不是完整的 ZIP 包（可能被截断）" >&2
+            exit 1
+          }
+          ZIPALIGN=$(find "$SDK/build-tools" -maxdepth 2 -type f -name zipalign 2>/dev/null | sort -V | tail -1)
+          if [ -n "$ZIPALIGN" ]; then
+            "$ZIPALIGN" -c -v 4 "$APK" > /dev/null || {
+              echo "APK 未按 4 字节对齐，v2 签名可能失效" >&2
+              exit 1
+            }
+            echo "zipalign 校验通过"
+          else
+            echo "找不到 zipalign，跳过对齐校验" >&2
+          fi
+
       - name: 组装发布资产
+        id: assets
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -162,7 +187,15 @@ jobs:
           # 文件名换成 SHA256SUMS 会让它们直接 404。多行清单对旧客户端无害
           # （首行就是 APK 的哈希），新客户端则按文件名查表。
           (cd "$STAGE" && sha256sum "$APK_NAME" > "$APK_NAME.sha256")
+          APK_BYTES=$(stat -c%s "$STAGE/$APK_NAME")
+          APK_SHA=$(awk '{print $1}' "$STAGE/$APK_NAME.sha256")
+          {
+            echo "apk_name=$APK_NAME"
+            echo "apk_bytes=$APK_BYTES"
+            echo "apk_sha256=$APK_SHA"
+          } >> "$GITHUB_OUTPUT"
           ls -lh "$STAGE"
+          echo "字节数 $APK_BYTES，SHA-256 $APK_SHA"
 
       - name: 创建 Release 并上传资产
         uses: softprops/action-gh-release@v2
@@ -172,9 +205,16 @@ jobs:
           body: |
             移动端版本 `${{ steps.version.outputs.version }}`（构建号 ${{ steps.version.outputs.build }}）。
 
-            - Android：下载 `QingLink-mobile-*.apk` 安装；应用内「检查更新」可直接下载并安装。
+            - Android：下载 `${{ steps.assets.outputs.apk_name }}` 安装；应用内「检查更新」可直接下载并安装。
             - iOS：GitHub Release 不提供可侧载安装包，应用内检查到更新后会提示前往本页。
 
-            `QingLink-mobile-*.apk.sha256` 为校验清单（GNU sha256sum 行格式）。
+            | 项目 | 值 |
+            | --- | --- |
+            | 文件大小 | `${{ steps.assets.outputs.apk_bytes }}` 字节 |
+            | SHA-256 | `${{ steps.assets.outputs.apk_sha256 }}` |
+
+            > 手动下载后安装若提示「安装包未包含任何证书」，九成是文件没下完整（网络中断、
+            > 被下载工具截断）。对照上表的字节数，偏小就重新下载；`${{ steps.assets.outputs.apk_name }}.sha256`
+            > 是 GNU sha256sum 清单，可自行校验。
           files: release-assets/*
           fail_on_unmatched_files: true

@@ -232,6 +232,7 @@ class UpdateReleaseCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final release = state.release!;
+    final apk = state.apkIdentity;
     return AppCard(
       radius: AppRadius.lg,
       padding: const EdgeInsets.symmetric(horizontal: AppMetrics.cardPadding),
@@ -250,10 +251,29 @@ class UpdateReleaseCard extends StatelessWidget {
           ),
           Divider(height: 1, color: palette.line),
           UpdateInfoRow(label: '来源', value: release.tag, palette: palette),
+          // 下载完成后把「手里这一包是谁」摆出来：版本、体积、签名指纹。
+          // 出问题时截图就能定位，不用再靠猜是哪一步坏掉。
+          if (apk != null) ...[
+            Divider(height: 1, color: palette.line),
+            UpdateInfoRow(
+              label: '已下载',
+              value: '${apk.versionName}+${apk.versionCode} · '
+                  '${_mb(state.apkBytes)} MB',
+              palette: palette,
+            ),
+            Divider(height: 1, color: palette.line),
+            UpdateInfoRow(
+              label: '签名指纹',
+              value: apk.shortSigner,
+              palette: palette,
+            ),
+          ],
         ],
       ),
     );
   }
+
+  String _mb(int bytes) => (bytes / 1024 / 1024).toStringAsFixed(1);
 }
 
 /// 摘要卡的标签 + 值一行。

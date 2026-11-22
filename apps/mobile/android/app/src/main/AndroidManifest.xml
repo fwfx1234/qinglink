@@ -40,6 +40,15 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- PackageInstaller 的安装结果落点。PendingIntent 由本应用自己发出，
+             所以 exported=false 就能收到，不对外暴露。 -->
+        <receiver
+            android:name=".InstallResultReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.qinglink.mobile.INSTALL_RESULT" />
+            </intent-filter>
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

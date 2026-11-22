@@ -50,6 +50,7 @@ class ReleaseInfo {
     required this.apkUrl,
     required this.apkName,
     required this.checksumUrl,
+    this.apkSize = 0,
   });
 
   /// 完整 tag，例如 `mobile-v1.0.0+3`。
@@ -72,6 +73,12 @@ class ReleaseInfo {
 
   /// 校验清单 `SHA256SUMS` 的下载地址。
   final String checksumUrl;
+
+  /// APK 的字节数，来自 Release 资产的 `size`。0 表示发布页没给（早期 release）。
+  ///
+  /// 拿它做下载完整性断言：下到一半断流时文件会明显偏小，这种包如果直接交给
+  /// 安装器，系统只会说「安装包未包含任何证书」，看不出是没下完。
+  final int apkSize;
 
   bool get hasApk => apkUrl.isNotEmpty && checksumUrl.isNotEmpty;
 }

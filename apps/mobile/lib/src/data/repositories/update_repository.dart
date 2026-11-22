@@ -190,6 +190,7 @@ class UpdateRepository {
       apkUrl: apk['browser_download_url'] as String? ?? '',
       apkName: apkName,
       checksumUrl: manifest?['browser_download_url'] as String? ?? '',
+      apkSize: (apk['size'] as num?)?.toInt() ?? 0,
     );
   }
 }
