@@ -258,6 +258,9 @@ fn start_web(
     trace_step(started_at, "web state assembled");
     let thread = web::run_on_thread(WEB_PORT, Arc::clone(&web_state))?;
     trace_step(started_at, "web listener reporting ready");
+    // 后台检查更新：发现新版本即自动下载，安装仍由用户在更新页手动触发。
+    // 失败只影响更新状态，不阻断桌面端启动。
+    web::api::update::auto_check(Arc::clone(&web_state));
     Ok(WebStart {
         state: web_state,
         host_rx,

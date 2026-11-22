@@ -7,6 +7,11 @@
 //! 状态写在同目录的 `build-number.txt`（第一行构建号，第二行上次的源码指纹），随
 //! 仓库一起提交。它刻意不被 `cargo:rerun-if-changed` 覆盖：否则每次自增都会让
 //! cargo 认为输入变了，进而每次构建都重跑本脚本并重编译所有依赖本 crate 的程序。
+//!
+//! CI 发布构建是唯一例外：流水线从 Release tag 解析出构建号，经环境变量
+//! `QINGLINK_CI_BUILD_NUMBER` 传入后直接用它，跳过指纹计算与状态写回。原因是 CI
+//! checkout 出来的文件修改时间全部重置，照常算指纹必然与仓库里存的对不上而自增，
+//! 导致产物版本与 tag 不一致。
 
 use std::{
     env, fs,
@@ -60,10 +65,22 @@ fn main() {
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let repo_root = manifest_dir.join("../..");
 
+    // 环境变量变化必须触发重跑：否则同一 CI 里传不同构建号不会更新产物版本。
+    println!("cargo:rerun-if-env-changed=QINGLINK_CI_BUILD_NUMBER");
+
     for path in watched_paths(&repo_root) {
         if path.exists() {
             println!("cargo:rerun-if-changed={}", path.display());
         }
+    }
+
+    let base = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
+
+    // CI 发布构建：tag 是版本号的唯一真相源，直接用注入的构建号，不写回状态文件。
+    if let Some(build) = ci_build_number() {
+        println!("cargo:rustc-env=QINGLINK_VERSION={base}+{build}");
+        println!("cargo:rustc-env=QINGLINK_BUILD_NUMBER={build}");
+        return;
     }
 
     let state_path = manifest_dir.join("build-number.txt");
@@ -74,9 +91,18 @@ fn main() {
         write_state(&state_path, build, &fingerprint);
     }
 
-    let base = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
     println!("cargo:rustc-env=QINGLINK_VERSION={base}+{build}");
     println!("cargo:rustc-env=QINGLINK_BUILD_NUMBER={build}");
+}
+
+/// 读取 CI 从 Release tag 注入的构建号。
+///
+/// 本地开发不设这个变量，返回 `None`，继续走源码指纹自增。只有正整数有效。
+fn ci_build_number() -> Option<u32> {
+    env::var("QINGLINK_CI_BUILD_NUMBER")
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .filter(|number| *number > 0)
 }
 
 /// 需要监视的目录与文件。

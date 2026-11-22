@@ -226,6 +226,7 @@ fn render(event: ServerEvent, channels: &BTreeSet<String>) -> Option<Value> {
             "toast",
             json!({ "level": level, "message": message }),
         ),
+        ServerEvent::UpdateState(state) => ("system", "update_state", json!(state)),
         ServerEvent::Shutdown(reason) => ("system", "shutdown", json!({ "reason": reason })),
     };
     if !channels.contains(channel) {

@@ -1,0 +1,108 @@
+# QingLink 移动端发布流水线
+#
+# 触发：推送 `mobile-v<版本>` 标签，例如 `mobile-v1.0.0+3`。
+# tag 是版本号唯一真相源：CI 校验它与 pubspec.yaml 的语义版本一致，并用
+# --build-name / --build-number 覆盖构建，确保 APK 版本与 tag 一致。
+#
+# 产物：一个 GitHub Release，含：
+#   QingLink-mobile-<版本>-android.apk + .sha256
+# 移动端检查更新时找 `.apk` 资产，并下载同名 `.sha256` 校验。
+# iOS 无法从 GitHub Release 侧载，客户端只做检查 + 打开发布页提示。
+
+name: 移动端发布
+
+on:
+  push:
+    tags:
+      - 'mobile-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 解析 tag 版本并校验
+        id: version
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#mobile-v}"
+          if [[ ! "$VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)$ ]]; then
+            echo "tag 格式错误：$TAG，应为 mobile-v<语义版本>+<构建号>" >&2
+            exit 1
+          fi
+          SEMVER="${BASH_REMATCH[1]}"
+          BUILD="${BASH_REMATCH[2]}"
+          PUB_VERSION=$(grep -m1 '^version:' apps/mobile/pubspec.yaml | sed 's/version:[[:space:]]*//')
+          if [ "$PUB_VERSION" != "$VERSION" ]; then
+            echo "tag 版本 $VERSION 与 pubspec.yaml $PUB_VERSION 不一致" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "semver=$SEMVER" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "发布版本：$VERSION（构建号 $BUILD）"
+
+      - name: 安装 Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: 获取依赖
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: 静态检查
+        working-directory: apps/mobile
+        run: flutter analyze
+
+      - name: 构建 Release APK
+        working-directory: apps/mobile
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SEMVER: ${{ steps.version.outputs.semver }}
+          BUILD: ${{ steps.version.outputs.build }}
+        run: |
+          flutter build apk --release \
+            --build-name "$SEMVER" \
+            --build-number "$BUILD"
+
+      - name: 组装发布资产
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          STAGE=release-assets
+          mkdir -p "$STAGE"
+          APK_NAME="QingLink-mobile-$VERSION-android.apk"
+          cp apps/mobile/build/app/outputs/flutter-apk/app-release.apk "$STAGE/$APK_NAME"
+          HASH=$(sha256sum "$STAGE/$APK_NAME" | awk '{print $1}')
+          printf '%s  %s' "$HASH" "$APK_NAME" > "$STAGE/$APK_NAME.sha256"
+          ls -lh "$STAGE"
+
+      - name: 创建 Release 并上传资产
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: QingLink 移动端 ${{ steps.version.outputs.version }}
+          body: |
+            移动端版本 `${{ steps.version.outputs.version }}`（构建号 ${{ steps.version.outputs.build }}）。
+
+            - Android：下载 `QingLink-mobile-*.apk` 安装；应用内「检查更新」可直接下载并安装。
+            - iOS：GitHub Release 不提供可侧载安装包，应用内检查到更新后会提示前往本页。
+
+            同名 `.sha256` 为校验文件。
+          files: release-assets/*
+          fail_on_unmatched_files: true

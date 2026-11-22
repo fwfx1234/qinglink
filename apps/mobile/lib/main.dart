@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'src/providers/theme_provider.dart';
+import 'src/providers/update_provider.dart';
 import 'src/app/app_router.dart';
 import 'src/theme/app_theme.dart';
 
@@ -12,7 +15,21 @@ void main() {
   // 单页构建异常不应该把整块界面变成红屏/灰屏：换成一个可读的兜底页，
   // 用户还能系统返回上一页；异常本身仍然打印到日志（debug 下附带摘要）。
   ErrorWidget.builder = _buildBrokenPage;
-  runApp(const ProviderScope(child: QingLinkApp()));
+
+  // 用外部 container 启动：应用一打开就在后台检查更新，而不是等用户进入设置页。
+  // 延迟 3 秒避开首帧渲染与配对初始化；检查到新版本会自动下载，安装仍手动。
+  final container = ProviderContainer();
+  runApp(
+    UncontrolledProviderScope(
+      container: container,
+      child: const QingLinkApp(),
+    ),
+  );
+  unawaited(
+    Future<void>.delayed(const Duration(seconds: 3), () {
+      return container.read(updateProvider.notifier).check();
+    }),
+  );
 }
 
 /// 某个页面的 build 抛异常时代替默认错误块显示的兜底页。

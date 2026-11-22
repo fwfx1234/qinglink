@@ -197,6 +197,9 @@ Copy-Item .\target\release\QingLinkService.exe .\apps\desktop\assets\input\QingL
 # 4. 构建桌面端，缺资源直接失败
 $env:QINGLINK_REQUIRE_INPUT_ASSETS = '1'
 cargo build --release -p qinglink-desktop --bin QingLink
+
+# 5. 构建自更新助手（随 release 一起分发）
+cargo build --release -p qinglink-updater --bin qinglink-updater
 ```
 
 产物 `target\release\QingLink.exe` 已内嵌 Web 界面，单文件即可分发；服务安装到
@@ -205,6 +208,19 @@ cargo build --release -p qinglink-desktop --bin QingLink
 安装与「修复服务」**默认不校验** Authenticode 签名，debug 与 release 都能安装本机自建产物
 （内嵌资源的 SHA256 始终核对）；要强制签名，在启动桌面端之前设置
 `$env:QINGLINK_REQUIRE_SIGNED_INPUT = '1'`，此时提权助手会拒绝未签名的服务资源或桌面端。
+
+**自动发布。** 仓库提供两条 GitHub Actions 流水线（无需发布脚本）：
+
+| 流水线 | 触发 tag | 产物 |
+| --- | --- | --- |
+| `.github/workflows/desktop-release.yml` | `desktop-v0.1.0+29` | `QingLink.exe` + `QingLinkUpdater.exe` + 各自 `.sha256` + zip |
+| `.github/workflows/mobile-release.yml` | `mobile-v1.0.0+3` | Android APK + `.sha256` |
+
+tag 是版本号唯一真相源：桌面流水线从 tag 解析构建号注入 `QINGLINK_CI_BUILD_NUMBER`，
+保证产物版本与 tag 一致（详见 [`docs/development.md`](docs/development.md) §2.4）。
+两端启动后自动检查更新，设置/更新页也提供手动检查入口：发现新版本即后台下载并校验，
+下载完成后由用户手动触发安装（安装会退出程序或拉起系统安装器）。移动端 iOS 不支持侧载，
+仅提示跳转发页面。详见 [`docs/architecture.md`](docs/architecture.md) §9.5。
 
 ## 文档索引
 

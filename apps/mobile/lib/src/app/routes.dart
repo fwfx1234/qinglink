@@ -10,6 +10,7 @@ import '../screens/pairing_screen.dart';
 import '../screens/processes_tab.dart';
 import '../screens/scan_folder_screen.dart';
 import '../screens/settings_tab.dart';
+import '../screens/update_screen.dart';
 import '../screens/shortcuts_screen.dart';
 import '../screens/ir/tv_remote_screen.dart';
 import '../screens/ir/ir_command_screen.dart';
@@ -28,6 +29,7 @@ abstract final class AppRoutes {
   static const processes = '/processes';
   static const scanFolder = '/scan-folder';
   static const settings = '/settings';
+  static const update = '/update';
   static const shortcuts = '/shortcuts';
   static const tvRemote = '/tv-remote';
   static const irCommand = '/ir/command';
@@ -42,7 +44,8 @@ GoRouter buildAppRouter(Ref ref) => GoRouter(
     // 配对页本身就要在未认证状态下进入，不能重定向回首页。
     final publicRoute =
         state.uri.path == AppRoutes.home ||
-        state.uri.path == AppRoutes.pairing;
+        state.uri.path == AppRoutes.pairing ||
+        state.uri.path == AppRoutes.update;
     if (!publicRoute && !authenticated) return AppRoutes.home;
     return null;
   },
@@ -90,6 +93,11 @@ GoRouter buildAppRouter(Ref ref) => GoRouter(
       path: AppRoutes.settings,
       name: 'settings',
       builder: (_, _) => const SettingsTab(),
+    ),
+    GoRoute(
+      path: AppRoutes.update,
+      name: 'update',
+      builder: (_, _) => const UpdateScreen(),
     ),
     GoRoute(
       path: AppRoutes.shortcuts,

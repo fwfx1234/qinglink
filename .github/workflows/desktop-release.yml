@@ -1,0 +1,134 @@
+# QingLink 桌面端发布流水线
+#
+# 触发：推送 `desktop-v<版本>` 标签，例如 `desktop-v0.1.0+29`。
+# tag 是版本号的唯一真相源：CI 从 tag 解析构建号，经 QINGLINK_CI_BUILD_NUMBER
+# 注入构建，确保产物版本（文件属性、/health、诊断页）与 tag 严格一致。
+#
+# 产物：一个 GitHub Release，含以下 asset：
+#   QingLink.exe / QingLink.exe.sha256
+#   QingLinkUpdater.exe / QingLinkUpdater.exe.sha256
+#   QingLink-desktop-<版本>-windows-x86_64.zip（供手动下载的打包变体）
+# 桌面端检查更新时按精确文件名匹配两个裸 exe；zip 只用于人工下载。
+
+name: 桌面端发布
+
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 解析 tag 版本并校验
+        id: version
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $version = $tag.Substring('desktop-v'.Length)
+          if ($version -notmatch '^(\d+\.\d+\.\d+)\+(\d+)$') {
+            throw "tag 格式错误：$tag，应为 desktop-v<语义版本>+<构建号>"
+          }
+          $semver = $Matches[1]
+          $build = $Matches[2]
+          # 语义版本必须与 Cargo.toml 一致，否则 tag 与产物会脱节。
+          $manifest = Get-Content Cargo.toml -Raw
+          if ($manifest -notmatch '(?m)^version = "([^"]+)"') {
+            throw '无法从 Cargo.toml 读取 workspace 版本'
+          }
+          $cargoVersion = $Matches[1]
+          if ($cargoVersion -ne $semver) {
+            throw "tag 语义版本 $semver 与 Cargo.toml $cargoVersion 不一致"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "build=$build" >> $env:GITHUB_OUTPUT
+          Write-Host "发布版本：$version（构建号 $build）"
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 缓存 Cargo 与 npm
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            apps/desktop/web-ui/node_modules
+          key: desktop-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'apps/desktop/web-ui/package-lock.json') }}
+
+      - name: 构建安全输入服务
+        shell: pwsh
+        env:
+          QINGLINK_CI_BUILD_NUMBER: ${{ steps.version.outputs.build }}
+          QINGLINK_SKIP_WEB_BUILD: '1'
+        run: cargo build --release -p qinglink-service --bin QingLinkService
+
+      - name: 刷新桌面端内嵌服务资源
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path apps\desktop\assets\input | Out-Null
+          Copy-Item target\release\QingLinkService.exe apps\desktop\assets\input\QingLinkService.exe -Force
+
+      - name: 构建桌面端（含 Web 界面）
+        shell: pwsh
+        env:
+          QINGLINK_CI_BUILD_NUMBER: ${{ steps.version.outputs.build }}
+          QINGLINK_REQUIRE_INPUT_ASSETS: '1'
+        run: cargo build --release -p qinglink-desktop --bin QingLink
+
+      - name: 构建更新助手
+        shell: pwsh
+        run: cargo build --release -p qinglink-updater --bin qinglink-updater
+
+      - name: 组装发布资产
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $stage = 'release-assets'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          # 裸 exe：客户端检查更新按精确文件名匹配这两个文件。
+          Copy-Item target\release\QingLink.exe "$stage\QingLink.exe"
+          Copy-Item target\release\qinglink-updater.exe "$stage\QingLinkUpdater.exe"
+
+          # zip 变体：仅供人工下载存档，客户端自更新不读取 zip。
+          $zipName = "QingLink-desktop-$version-windows-x86_64.zip"
+          Compress-Archive -Path "$stage\QingLink.exe", "$stage\QingLinkUpdater.exe" `
+            -DestinationPath "$stage\$zipName"
+
+          # 为每个资产生成 .sha256（内容第一行是 64 位十六进制哈希）。
+          Get-ChildItem -File $stage | Where-Object { $_.Extension -ne '.sha256' } | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+            Set-Content -LiteralPath "$($_.FullName).sha256" -Value "$hash  $($_.Name)" -NoNewline
+          }
+          Get-ChildItem -File $stage | Select-Object Name, Length
+
+      - name: 创建 Release 并上传资产
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: QingLink 桌面端 ${{ steps.version.outputs.version }}
+          body: |
+            桌面端版本 `${{ steps.version.outputs.version }}`（构建号 ${{ steps.version.outputs.build }}）。
+
+            资产说明：
+            - `QingLink.exe` + `QingLinkUpdater.exe`：自更新所需的裸程序（客户端按精确文件名匹配）。
+            - `QingLink-desktop-*.zip`：打包变体，供手动下载。
+            - 每个文件同名的 `.sha256` 是校验文件。
+
+            更新流程：应用内「更新」页检查 → 后台下载 → 手动安装。
+          files: release-assets/*
+          fail_on_unmatched_files: true

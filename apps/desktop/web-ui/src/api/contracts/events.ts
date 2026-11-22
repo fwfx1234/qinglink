@@ -9,6 +9,7 @@ import type { CatalogKind } from './catalog'
 import type { LogItem } from './logs'
 import type { PairingRequest } from './pairing'
 import type { InstallState, ServiceStatus, SettingsData } from './service'
+import type { UpdateView } from './update'
 
 /* ------------------------------------------------------------------ */
 /* §5 WebSocket 事件                                                    */
@@ -76,6 +77,7 @@ export type SystemHelloEvent = EventEnvelope<'system', 'hello', HelloData>
 export type SystemPongEvent = EventEnvelope<'system', 'pong', PongData>
 export type SystemShutdownEvent = EventEnvelope<'system', 'shutdown', ShutdownData>
 export type SystemSettingsEvent = EventEnvelope<'system', 'settings', SettingsData>
+export type SystemUpdateStateEvent = EventEnvelope<'system', 'update_state', UpdateView>
 export type ServiceStatusEvent = EventEnvelope<'service', 'status', ServiceStatus>
 export type ServiceInstallStateEvent = EventEnvelope<'service', 'install_state', InstallState>
 export type DevicesChangedEvent = EventEnvelope<'devices', 'changed', DevicesChangedData>
@@ -92,6 +94,7 @@ export type ServerEvent =
   | SystemPongEvent
   | SystemShutdownEvent
   | SystemSettingsEvent
+  | SystemUpdateStateEvent
   | ServiceStatusEvent
   | ServiceInstallStateEvent
   | DevicesChangedEvent

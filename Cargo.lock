@@ -1332,6 +1332,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "qinglink-updater"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "qinglink-windows",
+ "time",
+ "windows 0.61.3",
+]
+
+[[package]]
 name = "qinglink-version"
 version = "0.1.0"
 dependencies = [

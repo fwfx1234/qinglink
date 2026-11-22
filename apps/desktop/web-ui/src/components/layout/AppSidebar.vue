@@ -2,7 +2,7 @@
 /**
  * 左侧主导航。
  *
- * 五个目的地 + 常驻的链路状态，竖排在左侧能让内容区用满宽度并保持一条清晰的
+ * 六个目的地 + 常驻的链路状态，竖排在左侧能让内容区用满宽度并保持一条清晰的
  * 阅读轴线；顶部横排导航会把这两者挤在同一行里争夺空间。
  *
  * 窄屏收成图标轨道（只留图标 + title），不折叠成汉堡菜单：管理台常在副屏半宽
@@ -14,6 +14,7 @@ import { ROUTE_NAMES } from '@/utils/constants'
 import { useConnectionStore } from '@/stores/connection'
 import { useOverviewStore } from '@/stores/overview'
 import { useServiceStore } from '@/stores/service'
+import { useUpdateStore } from '@/stores/update'
 import { formatRelative } from '@/utils/format'
 import StatusDot from '@/components/ui/StatusDot.vue'
 import ThemeToggle from '@/components/ui/ThemeToggle.vue'
@@ -34,7 +35,11 @@ const navigation = [
   { name: ROUTE_NAMES.logs, label: '日志', path: 'M3.5 3.5h9v9h-9zM6 6.6h4.4M6 9.4h3' },
   { name: ROUTE_NAMES.diagnostics, label: '诊断', path: 'M2.6 8.6h2.6l1.3-4 2.1 7 1.4-3h3.4' },
   { name: ROUTE_NAMES.settings, label: '设置', path: 'M3 5.4h10M3 10.6h10M6.4 3.6v3.6M9.6 8.8v3.6' },
+  { name: ROUTE_NAMES.update, label: '更新', path: 'M8 2.4v7.6M5.2 7.2 8 10l2.8-2.8M3 12.6h10' },
 ]
+
+const update = useUpdateStore()
+const updateAvailable = computed(() => update.hasUpdate)
 
 const pairingPending = computed(() => overview.pairing !== null)
 const lastError = computed(() => overview.service?.last_error ?? connection.lastError)
@@ -96,6 +101,7 @@ const statusTitle = computed(() =>
         </svg>
         <span class="nav__label">{{ item.label }}</span>
         <StatusDot v-if="item.name === ROUTE_NAMES.overview && pairingPending" tone="warning" pulse />
+        <StatusDot v-if="item.name === ROUTE_NAMES.update && updateAvailable" tone="warning" pulse />
       </RouterLink>
     </nav>
 

@@ -5,6 +5,7 @@ import AppsView from '@/views/AppsView.vue'
 import LogsView from '@/views/LogsView.vue'
 import DiagnosticsView from '@/views/DiagnosticsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
+import UpdateView from '@/views/UpdateView.vue'
 
 /**
  * 使用 hash 路由：构建产物由 Rust 端本地 Web 服务按文件提供，
@@ -40,6 +41,12 @@ const routes: RouteRecordRaw[] = [
     name: ROUTE_NAMES.diagnostics,
     component: DiagnosticsView,
     meta: { title: '服务诊断', description: '链路状态、协议版本、自检报告与诊断包导出' },
+  },
+  {
+    path: '/update',
+    name: ROUTE_NAMES.update,
+    component: UpdateView,
+    meta: { title: '检查更新', description: '检查新版本、后台下载并手动安装' },
   },
   // 旧版把设备管理单独成页；深链接仍要能用。
   { path: '/devices', redirect: { name: ROUTE_NAMES.overview } },

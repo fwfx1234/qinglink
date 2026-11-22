@@ -50,6 +50,7 @@ mod service_lifecycle;
 mod startup;
 mod startup_trace;
 mod tray;
+mod updater;
 mod web;
 
 use std::sync::OnceLock;

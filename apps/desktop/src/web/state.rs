@@ -13,6 +13,7 @@ use crate::logging::{LogEntry, LogSystem};
 use crate::preferences::Preferences;
 use crate::service::{ServiceClient, ServiceLinkState, ServiceStatus};
 use crate::tray::RegistrationReport;
+use crate::updater::{SharedUpdateState, UpdateView};
 
 use super::error::ApiError;
 
@@ -187,6 +188,8 @@ pub enum ServerEvent {
         level: &'static str,
         message: String,
     },
+    /// 更新流程状态变化（检查/下载进度/就绪/失败）。
+    UpdateState(Box<UpdateView>),
     /// The desktop is going away.
     Shutdown(&'static str),
 }
@@ -220,6 +223,7 @@ impl std::fmt::Debug for ServerEvent {
                 .field("level", level)
                 .field("message", message)
                 .finish(),
+            Self::UpdateState(state) => formatter.debug_tuple("UpdateState").field(state).finish(),
             Self::Shutdown(reason) => formatter.debug_tuple("Shutdown").field(reason).finish(),
         }
     }
@@ -237,6 +241,8 @@ pub struct WebState {
     pub preferences: Preferences,
     /// Secure-input install state.
     pub install_state: SharedInputInstallState,
+    /// 程序更新状态（检查/下载/安装）。
+    pub update_state: SharedUpdateState,
     /// Channel to the application main thread.
     pub host: mpsc::UnboundedSender<HostCommand>,
     /// Fan-out for WebSocket clients.
@@ -296,6 +302,7 @@ impl WebState {
             settings: parts.settings,
             preferences: parts.preferences,
             install_state: parts.install_state,
+            update_state: SharedUpdateState::default(),
             host: parts.host,
             events,
             tray_registration: Mutex::new(None),
@@ -368,5 +375,10 @@ impl WebState {
     /// Publish the current install state.
     pub fn publish_install_state(&self) {
         self.publish(ServerEvent::InstallState(Box::new(self.install_view())));
+    }
+
+    /// 发布当前更新状态到事件通道。
+    pub fn publish_update_state(&self) {
+        self.publish(ServerEvent::UpdateState(Box::new(self.update_state.view())));
     }
 }

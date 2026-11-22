@@ -74,4 +74,5 @@ export const ROUTE_NAMES = {
   logs: 'logs',
   diagnostics: 'diagnostics',
   settings: 'settings',
+  update: 'update',
 } as const

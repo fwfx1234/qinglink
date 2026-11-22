@@ -15,8 +15,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../app/routes.dart';
 import '../models/auth.dart';
+import '../providers/app_version_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/power_controller.dart';
 import '../providers/settings_provider.dart';
@@ -31,9 +34,6 @@ import 'settings_discovery_sheet.dart';
 import 'settings_input_section.dart';
 import 'settings_tv_section.dart';
 import 'settings_widgets.dart';
-
-/// 移动端版本号：与 `pubspec.yaml` 的 `version` 保持一致。
-const String _appVersion = '1.0.0';
 
 class SettingsTab extends ConsumerStatefulWidget {
   const SettingsTab({super.key});
@@ -162,6 +162,9 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     final settings = ref.watch(settingsProvider);
     final authState = ref.watch(connectionProvider);
     final protocol = _protocolVersion(authState.discoveredDevices, settings);
+    final versionAsync = ref.watch(appVersionProvider);
+    final versionLabel =
+        versionAsync.valueOrNull?.displayVersion ?? '未知';
 
     return Scaffold(
       backgroundColor: palette.background,
@@ -277,9 +280,15 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                         : '${settings.pcIpAddress ?? '—'}:${settings.pcPort}',
                   ),
                   const SettingsRowDivider(),
+                  SettingsRow(
+                    title: '检查更新',
+                    subtitle: '获取当前版本 $versionLabel',
+                    onTap: () => context.push(AppRoutes.update),
+                  ),
+                  const SettingsRowDivider(),
                   SettingsValueRow(
                     label: '版本',
-                    value: 'QingLink $_appVersion · 协议 $protocol',
+                    value: 'QingLink $versionLabel · 协议 $protocol',
                   ),
                 ],
               ),

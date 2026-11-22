@@ -189,6 +189,10 @@ Content-Type: application/json
 | GET | `/logs/service` | 解析 `QingLinkService` 磁盘日志并分页 |
 | DELETE | `/logs` | 清空日志 |
 | GET | `/logs/download` | 下载日志文件 |
+| GET | `/update` | 当前程序更新状态快照 |
+| POST | `/update/check` | 后台检查 GitHub Release 是否有新版本 |
+| POST | `/update/download` | 后台下载已发现版本并校验 SHA256 |
+| POST | `/update/install` | 启动更新器安装并退出桌面端 |
 | WS | `/events` | 实时事件推送 |
 
 ---
@@ -1011,6 +1015,52 @@ Steam 条目落库时的 `exe_path` 是**猜**出来的（清单里没有这项�
 > 桌面端开关报"不支持"，移动端命令回 `INVALID_REQUEST`。前端
 > `apps/desktop/web-ui/src/api/types.ts` 的 `POST /settings` 字段形状不变。
 
+### 4.37 `GET /update`
+
+读取当前程序更新状态快照，供「更新」页首次进入时取初值。字段与 §5 的
+`system/update_state` 事件数据完全一致：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `phase` | string | 阶段：`idle` / `checking` / `up_to_date` / `available` / `downloading` / `ready` / `installing` / `error` |
+| `current_version` | string | 本地版本（`qinglink_version::VERSION`，如 `0.1.0+28`） |
+| `latest_version` | string \| null | 发现的最新版本，未发现时 null |
+| `release_url` | string \| null | GitHub release 页面地址 |
+| `notes` | string | 更新说明（release body） |
+| `progress` | number | 已下载文件数 / 总文件数换算的百分比 0-100 |
+| `downloaded_bytes` | number | 保留字段，当前为 0 |
+| `total_bytes` | number | 保留字段，当前为 0 |
+| `error` | string \| null | 最近一次错误，`phase=error` 时有值 |
+| `busy` | boolean | 是否有后台任务在跑，前端据此禁用按钮 |
+| `last_check_secs` | number \| null | 距上次成功检查的秒数 |
+
+### 4.38 `POST /update/check`
+
+后台请求 GitHub Releases API，筛选 `desktop-v` 通道 tag，与本地版本比较。无请求体。
+返回 `{ "accepted": true }`；真实结果通过 `system/update_state` 事件回流。已在忙态时
+直接返回、不改变状态。
+
+桌面端进程启动时会自动调用一次同样的检查（不经 REST）。**检查发现新版本后自动进入
+§4.39 的后台下载**，因此 `available` 通常只是瞬时阶段；用户只需要决定是否安装。
+检查的三个完成分支（发现更新 / 已是最新 / 失败）都会各推送一次完整状态快照。
+
+### 4.39 `POST /update/download`
+
+后台下载已发现的版本：两个裸 exe（`QingLink.exe`、`QingLinkUpdater.exe`）及各自
+`.sha256`。校验文件第一行是 64 位十六进制哈希，不符则进入 `error` 阶段，绝不使用
+未通过校验的文件。无请求体，返回 `{ "accepted": true }`；进度与结果经事件回流。
+下载保存在 `%LOCALAPPDATA%\QingLink\updates\<版本>\`。
+
+这条接口主要用于**下载失败后的手动重试**：正常情况下 §4.38 发现更新时已经自动触发。
+非 `ready` 也没有已发现版本时调用会返回 `accepted` 但不产生动作。
+
+### 4.40 `POST /update/install`
+
+仅在 `phase=ready` 时执行：启动更新器并请求主循环退出。更新器等待旧进程退出后替换
+exe、提权重新登记服务信任（服务校验桌面端 SHA256）、再拉起新进程。无请求体，成功
+返回 `{ "accepted": true }`。非 `ready` 阶段返回 `409 CONFLICT`（码 `CONFLICT`）。
+UAC 弹窗由服务重新登记触发，需用户确认。
+
 ---
 
 ## 5. WebSocket 事件
@@ -1065,6 +1115,7 @@ ws://127.0.0.1:3722/api/admin/v1/events
 | `system` | `pong` | 收到 `ping` | `{"server_time_unix":...}` |
 | `system` | `shutdown` | 桌面端即将退出 / 重启 | `{"reason":"restart"\|"exit"}` |
 | `system` | `settings` | 桌面端设置变化（接口写入或托盘菜单） | 4.3 的 `data` 对象本身 |
+| `system` | `update_state` | 更新检查/下载/安装各阶段与进度变化 | 4.37 的状态快照对象本身 |
 | `service` | `status` | 连接状态、暂停、网络就绪、地址或错误变化 | 4.5 的 `data` 对象本身 |
 | `service` | `install_state` | 提权操作状态变化 | 4.8 的 `data` 对象本身 |
 | `devices` | `changed` | 有效设备令牌数量变化（撤销、重新配对、过期） | `{"total": 2}` |

@@ -22,6 +22,30 @@ pub fn build_number() -> u32 {
         .unwrap_or(0)
 }
 
+/// 解析 `major.minor.patch+build` 形式的版本号为可比较的四元组。
+///
+/// 构建号在这里**参与**比较：本项目把 `+` 后的数字当作每次源码改动的递增序号，
+/// 而不是 semver 规范里"不影响优先级"的元数据——否则同一个语义版本下构建号从
+/// 28 涨到 29 会被判成同版本，检查更新永远提示不了。任一段解析失败按 0 处理。
+fn parse_version(value: &str) -> (u64, u64, u64, u64) {
+    let (core, build) = value
+        .split_once('+')
+        .map_or((value, "0"), |(core, build)| (core, build));
+    let mut parts = core.split('.');
+    let major = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
+    let minor = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
+    let patch = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
+    (major, minor, patch, build.trim().parse().unwrap_or(0))
+}
+
+/// 判断候选版本是否比当前版本更新。
+///
+/// 依次比较语义版本三段与构建号，任一段更大即为更新，完全相等返回 `false`。
+/// 供检查更新时对比 GitHub Release 的版本与本地 [`VERSION`] 使用。
+pub fn is_newer(candidate: &str, current: &str) -> bool {
+    parse_version(candidate) > parse_version(current)
+}
+
 /// 语义版本的前三段数字，供 Windows 版本资源的四段版本号使用。
 pub fn semantic_version_parts() -> (u16, u16, u16) {
     let mut parts = BASE_VERSION

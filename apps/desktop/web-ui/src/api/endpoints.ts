@@ -42,6 +42,7 @@ import type {
   ServiceStatus,
   SettingsData,
   SettingsPatch,
+  UpdateView,
 } from './types'
 
 /* ---------------------------------- health / overview ---------------------------------- */
@@ -317,6 +318,25 @@ export const logsApi = {
         offset: params.offset ?? 0,
       },
     })
+  },
+}
+
+export const updateApi = {
+  /** §4.37 当前更新状态快照 */
+  get(): Promise<UpdateView> {
+    return request<UpdateView>('/update')
+  },
+  /** §4.38 后台检查更新 */
+  check(): Promise<AcceptedResult> {
+    return request<AcceptedResult>('/update/check', { method: 'POST' })
+  },
+  /** §4.39 后台下载已发现的版本 */
+  download(): Promise<AcceptedResult> {
+    return request<AcceptedResult>('/update/download', { method: 'POST' })
+  },
+  /** §4.40 触发安装（主程序随后退出） */
+  install(): Promise<AcceptedResult> {
+    return request<AcceptedResult>('/update/install', { method: 'POST' })
   },
 }
 

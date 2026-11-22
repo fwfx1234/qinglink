@@ -172,6 +172,12 @@ cd apps\mobile; flutter pub get; flutter run
 **它与代码一起提交**：每次改动跑一次构建，这个文件就会变，提交时带上即可。如果它没被提交，
 换一台机器构建会从旧号继续，版本号可能出现回退。
 
+**CI 发布构建是例外**：流水线从 Release tag（形如 `desktop-v0.1.0+29`）解析出构建号，
+写入环境变量 `QINGLINK_CI_BUILD_NUMBER` 后再构建。此时 `build.rs` 直接用注入的构建号，
+既不算源码指纹也不写回状态文件——因为 CI checkout 出来的文件修改时间全部重置，照常算
+指纹必然与仓库里存的对不上而白白自增，导致产物版本与 tag 不一致。本地开发不设这个变量，
+行为不变。
+
 版本号出现在四个地方，都取自同一份 `qinglink_version::VERSION`：
 
 | 位置 | 字段 |
@@ -186,6 +192,26 @@ Windows 版本资源不再写死在 `.rc` 里：`apps/desktop/qinglink.rc` 只�
 `services/qinglink-service/build.rs` 生成。`0.1.0+13` 对应 `FILEVERSION 0,1,0,13`。
 
 不要再用 `env!("CARGO_PKG_VERSION")` 展示版本：它只有语义版本，看不出两次改动。
+
+检查更新时对比版本用 `qinglink_version::is_newer(candidate, current)`：它把语义版本三段与
+`+` 后的构建号一起比较。构建号虽然语义上是 semver 的构建元数据，但本项目拿它当源码改动
+的递增序号，不参与比较就会把 `0.1.0+28`→`0.1.0+29` 误判成同版本。前端与移动端按同一套
+语义各自实现比较函数。
+
+### 2.5 发布流水线（GitHub Actions）
+
+两条流水线按 tag 前缀分流，tag 是版本号唯一真相源，发布前先确认 tag 与源码版本一致：
+
+| 流水线 | 触发 | 校验 | 构建与产物 |
+| --- | --- | --- | --- |
+| `.github/workflows/desktop-release.yml` | `desktop-v<语义版本>+<构建号>` | tag 语义版本 == `Cargo.toml` 的 `workspace.package.version` | Windows runner：服务 → 刷新内嵌资源 → 桌面端 → 更新助手；产出两个 exe、各自 `.sha256`、zip |
+| `.github/workflows/mobile-release.yml` | `mobile-v<语义版本>+<构建号>` | tag 版本 == `pubspec.yaml` 的 `version` | Ubuntu + Flutter：APK + `.sha256`；先跑 `flutter analyze` |
+
+桌面流水线把 tag 里的构建号写入 `QINGLINK_CI_BUILD_NUMBER`（见 §2.4），否则 CI checkout
+后文件时间全变、指纹自增会让产物版本与 tag 对不上。**新增更新相关代码时**，发布前记得：
+版本号递进（`Cargo.toml` / `pubspec.yaml`）、按本机构建更新并提交 `build-number.txt`、
+确认 release asset 含精确命名的 `QingLink.exe` 与 `QingLinkUpdater.exe` 及各自 `.sha256`
+（桌面客户端按精确文件名匹配这两个裸 exe）。
 
 ---
 

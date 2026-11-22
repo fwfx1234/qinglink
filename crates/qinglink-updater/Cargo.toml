@@ -1,0 +1,18 @@
+[package]
+name = "qinglink-updater"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "QingLink 桌面端自更新助手"
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+qinglink-windows = { path = "../qinglink-windows" }
+time.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
+[lints]
+workspace = true

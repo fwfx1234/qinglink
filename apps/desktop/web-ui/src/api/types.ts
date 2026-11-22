@@ -13,6 +13,7 @@
  *   catalog.ts     §4.14 - §4.20、§4.29 - §4.33 应用目录与图标
  *   logs.ts        §4.21 - §4.26 日志
  *   diagnostics.ts §4.27 / §4.28 诊断报告
+ *   update.ts      §4.37 - §4.40 程序更新
  *   events.ts      §5           WebSocket 事件
  */
 
@@ -23,4 +24,5 @@ export type * from './contracts/pairing'
 export type * from './contracts/catalog'
 export type * from './contracts/logs'
 export type * from './contracts/diagnostics'
+export type * from './contracts/update'
 export type * from './contracts/events'

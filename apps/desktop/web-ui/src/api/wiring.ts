@@ -16,6 +16,7 @@ import { useOverviewStore } from '@/stores/overview'
 import { usePairingStore } from '@/stores/pairing'
 import { useServiceStore } from '@/stores/service'
 import { useSettingsStore } from '@/stores/settings'
+import { useUpdateStore } from '@/stores/update'
 import type { ServerEvent } from '@/api/types'
 
 const REASON_LABELS: Record<string, string> = {
@@ -36,6 +37,7 @@ export function installEventWiring(): void {
   const apps = useAppsStore()
   const logs = useLogsStore()
   const settings = useSettingsStore()
+  const update = useUpdateStore()
   const notifications = useNotificationsStore()
 
   let overviewTimer: number | null = null
@@ -59,6 +61,8 @@ export function installEventWiring(): void {
         } else if (event.event === 'settings') {
           settings.apply(event.data)
           overview.patchSettings(event.data)
+        } else if (event.event === 'update_state') {
+          update.apply(event.data)
         }
         return
       }

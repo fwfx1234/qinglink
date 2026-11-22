@@ -129,6 +129,45 @@ S8 是**手机端唯一的设置界面**，不再有第二处开关：
 - 新增开关只加在 `screens/settings_input_section.dart` / `screens/settings_tv_section.dart`，
   不要在其他页面复制一份状态。
 
+## 检查更新
+
+设置页「连接信息」分组提供**检查更新**入口（`AppRoutes.update` →
+`screens/update_screen.dart`），这个页面不要求已配对。版本号不再写死在设置页，
+由 `appVersionProvider`（`providers/app_version_provider.dart`）通过
+`package_info_plus` 从平台读取。
+
+应用启动约 3 秒后会**自动检查一次**（`main.dart` 用外部 `ProviderContainer` 在首帧后
+触发），设置页的「检查更新」是随时可重复执行的手动入口。**发现新版本立即后台下载**，
+下载完成后停在「安装」等待用户操作；安装会中断当前使用，所以始终手动触发。
+
+更新来源是本项目 GitHub Releases，只认 `mobile-v` 前缀的 tag：
+
+- tag 格式 `mobile-v<语义版本>+<构建号>`，例如 `mobile-v1.0.0+3`；语义版本部分
+  必须与 `pubspec.yaml` 的 `version` 前半段一致，CI 会校验，不一致直接失败。
+- 构建号参与版本比较：先比 `major.minor.patch`，相等再比 `+` 后的构建号。
+  只接受 tag 版本**严格新于**当前版本且带 APK 资产的正式 release（跳过 draft
+  和 prerelease）。
+- 版本基础设施见根目录 `docs/development.md` 的「发布流水线」。
+
+**Android** 是完整链路：检查 → 后台下载 → 校验 → 手动安装。
+
+- CI 产出的 APK 名为 `QingLink-mobile-<版本>-android.apk`，同名 `.sha256` 是校验文件；
+  客户端按 `.apk` 后缀匹配资产，下载前先取校验文件的哈希，下载完成后逐块计算 SHA256，
+  不一致就报错且不保留安装入口。
+- APK 落在应用私有目录 `updates/`，用 `open_filex` 拉起系统安装器；`open_filex`
+  自带 FileProvider 覆盖该目录，不需要再自定义 FileProvider。
+- `AndroidManifest.xml` 声明 `REQUEST_INSTALL_PACKAGES`，Android 8+ 首次安装仍需用户在
+  系统弹窗里允许「安装未知应用」；权限被拒时界面给出提示，不自动重试。
+- 下载不是自动安装：完成后停在「安装」按钮，由用户决定何时打断当前操作去安装。
+
+**iOS** 只做检查和跳转：GitHub Release 无法用于 iOS 侧载，release 里也没有 iOS 安装包，
+所以检测到新版本后只展示版本号、更新说明和「前往发布页」按钮，不提供下载与安装。
+当前自动流水线也只产出 Android APK；iOS 包仍按原有方式单独发布。
+
+相关实现：`models/update_info.dart`（版本解析与 release 模型）、
+`data/repositories/update_repository.dart`（GitHub API、流式下载、SHA256 校验）、
+`providers/update_provider.dart`（状态机与安装动作）。
+
 ## 进程页图标
 
 进程页（`lib/src/screens/processes_tab.dart`）的图标**按行懒取**，不随进程列表返回：

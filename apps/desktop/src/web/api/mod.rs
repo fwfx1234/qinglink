@@ -11,6 +11,7 @@ pub mod dialog;
 pub mod logs;
 pub mod service;
 pub mod system;
+pub mod update;
 
 use std::sync::Arc;
 
@@ -67,6 +68,10 @@ pub fn router() -> Router<Arc<WebState>> {
         .route("/logs/files", get(logs::files))
         .route("/logs/service", get(logs::service))
         .route("/logs/download", get(logs::download))
+        .route("/update", get(update::status))
+        .route("/update/check", post(update::check))
+        .route("/update/download", post(update::download_update))
+        .route("/update/install", post(update::install_update))
 }
 
 /// Maximum page size any endpoint will honour.
