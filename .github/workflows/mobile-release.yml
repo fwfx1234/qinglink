@@ -112,10 +112,15 @@ jobs:
             exit 1
           fi
           "$APKSIGNER" verify --print-certs "$APK" | tee certs.txt
-          grep -F 'Signer #1 certificate DN' certs.txt
-          # apksigner 输出小写十六进制，这里统一成大写再比
-          ACTUAL=$(grep -F 'Signer #1 certificate SHA-256 digest' certs.txt | awk '{print $NF}' | tr '[:lower:]' '[:upper:]')
-          if [ "$ACTUAL" != "$EXPECTED_SHA256" ]; then
+          # 不同 apksigner 版本输出的前缀不同：老版本是 `Signer #1 certificate ...`，
+          # build-tools 37 起变成 `V2 Signer: certificate ...`，所以只匹配字段名。
+          grep -E 'certificate (DN|SHA-256 digest)' certs.txt || true
+          # 指纹的书写格式各版本不一致：老版本输出大写带冒号，build-tools 37
+          # 输出小写不带冒号。统一去掉冒号并转大写后再比。
+          ACTUAL=$(grep -E 'certificate SHA-256 digest' certs.txt | head -1 | awk '{print $NF}' \
+            | tr '[:lower:]' '[:upper:]' | tr -d ':')
+          EXPECTED=$(echo "$EXPECTED_SHA256" | tr '[:lower:]' '[:upper:]' | tr -d ':')
+          if [ -z "$ACTUAL" ] || [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "APK 签名指纹不符：" >&2
             echo "  期望 $EXPECTED_SHA256" >&2
             echo "  实际 $ACTUAL" >&2
