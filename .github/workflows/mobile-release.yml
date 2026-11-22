@@ -98,9 +98,20 @@ jobs:
         env:
           EXPECTED_SHA256: '93:17:DC:EC:24:EE:30:C4:40:F3:BB:27:50:5A:70:E0:0C:46:B0:5F:CA:71:C9:6D:8A:02:6F:AF:A9:D3:08:D7'
         run: |
+          set -uo pipefail
           APK=apps/mobile/build/app/outputs/flutter-apk/app-release.apk
-          APKSIGNER=$(ls -1 "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
-          "$APKSIGNER" verify --print-certs "$APK" > certs.txt
+          # GitHub 的 ubuntu 镜像并不导出 ANDROID_HOME，只能按已知安装位置回退；
+          # 找不到 apksigner 就报错退出，绝不跳过校验。
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          APKSIGNER=$(find "$SDK/build-tools" -maxdepth 2 -type f -name apksigner 2>/dev/null | sort -V | tail -1)
+          echo "SDK=$SDK"
+          echo "APKSIGNER=${APKSIGNER:-<未找到>}"
+          if [ -z "$APKSIGNER" ]; then
+            echo "找不到 apksigner，无法校验签名" >&2
+            ls -1 "$SDK" 2>/dev/null | head -20 >&2
+            exit 1
+          fi
+          "$APKSIGNER" verify --print-certs "$APK" | tee certs.txt
           grep -F 'Signer #1 certificate DN' certs.txt
           # apksigner 输出小写十六进制，这里统一成大写再比
           ACTUAL=$(grep -F 'Signer #1 certificate SHA-256 digest' certs.txt | awk '{print $NF}' | tr '[:lower:]' '[:upper:]')
