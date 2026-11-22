@@ -7,8 +7,7 @@ gradle-wrapper.jar
 GeneratedPluginRegistrant.java
 .cxx/
 
-# Remember to never publicly share your keystore.
-# See https://flutter.dev/to/reference-keystore
-key.properties
-**/*.keystore
-**/*.jks
+# 发布签名是【刻意入库】的：keystore/qinglink-release.jks 与 key.properties
+# 都必须随源码提交。一旦被忽略，CI 只能退回每次新生成的 debug 密钥，已安装的
+# 客户端就会因签名变化而无法覆盖升级。不要把它们加回忽略列表，
+# 原因见 key.properties 顶部的说明。

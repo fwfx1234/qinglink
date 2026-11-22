@@ -211,12 +211,17 @@ cargo build --release -p qinglink-desktop --bin QingLink
 | 流水线 | 触发 tag | 产物 |
 | --- | --- | --- |
 | `.github/workflows/desktop-release.yml` | `desktop-v0.1.0+29` | `QingLink.exe` + `SHA256SUMS` |
-| `.github/workflows/mobile-release.yml` | `mobile-v1.0.0+6` | Android APK + 同名 `.apk.sha256` |
+| `.github/workflows/mobile-release.yml` | `mobile-v1.0.0+7` | Android APK + 同名 `.apk.sha256` |
 
 两端各只发布两个资产：程序本体与校验清单（GNU sha256sum 行格式）。桌面端自更新
 由下载好的新 exe 副本以 `--self-update` 启动完成，不再单独发布更新器 exe；旧版本客户端
 无法从新 release 自动更新，需手动下载安装。移动端清单刻意命名为 `<APK>.sha256`，让
 已安装的旧版客户端也能取到校验文件。两份清单都可用 `sha256sum -c` 校验。
+
+移动端 APK 由仓库内的固定密钥签名（`apps/mobile/android/keystore/qinglink-release.jks`，
+签名配置随源码提交），CI 发版前会校验证书指纹——Android 只允许同签名的包覆盖安装，
+签名一变老用户就只能卸载重装。`1.0.0+7` 是第一个固定签名的版本，从更早版本升级需先
+卸载一次；此后可正常覆盖升级。
 
 tag 是版本号唯一真相源：桌面流水线从 tag 解析构建号注入 `QINGLINK_CI_BUILD_NUMBER`，
 保证产物版本与 tag 一致（详见 [`docs/development.md`](docs/development.md) §2.4）。
