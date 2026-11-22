@@ -211,7 +211,7 @@ cargo build --release -p qinglink-desktop --bin QingLink
 | 流水线 | 触发 tag | 产物 |
 | --- | --- | --- |
 | `.github/workflows/desktop-release.yml` | `desktop-v0.1.0+29` | `QingLink.exe` + `SHA256SUMS` |
-| `.github/workflows/mobile-release.yml` | `mobile-v1.0.0+5` | Android APK + 同名 `.apk.sha256` |
+| `.github/workflows/mobile-release.yml` | `mobile-v1.0.0+6` | Android APK + 同名 `.apk.sha256` |
 
 两端各只发布两个资产：程序本体与校验清单（GNU sha256sum 行格式）。桌面端自更新
 由下载好的新 exe 副本以 `--self-update` 启动完成，不再单独发布更新器 exe；旧版本客户端

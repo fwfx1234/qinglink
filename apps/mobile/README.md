@@ -142,7 +142,7 @@ S8 是**手机端唯一的设置界面**，不再有第二处开关：
 
 更新来源是本项目 GitHub Releases，只认 `mobile-v` 前缀的 tag：
 
-- tag 格式 `mobile-v<语义版本>+<构建号>`，例如 `mobile-v1.0.0+5`；语义版本部分
+- tag 格式 `mobile-v<语义版本>+<构建号>`，例如 `mobile-v1.0.0+6`；语义版本部分
   必须与 `pubspec.yaml` 的 `version` 前半段一致，CI 会校验，不一致直接失败。
 - 构建号参与版本比较：先比 `major.minor.patch`，相等再比 `+` 后的构建号。
   只接受 tag 版本**严格新于**当前版本且带 APK 资产的正式 release（跳过 draft

@@ -1,6 +1,6 @@
 # QingLink 移动端发布流水线
 #
-# 触发：推送 `mobile-v<版本>` 标签，例如 `mobile-v1.0.0+5`。
+# 触发：推送 `mobile-v<版本>` 标签，例如 `mobile-v1.0.0+6`。
 # tag 是版本号唯一真相源：CI 校验它与 pubspec.yaml 的语义版本一致，并用
 # --build-name / --build-number 覆盖构建，确保 APK 版本与 tag 一致。
 #
