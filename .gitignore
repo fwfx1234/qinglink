@@ -9,6 +9,8 @@
 /apps/mobile/.flutter-plugins
 /apps/mobile/.flutter-plugins-dependencies
 /apps/mobile/android/.gradle/
+# Flutter 原生侧的中间产物目录（android/build 不在 /apps/mobile/build/ 覆盖范围内）。
+/apps/mobile/android/build/
 *.log
 *.pdb
 androguard.db
@@ -20,3 +22,6 @@ elevated-install-result.txt
 # （仅 QINGLINK_REQUIRE_INPUT_ASSETS=1 会让构建失败），症状是桌面端提示资源缺失。
 /apps/desktop/assets/input/*.exe
 .shots/
+# 本地协作产物：WorkBuddy 记忆与计划、皮肤缓存工作区，只存在于开发机，不入库。
+/.workbuddy/
+/workspace/
