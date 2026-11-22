@@ -1,6 +1,8 @@
 /// 更新数据源：GitHub Releases 的读取与 APK 下载。
 ///
-/// 通道约定：移动端只认 `mobile-v` 前缀的 tag；从 asset 里找 `.apk` 与 `SHA256SUMS`。
+/// 通道约定：移动端只认 `mobile-v` 前缀的 tag；从 asset 里找 `.apk`，再找它的
+/// 校验清单——优先 `SHA256SUMS`，没有则退回与 APK 同名的 `<apk>.sha256`
+/// （旧版发布沿用的命名，已安装的旧客户端只能读这个）。
 /// 下载走 `http` 包的流式响应，逐块写入文件并回报进度，避免整包进内存。
 library;
 
@@ -36,7 +38,7 @@ class UpdateRepository {
         .get(Uri.parse(apiUrl), headers: const {'User-Agent': 'QingLink-Mobile'})
         .timeout(const Duration(seconds: 20));
     if (response.statusCode != 200) {
-      throw '检查更新失败（HTTP ${response.statusCode}）';
+      throw _httpFailure('检查更新失败', response.statusCode);
     }
     final releases = _decodeList(response.body);
     final current = ParsedVersion.parse(currentVersion);
@@ -76,7 +78,7 @@ class UpdateRepository {
     request.headers['User-Agent'] = 'QingLink-Mobile';
     final response = await _client.send(request).timeout(const Duration(minutes: 10));
     if (response.statusCode != 200) {
-      throw '下载更新失败（HTTP ${response.statusCode}）';
+      throw _httpFailure('下载更新失败', response.statusCode);
     }
     final total = response.contentLength ?? 0;
     var downloaded = 0;
@@ -106,7 +108,7 @@ class UpdateRepository {
         .get(Uri.parse(url), headers: const {'User-Agent': 'QingLink-Mobile'})
         .timeout(const Duration(seconds: 30));
     if (response.statusCode != 200) {
-      throw '获取校验清单失败（HTTP ${response.statusCode}）';
+      throw _httpFailure('获取校验清单失败', response.statusCode);
     }
     final result = <String, String>{};
     for (final rawLine in response.body.split(RegExp(r'\r?\n'))) {
@@ -130,6 +132,14 @@ class UpdateRepository {
     return result;
   }
 
+  /// 把 HTTP 状态码翻成能指导下一步的说法：404 基本都是发布页少了文件。
+  String _httpFailure(String action, int status) => switch (status) {
+        404 => '$action：发布页缺少对应文件（HTTP 404）',
+        403 => '$action：GitHub 访问受限，请稍后再试（HTTP 403）',
+        >= 500 => '$action：GitHub 服务异常（HTTP $status）',
+        _ => '$action（HTTP $status）',
+      };
+
   List<dynamic> _decodeList(String body) {
     final decoded = jsonDecode(body);
     if (decoded is! List) throw 'GitHub 响应格式无效';
@@ -143,27 +153,43 @@ class UpdateRepository {
   ) {
     final assets = map['assets'] as List<dynamic>? ?? [];
     Map<String, dynamic>? apk;
-    Map<String, dynamic>? manifest;
     for (final item in assets) {
       final asset = item as Map<String, dynamic>?;
       if (asset == null) continue;
       final name = asset['name'] as String? ?? '';
       if (name.endsWith('.apk')) {
         apk = asset;
-      } else if (name == _manifestAsset) {
-        manifest = asset;
+        break;
       }
     }
-    // 单文件校验已改为统一清单：APK 与 SHA256SUMS 缺一不可，否则跳过该 release。
-    if (apk == null || manifest == null) return null;
+    if (apk == null) return null;
+
+    final apkName = apk['name'] as String? ?? 'app-release.apk';
+    // 清单有两种合法命名：统一的 SHA256SUMS，或跟 APK 同名的 `.sha256`。
+    // 后者是旧版发布沿用的写法，旧客户端会按「APK 地址 + .sha256」直接取，
+    // 所以新发布仍产出这个文件名；这里两种都认，SHA256SUMS 优先。
+    Map<String, dynamic>? manifest;
+    for (final item in assets) {
+      final asset = item as Map<String, dynamic>?;
+      if (asset == null) continue;
+      final name = asset['name'] as String? ?? '';
+      if (name == _manifestAsset) {
+        manifest = asset;
+        break;
+      }
+      if (name == '$apkName.sha256') manifest = asset;
+    }
+
+    // 没有清单也要把版本报出来：下载入口会禁用，但「前往发布页」仍可用，
+    // 比静默当成「已是最新」更诚实。
     return ReleaseInfo(
       tag: tag,
       version: version,
       htmlUrl: map['html_url'] as String? ?? '',
       notes: map['body'] as String? ?? '',
       apkUrl: apk['browser_download_url'] as String? ?? '',
-      apkName: apk['name'] as String? ?? 'app-release.apk',
-      checksumUrl: manifest['browser_download_url'] as String? ?? '',
+      apkName: apkName,
+      checksumUrl: manifest?['browser_download_url'] as String? ?? '',
     );
   }
 }

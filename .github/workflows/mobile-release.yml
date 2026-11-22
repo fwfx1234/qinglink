@@ -1,13 +1,15 @@
 # QingLink 移动端发布流水线
 #
-# 触发：推送 `mobile-v<版本>` 标签，例如 `mobile-v1.0.0+4`。
+# 触发：推送 `mobile-v<版本>` 标签，例如 `mobile-v1.0.0+5`。
 # tag 是版本号唯一真相源：CI 校验它与 pubspec.yaml 的语义版本一致，并用
 # --build-name / --build-number 覆盖构建，确保 APK 版本与 tag 一致。
 #
 # 产物：一个 GitHub Release，含两个 asset：
 #   QingLink-mobile-<版本>-android.apk
-#   SHA256SUMS（统一校验清单，GNU sha256sum 行格式）
-# 移动端检查更新时找 `.apk` 资产，并下载 SHA256SUMS 校验。
+#   QingLink-mobile-<版本>-android.apk.sha256（GNU sha256sum 清单格式）
+# 清单文件名跟着 APK 走，是为了让已安装的旧版客户端（按「APK 地址 + .sha256」
+# 取校验文件）也能升级；内容仍是标准的「哈希 + 两个空格 + 文件名」多行格式。
+# 新客户端优先找 SHA256SUMS，找不到再退回同名 `.sha256`。
 # iOS 无法从 GitHub Release 侧载，客户端只做检查 + 打开发布页提示。
 
 name: 移动端发布
@@ -95,7 +97,11 @@ jobs:
           APK_NAME="QingLink-mobile-$VERSION-android.apk"
           cp apps/mobile/build/app/outputs/flutter-apk/app-release.apk "$STAGE/$APK_NAME"
           # 在 stage 目录内生成清单，保证文件名为裸名（不含路径）。
-          (cd "$STAGE" && sha256sum "$APK_NAME" > SHA256SUMS)
+          # 清单沿用 GNU sha256sum 多行格式，但文件名取 `$APK_NAME.sha256`：
+          # 已安装的旧版客户端按「APK 地址 + .sha256」取校验文件，只读第一行；
+          # 文件名换成 SHA256SUMS 会让它们直接 404。多行清单对旧客户端无害
+          # （首行就是 APK 的哈希），新客户端则按文件名查表。
+          (cd "$STAGE" && sha256sum "$APK_NAME" > "$APK_NAME.sha256")
           ls -lh "$STAGE"
 
       - name: 创建 Release 并上传资产
@@ -109,6 +115,6 @@ jobs:
             - Android：下载 `QingLink-mobile-*.apk` 安装；应用内「检查更新」可直接下载并安装。
             - iOS：GitHub Release 不提供可侧载安装包，应用内检查到更新后会提示前往本页。
 
-            `SHA256SUMS` 为统一校验清单（GNU sha256sum 行格式）。
+            `QingLink-mobile-*.apk.sha256` 为校验清单（GNU sha256sum 行格式）。
           files: release-assets/*
           fail_on_unmatched_files: true

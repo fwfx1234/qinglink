@@ -25,13 +25,11 @@ Map<String, dynamic> _asset(String name) => {
 
 void main() {
   group('UpdateRepository.check', () {
-    test('需要 APK 与 SHA256SUMS 同时存在', () async {
+    const apkName = 'QingLink-mobile-1.0.0+9-android.apk';
+
+    test('识别统一的 SHA256SUMS 清单', () async {
       final client = MockClient((request) async => http.Response(
-          _releasesJson([
-            _asset('QingLink-mobile-1.0.0+9-android.apk'),
-            _asset('SHA256SUMS')
-          ]),
-          200));
+          _releasesJson([_asset(apkName), _asset('SHA256SUMS')]), 200));
       final repo = UpdateRepository(client: client);
       final info = await repo.check('1.0.0+2');
       expect(info, isNotNull);
@@ -39,12 +37,38 @@ void main() {
       expect(info.checksumUrl, 'https://example.test/SHA256SUMS');
     });
 
-    test('缺少 SHA256SUMS 时跳过 release', () async {
+    test('识别与 APK 同名的 .sha256 清单（旧客户端兼容命名）', () async {
       final client = MockClient((request) async => http.Response(
-          _releasesJson([_asset('QingLink-mobile-1.0.0+9-android.apk')]),
+          _releasesJson([_asset(apkName), _asset('$apkName.sha256')]), 200));
+      final repo = UpdateRepository(client: client);
+      final info = await repo.check('1.0.0+2');
+      expect(info, isNotNull);
+      expect(info!.hasApk, isTrue);
+      expect(info.checksumUrl, 'https://example.test/$apkName.sha256');
+    });
+
+    test('两种清单同时存在时优先 SHA256SUMS', () async {
+      final client = MockClient((request) async => http.Response(
+          _releasesJson([
+            _asset(apkName),
+            _asset('$apkName.sha256'),
+            _asset('SHA256SUMS'),
+          ]),
           200));
       final repo = UpdateRepository(client: client);
-      expect(await repo.check('1.0.0+2'), isNull);
+      final info = await repo.check('1.0.0+2');
+      expect(info!.checksumUrl, 'https://example.test/SHA256SUMS');
+    });
+
+    test('没有清单时仍报出新版本，但标记为不可应用内安装', () async {
+      final client = MockClient((request) async =>
+          http.Response(_releasesJson([_asset(apkName)]), 200));
+      final repo = UpdateRepository(client: client);
+      final info = await repo.check('1.0.0+2');
+      expect(info, isNotNull);
+      expect(info!.version, '1.0.0+9');
+      expect(info.hasApk, isFalse);
+      expect(info.checksumUrl, isEmpty);
     });
   });
 

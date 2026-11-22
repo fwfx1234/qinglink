@@ -57,6 +57,9 @@ class UpdateState {
         _ => false,
       };
 
+  /// 能否在应用内下载安装：只有 Android 有可侧载的 APK，iOS 只能跳发布页。
+  bool get canInstall => Platform.isAndroid && (release?.hasApk ?? false);
+
   UpdateState copyWith({
     UpdatePhase? phase,
     String? currentVersion,
@@ -104,10 +107,11 @@ class UpdateNotifier extends AsyncNotifier<UpdateState> {
   /// 发现新版本立即后台下载；安装仍需用户手动点击（会中断当前操作）。
   Future<void> check() async {
     final version = await ref.read(appVersionProvider.future);
-    final current = state.valueOrNull?.currentVersion ?? version.displayVersion;
+    // 首帧就自动检查时 build() 可能还没完成；先拿到初始状态再改，否则 _set 会空转。
+    final current = await _ensureState(version.displayVersion);
     _set((s) => s.copyWith(phase: UpdatePhase.checking, clearError: true));
     try {
-      final release = await _repo.check(current);
+      final release = await _repo.check(current.currentVersion);
       if (release == null) {
         _set((s) => s.copyWith(phase: UpdatePhase.upToDate, clearRelease: true));
       } else {
@@ -120,10 +124,26 @@ class UpdateNotifier extends AsyncNotifier<UpdateState> {
     }
   }
 
-  /// 下载 APK 并校验。iOS 无 APK 资产时 repository 返回 null，这里保持不变。
+  /// 下载 APK 并校验。非 Android（如 iOS）不下载安装包，只保留发布页入口。
   Future<void> download() async {
-    final release = state.valueOrNull?.release;
-    if (release == null || !release.hasApk) return;
+    final state0 = state.valueOrNull;
+    final release = state0?.release;
+    if (release == null) return;
+    if (!Platform.isAndroid) {
+      _set((s) => s.copyWith(phase: UpdatePhase.available, clearError: true));
+      return;
+    }
+    if (!release.hasApk) {
+      // 有 APK 但没有清单：不能跳过校验就安装，给出去发布页的口子。
+      _set((s) => s.copyWith(
+            phase: UpdatePhase.available,
+            error: release.apkUrl.isEmpty
+                ? '该版本没有 Android 安装包，请前往发布页查看'
+                : '该版本缺少校验清单，请前往发布页手动下载',
+          ));
+      return;
+    }
+    if (state0!.phase == UpdatePhase.downloading) return;
     _set((s) => s.copyWith(
           phase: UpdatePhase.downloading,
           progress: 0,
@@ -166,6 +186,20 @@ class UpdateNotifier extends AsyncNotifier<UpdateState> {
       ResultType.permissionDenied => InstallOutcome.permissionDenied,
       _ => InstallOutcome.failed,
     };
+  }
+
+  /// 保证 state 已有值：build() 未完成时先等它；build 抛错就用兜底版本号建一个，
+  /// 让页面至少能显示版本与检查结果，而不是一直卡在加载态。
+  Future<UpdateState> _ensureState(String fallbackVersion) async {
+    final existing = state.valueOrNull;
+    if (existing != null) return existing;
+    try {
+      return await future;
+    } catch (_) {
+      final seeded = UpdateState(currentVersion: fallbackVersion);
+      state = AsyncData(seeded);
+      return seeded;
+    }
   }
 
   void _set(UpdateState Function(UpdateState) update) {
