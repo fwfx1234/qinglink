@@ -111,7 +111,24 @@ jobs:
             ls -1 "$SDK" 2>/dev/null | head -20 >&2
             exit 1
           fi
-          "$APKSIGNER" verify --print-certs "$APK" | tee certs.txt
+          "$APKSIGNER" verify -v --print-certs "$APK" | tee certs.txt
+          # apksigner 只在「目标平台需要」时才校验 v1：APK 的 minSdk 是 24，
+          # 默认范围下 v1 恒为 false 并不代表没签。要证明 JAR 签名真的存在，
+          # 必须把校验范围下探到 21。两个范围各跑一次。
+          "$APKSIGNER" verify -v --min-sdk-version 21 "$APK" | tee legacy.txt
+          if ! grep -qF 'Verified using v1 scheme (JAR signing): true' legacy.txt; then
+            echo "缺少 v1（JAR）签名：APK 里不会有 META-INF/*.RSA，部分安装器会提示没有签名文件" >&2
+            exit 1
+          fi
+          if ! grep -qF 'Verified using v2 scheme (APK Signature Scheme v2): true' certs.txt; then
+            echo "缺少 v2 签名" >&2
+            exit 1
+          fi
+          # 部分安装器只认 META-INF 里这套 JAR 签名文件，直接确认它们存在
+          if ! unzip -l "$APK" | grep -qE 'META-INF/[A-Z0-9]+\.(RSA|SF)'; then
+            echo "APK 内缺少 META-INF 签名文件" >&2
+            exit 1
+          fi
           # 不同 apksigner 版本输出的前缀不同：老版本是 `Signer #1 certificate ...`，
           # build-tools 37 起变成 `V2 Signer: certificate ...`，所以只匹配字段名。
           grep -E 'certificate (DN|SHA-256 digest)' certs.txt || true

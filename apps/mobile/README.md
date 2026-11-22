@@ -177,8 +177,16 @@ Android 只允许「同包名 + 同签名」的 APK 覆盖安装。签名一变�
   alias `qinglink`）与 `android/key.properties` **都随源码提交**。
 - `android/app/build.gradle.kts` 读 `key.properties` 生成 `release` 签名配置，
   `buildTypes.release` 用它；只有配置缺失时才退回 debug（仅供本地试验）。
-- CI 打包后调用 `apksigner verify --print-certs` 硬校验证书 SHA-256，指纹不符
-  直接失败，避免某天悄悄退回 debug 签名。
+- 签名方案**v1 + v2 + v3 全开**。AGP 在 `minSdk >= 24` 时会默认关掉 v1（JAR 签名），
+  产物里就没有 `META-INF/*.RSA`、`*.SF`、`MANIFEST.MF` 这套签名文件 —— 部分安装器
+  和定制 ROM 只认这套 JAR 签名，会直接提示「安装包没有签名文件 / 未包含任何证书」。
+  v1 只是兼容兜底，不削弱 v2/v3。
+- CI 打包后调用 `apksigner verify -v --print-certs`，既校验证书 SHA-256，也断言
+  v1 与 v2 签名都存在、`META-INF` 里确实有 `.RSA`/`.SF`，任一条件不满足直接失败。
+
+> 排查提示：`apksigner verify` 只在目标平台需要时才校验 v1。本应用 minSdk 是 24，
+> 默认范围下 v1 恒显示 `false`，**不代表没签**。要确认 v1，得加
+> `--min-sdk-version 21`，或者直接看 APK 里有没有 `META-INF/CERT.RSA`。
 
 当前指纹（证书 SHA-256）：
 
@@ -192,7 +200,7 @@ Android 只允许「同包名 + 同签名」的 APK 覆盖安装。签名一变�
 CI 里的期望指纹。
 
 `1.0.0+7` 是第一个使用固定签名的版本，从更早的版本升级必须先卸载一次；
-此后各版本可正常覆盖升级。
+`1.0.0+8` 起签名方案补齐 v1，从 +7 起可正常覆盖升级。
 
 **iOS** 只做检查和跳转：GitHub Release 无法用于 iOS 侧载，release 里也没有 iOS 安装包，
 所以检测到新版本后只展示版本号、更新说明和「前往发布页」按钮，不提供下载与安装。

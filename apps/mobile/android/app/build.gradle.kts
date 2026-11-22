@@ -43,6 +43,14 @@ android {
                 storePassword = keystoreProperties.getProperty("storePassword")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
+
+                // 三种签名方案全开。AGP 在 minSdk >= 24 时默认关闭 v1（JAR 签名），
+                // 只留 v2 —— 但 APK 里就不会有 META-INF/*.RSA、*.SF、MANIFEST.MF，
+                // 部分安装器与定制 ROM 只认这套 JAR 签名文件，会报「安装包没有
+                // 签名文件 / 未包含任何证书」。v1 不影响 v2/v3，纯粹的兼容兜底。
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }

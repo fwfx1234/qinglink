@@ -216,12 +216,15 @@ Windows 版本资源不再写死在 `.rc` 里：`apps/desktop/qinglink.rc` 只�
 改名会让它们 404。客户端按精确文件名匹配这两个资产；不再发布独立更新器 exe，
 旧客户端无法从新 release 自动更新。
 
-移动端还有一条额外约束：**APK 必须由固定密钥签名**。Android 只允许同包名 + 同签名的
-APK 覆盖安装，而 runner 每次全新、AGP 默认 debug 密钥每次现生成，等于发一版换一次
-签名，已安装的客户端会在更新时报签名冲突。密钥与密码刻意随源码提交
-（`apps/mobile/android/keystore/qinglink-release.jks` + `key.properties`），
-CI 打包后用 `apksigner verify --print-certs` 硬校验证书 SHA-256，指纹不符直接失败。
-轮换密钥等于让老用户卸载重装，改指纹时要同步改工作流。详见 `apps/mobile/README.md`。
+移动端还有一条额外约束：**APK 必须由固定密钥签名，且签名方案 v1/v2/v3 全开**。
+Android 只允许同包名 + 同签名的 APK 覆盖安装，而 runner 每次全新、AGP 默认 debug 密钥
+每次现生成，等于发一版换一次签名，已安装的客户端会在更新时报签名冲突。密钥与密码刻意
+随源码提交（`apps/mobile/android/keystore/qinglink-release.jks` + `key.properties`）。
+另外 AGP 在 `minSdk >= 24` 时默认关闭 v1（JAR）签名，产物不含 `META-INF/*.RSA`，
+部分安装器会提示「没有签名文件」，所以显式打开 v1/v2/v3。CI 打包后用
+`apksigner verify -v --print-certs` 校验证书 SHA-256 并断言 v1、v2 均存在，任一不符
+直接失败。轮换密钥等于让老用户卸载重装，改指纹时要同步改工作流。详见
+`apps/mobile/README.md`。
 
 ---
 
