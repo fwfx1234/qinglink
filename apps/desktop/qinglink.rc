@@ -5,6 +5,12 @@
 // It is the only RT_MANIFEST/1 resource in the image.
 1 RT_MANIFEST "qinglink.exe.manifest"
 
+// 应用图标：资源管理器、任务栏、Alt+Tab 与文件属性里的 "更改图标" 都读这个
+// `RT_GROUP_ICON`。它必须是多尺寸 ICO（16~256），只放一张大图会让 16px 的
+// 任务栏/标题栏图标靠位图缩放糊成一团。图形与移动端应用图标同源
+// （apps/mobile/design/icon/icon_v4.svg）。
+1 ICON "assets/app-icon.ico"
+
 // 版本资源（VERSIONINFO）不在这里：构建号每次源码改动都会变，写死的 FILEVERSION
 // 会让文件属性永远停在旧版本。它由 build.rs 按当前构建号生成到
 // OUT_DIR/version_info.rc 后单独嵌入。

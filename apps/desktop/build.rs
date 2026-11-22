@@ -93,6 +93,8 @@ fn main() {
     println!("cargo:rerun-if-changed=assets/input");
     println!("cargo:rerun-if-changed=assets/tray-icon.svg");
     println!("cargo:rerun-if-changed=qinglink.rc");
+    // qinglink.rc 引用了这个 ICO；换图标时必须重新编译资源，否则 exe 里还是旧图标。
+    println!("cargo:rerun-if-changed=assets/app-icon.ico");
     println!("cargo:rerun-if-changed=qinglink.exe.manifest");
     // 构建号一变，嵌进可执行文件的版本资源也要跟着变（见 embed_version_resource）。
     println!("cargo:rerun-if-changed=../../crates/qinglink-version/build-number.txt");

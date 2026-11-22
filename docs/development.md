@@ -62,9 +62,19 @@ $env:QINGLINK_SKIP_WEB_BUILD = '1'
   根本不存在时出现（`--self-check` 的 `web_interface.placeholder` 只回答"有没有界面"，
   不回答"新不新"）。
 
-`build.rs` 还负责版本资源：`qinglink.rc` 只保留应用清单，`FILEVERSION` / `FileVersion`
-由 `qinglink_version::version_info_rc` 按当前构建号生成后嵌入（见 §2.4）。版本号一变，
-`build.rs` 就会因 `../../crates/qinglink-version/build-number.txt` 变化而重跑。
+`build.rs` 还负责 Windows 资源：`qinglink.rc` 里只有两样东西——应用清单
+（`1 RT_MANIFEST`）与应用图标（`1 ICON "assets/app-icon.ico"`）；`FILEVERSION` /
+`FileVersion` 由 `qinglink_version::version_info_rc` 按当前构建号生成后嵌入（见 §2.4）。
+版本号一变，`build.rs` 就会因 `../../crates/qinglink-version/build-number.txt` 变化而重跑。
+
+**应用图标。** `apps/desktop/assets/app-icon.ico` 与移动端应用图标同源
+（[`apps/mobile/design/icon/icon_v4.svg`](../apps/mobile/design/icon/icon_v4.svg)），
+含 16/24/32/48/64/128/256 七个尺寸——只放一张大图会让任务栏与标题栏的 16px 图标靠位图
+缩放糊掉。换图标只替换这一个文件，`build.rs` 已用 `cargo:rerun-if-changed` 监视它。
+资源管理器、任务栏、Alt+Tab 与文件属性里的「更改图标」读的都是它。**注意托盘图标是另一套
+资产**：`apps/desktop/assets/tray-icon.svg` 在运行时由 `resvg` 渲染，`--self-check` 还按它断言
+`has_brand_blue` / `has_white_glyph`（见 [`architecture.md`](architecture.md) §6.1）；换托盘图标
+要同时改这两处，换 exe 图标则不必碰托盘。
 
 本仓库没有构建脚本：跨语言编排全部由 `build.rs` 承担，日常只用
 `cargo` / `npm` / `flutter` 的原生命令（[`AGENTS.md`](../AGENTS.md) §7）。
@@ -187,7 +197,8 @@ cd apps\mobile; flutter pub get; flutter run
 | 服务端 `GET /api/v2/health` | `app_version` |
 | Windows 文件属性（两个 exe） | `FILEVERSION` / `FileVersion` |
 
-Windows 版本资源不再写死在 `.rc` 里：`apps/desktop/qinglink.rc` 只保留应用清单，版本信息由
+Windows 版本资源不再写死在 `.rc` 里：`apps/desktop/qinglink.rc` 只保留应用清单与应用图标
+（`1 RT_MANIFEST` / `1 ICON`），版本信息由
 `qinglink_version::version_info_rc` 在构建脚本中生成；服务端没有静态 `.rc`，完全由
 `services/qinglink-service/build.rs` 生成。`0.1.0+13` 对应 `FILEVERSION 0,1,0,13`。
 
