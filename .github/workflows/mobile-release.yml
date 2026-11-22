@@ -54,10 +54,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # 固定版本而非跟随 stable：Flutter 3.47+ 弃用 material.dart 等入口，
+      # 会让 flutter analyze 报出 80+ 条 deprecated_member_use 并使构建失败。
+      # 升级前需先把全项目导入迁到 material_ui / cupertino_ui，再一并改这里。
       - name: 安装 Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.44.8'
           cache: true
 
       - name: 获取依赖
