@@ -1,21 +1,16 @@
 /target/
-/target-uac/
 # 开发期数据目录：约定为 target\qinglink-runtime（已被 /target/ 覆盖）。
 # 下面两条是防御性的，避免有人把 QINGLINK_DATA_DIR 指到仓库根目录时把运行数据提交进来。
 /.qinglink-data/
 /.tmp-data/
 /apps/mobile/.dart_tool/
 /apps/mobile/build/
-/apps/mobile/.flutter-plugins
 /apps/mobile/.flutter-plugins-dependencies
 /apps/mobile/android/.gradle/
 # Flutter 原生侧的中间产物目录（android/build 不在 /apps/mobile/build/ 覆盖范围内）。
 /apps/mobile/android/build/
 *.log
 *.pdb
-androguard.db
-tv_ir_data.csv
-elevated-install-result.txt
 .DS_Store
 # 安全输入服务是 services/qinglink-service 的构建产物，只放源代码、不入库。
 # 构建桌面端之前按 apps/desktop/assets/input/README.md 生成它。缺它时 build.rs 静默
@@ -25,3 +20,6 @@ elevated-install-result.txt
 # 本地协作产物：WorkBuddy 记忆与计划、皮肤缓存工作区，只存在于开发机，不入库。
 /.workbuddy/
 /workspace/
+# 工程审查报告属过程产物而非软件文档，保存在仓库外的 ../qinglink-deliverables/，
+# 不要让 AI 工作流把它们重新写回仓库时混进提交。
+/deliverables/

@@ -18,6 +18,8 @@ tracing.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
+# 直接依赖：`windows::core::imp::define_interface!` 等宏展开后按 `windows_core::`
+# 路径引用类型，缺这一行会编译失败（宏卫生，源码里看不到裸的 windows_core::）。
 windows-core.workspace = true
 
 [lints]

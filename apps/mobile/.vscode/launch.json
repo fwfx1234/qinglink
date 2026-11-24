@@ -5,18 +5,18 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "qingqi_app",
+      "name": "QingLink",
       "request": "launch",
       "type": "dart"
     },
     {
-      "name": "qingqi_app (profile mode)",
+      "name": "QingLink (profile mode)",
       "request": "launch",
       "type": "dart",
       "flutterMode": "profile"
     },
     {
-      "name": "qingqi_app (release mode)",
+      "name": "QingLink (release mode)",
       "request": "launch",
       "type": "dart",
       "flutterMode": "release"

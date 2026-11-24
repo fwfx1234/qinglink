@@ -32,8 +32,6 @@ const WEB_TRACKED_INPUTS: &[&str] = &[
     "index.html",
     "vite.config.ts",
     "tsconfig.json",
-    "tsconfig.app.json",
-    "tsconfig.node.json",
 ];
 
 /// Sources whose modification makes an embedded service binary outdated.

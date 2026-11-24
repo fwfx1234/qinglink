@@ -21,7 +21,6 @@ qinglink-protocol = { path = "../../crates/qinglink-protocol" }
 qinglink-storage = { path = "../../crates/qinglink-storage" }
 qinglink-version = { path = "../../crates/qinglink-version" }
 qinglink-windows = { path = "../../crates/qinglink-windows" }
-rusqlite.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
