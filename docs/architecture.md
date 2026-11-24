@@ -195,6 +195,7 @@ apps/desktop/src/
 ├── self_check.rs        --self-check 诊断：托盘图标像素统计 + 注册结果 + PNG
 ├── preferences.rs       桌面端自己的设置（当前只有 debug_log）
 ├── service_lifecycle.rs 与服务的租约：注册父进程、心跳、退出时停服务
+├── input_install.rs     提权辅助进程入口（`--install-input` 分支），与 input_install/ 同目录
 ├── input_install/       安全输入服务的安装/修复/启停（含提权辅助进程）
 ├── service/             命名管道客户端
 │   ├── mod.rs           ServiceError（错误分类是 HTTP 错误码的唯一来源）
@@ -208,11 +209,24 @@ apps/desktop/src/
 │       ├── envelope.rs  请求/响应信封：编解码、协议版本校验与能力协商
 │       ├── snapshot.rs  周期快照刷新：状态迁移与变更事件派发
 │       └── state.rs     ServiceLinkState / 快照视图 / 事件类型
-├── logging/             日志子系统
+├── logging/             日志子系统（9 个文件）
+│   ├── mod.rs           LogSystem 门面 + 级别热切换 + 文件轮转
 │   ├── entry.rs         LogEntry / LogLevel
 │   ├── buffer.rs        内存环形缓冲 + 查询谓词 LogFilter + summary()
 │   ├── collector.rs     tracing Layer：写入 buffer/broadcast
-│   └── mod.rs           LogSystem 门面 + 级别热切换 + 文件轮转
+│   ├── subscriber.rs    订阅器装配 + 日志级别解析 + `set_hook` 崩溃兜底
+│   ├── directory.rs     桌面端与服务端两个日志目录的列举（不可读时返回空列表）
+│   ├── log_file.rs      文件名白名单校验 + 有界读取（下载与诊断包共用）
+│   ├── service_log.rs   解析 `QingLinkService` 的滚动文本日志并分页
+│   └── system.rs        组装完成的日志系统：内存 sink + 运行时级别开关
+├── updater/             自更新状态机与执行器（见 9.5）
+│   ├── mod.rs           UpdatePhase 状态机 + 快照视图 + 后台任务调度
+│   ├── github.rs        Releases API 查询与 tag 解析
+│   ├── http.rs          经 PowerShell `Invoke-WebRequest` 的最小 HTTPS GET
+│   ├── checksum.rs      `SHA256SUMS` 解析与校验
+│   ├── download.rs      下载落盘 + 按清单哈希核对
+│   ├── install.rs       触发安装：拉起新副本并请求主循环退出
+│   └── self_update.rs   `--self-update` 执行器：覆盖目标、重登记服务信任、拉起新进程
 ├── tray/                托盘子系统
 │   ├── mod.rs           模块边界：子模块声明与公开 API 重导出
 │   ├── controller.rs    TrayController：窗口/菜单/图标的持有与生命周期
@@ -256,14 +270,15 @@ apps/desktop/src/
 
 ### 5.2 服务端管理命令
 
-`crates/qinglink-protocol/src/service_ipc.rs` 的 `DesktopCommand` 是桌面端与服务的
-全部管理词汇表：
+`crates/qinglink-protocol/src/service_ipc/command.rs` 的 `DesktopCommand` 是桌面端与服务的
+全部管理词汇表（`service_ipc.rs` 只是子模块声明与重导出的门面）：
 
 | 命令 | 作用 | 能力位 |
 | --- | --- | --- |
 | `Capabilities` | 协商 | — |
 | `GetSnapshot { desktop_unlocked }` | 暂停/网络/待配对 | — |
 | `SetPaused { paused }` | 暂停对外服务 | `pause` |
+| `SetKeepAwake { enabled }` | 保持唤醒开关（开关由服务常驻线程持有） | `keep_awake` |
 | `CancelPairing { pairing_id }` | 取消配对 | `pairing` |
 | `ListDevices { offset, limit }` | 设备分页（含总数） | `devices` |
 | `RevokeDevice { device_id }` | 撤销并断开连接 | `devices` |
@@ -296,6 +311,7 @@ apps/desktop/src/
 | `app_add` | `AddApp` |
 | `app_launch` | `LaunchApp` |
 | `app_icon_manage` | `RefreshAppIcon`、`ListAppIcons` |
+| `keep_awake` | `SetKeepAwake`，以及快照里的 `keep_awake` 字段 |
 
 `Capabilities` 与 `GetSnapshot` 本身不受能力位约束（`management` 除外）。
 
@@ -355,8 +371,10 @@ apps/desktop/src/
   `ChangeDisplaySettingsExW` 也不会作用到用户桌面。门面按 `running_in_session_zero()`
   决定本地执行还是把 `get_displays` / `set_display_mode` 转发给会话代理；游戏启动分辨率
   的快照、切换与恢复共用这条路径，所以手机上看到的显示器与服务端切换的是同一块屏。
-  列表本身裁成常用模式子集（≤4K 的六档分辨率 × `60/90/120/144`Hz）以减少噪音，当前模式
-  不在子集里时会原样附上；`set_display_mode` 仍按枚举到的全量模式校验，存量非常用模式不受影响。
+  列表本身只保留**真实枚举到**的 1080p 及以上模式（不设分辨率上限），同一分辨率按整 Hz
+  归档刷新率、最多 4 条，当前模式不在范围内时原样附上；`set_display_mode` 仍按枚举到的
+  全量模式校验，存量低分辨率配置不受影响。规则与取舍见
+  [`protocol/v2.md`](../protocol/v2.md)「显示设置」。
 
 上述读状态能力复用既有请求与事件通道，不新增 `requests_ws.rs` 的请求枚举——那个文件
 在 500 行硬上限之上，只许变短。保持唤醒是例外：它新增 `get_keep_awake` /
@@ -377,7 +395,7 @@ apps/desktop/src/
 | `crates/qinglink-domain` | 纯领域类型与状态机（设备配对状态机、领域错误） | 无（叶子） |
 | `crates/qinglink-storage` | SQLite 连接池与迁移、`AppPaths`、数据目录 ACL | 无（叶子） |
 | `crates/qinglink-version` | 桌面端与服务端共用的产品版本号：语义版本 + 自增构建号，含 Windows 版本资源生成；`is_newer` 供检查更新比较版本 | 无（叶子） |
-| `crates/qinglink-discovery` | 局域网发现（UDP 3723 / mDNS 广播） | `qinglink-protocol` |
+| `crates/qinglink-discovery` | 局域网发现（UDP 3723 广播请求 + 单播应答） | `qinglink-protocol` |
 | `crates/qinglink-windows` | Windows 平台封装：输入注入、显示/音频、进程与电源、安全桌面、单实例、完整性 | `qinglink-protocol` |
 | `crates/qinglink-server` | 局域网 `/api/v2/*` 的 HTTP/WS、认证、扫描与目录服务、`scanner_apps` 读写 | `qinglink-protocol`、`qinglink-domain`、`qinglink-storage`、`qinglink-version`、`qinglink-windows` |
 | `services/qinglink-service`（`QingLinkService.exe`） | LocalSystem 服务：业务数据所有者、TCP 3721 / UDP 3723、命名管道管理面、会话输入代理 | `qinglink-protocol`、`qinglink-discovery`、`qinglink-server`、`qinglink-storage`、`qinglink-version`、`qinglink-windows` |
@@ -841,9 +859,9 @@ releases 列表，按通道前缀过滤，用 `qinglink_version::is_newer`（桌
 PowerShell 随系统自带、自动遵循代理与 TLS，配合 `-NoProfile -NonInteractive` 与
 `CREATE_NO_WINDOW` 做到无闪窗、无交互卡死。
 
-移动端流程：设置页「检查更新」进入独立页面；Android 下载 APK 并校验后经 `open_filex`
-拉起系统安装器（需 `REQUEST_INSTALL_PACKAGES`）；iOS 无法侧载，只提供跳转到 Release
-页面的入口。
+移动端流程：设置页「检查更新」进入独立页面；Android 下载 APK 并校验后经
+`PackageInstaller` 安装（`InstallChannel.kt`，需 `REQUEST_INSTALL_PACKAGES`），失败时带回
+系统原始原因；iOS 无法侧载，只提供跳转到 Release 页面的入口。
 
 ---
 

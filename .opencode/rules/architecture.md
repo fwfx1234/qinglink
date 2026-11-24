@@ -78,24 +78,29 @@
 - Schema 变更需要版本升级
 
 ```rust
-/// 移动端到桌面端的鼠标移动命令。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct MouseMoveRequest {
-    pub request_id: String,
-    pub dx: i32,
-    pub dy: i32,
+// crates/qinglink-protocol/src/pairing.rs
+/// 客户端发起配对时提交的自身信息。
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PairingRequest {
+    /// 发起配对的设备唯一标识。
+    pub device_id: String,
+    /// 发起配对的设备展示名称。
+    pub device_name: String,
 }
 ```
+
+注意：**不是每个请求都要一个独立 DTO**。`WS /api/v2/events` 的上行请求是
+`WsClientRequest` 的枚举变体（`crates/qinglink-server/src/protocol/requests_ws.rs`），
+字段直接长在变体上，不要为某个变体再造一个 `*Request` 结构体。
 
 ### 2.2 `qinglink-domain` — 领域逻辑
 
 **目的：** 无外部依赖的纯领域逻辑。
 
 **包含：**
-- 配对状态机（`Pending → Confirmed → Active → Revoked`）
-- 领域错误类型
-- 验证规则（token 格式、PIN 格式）
+- `PairingManager`：待确认配对请求表、PIN 校验、尝试次数限流与 60 秒 TTL
+- `PairingRequest` / `PairingResult` / `PairingError`（`pairing.rs`）
+- 输入边界：`MAX_DEVICE_ID_LEN` / `MAX_DEVICE_NAME_LEN` / `MAX_PENDING_REQUESTS` / `MAX_ATTEMPTS`
 
 **规则：**
 - 禁止数据库访问、网络 I/O、平台 API
@@ -103,33 +108,14 @@ pub struct MouseMoveRequest {
 - 无需任何外部设置即可测试
 
 ```rust
-/// 配对状态转换。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PairingState {
-    Pending { pin: String, expires_at: Instant },
-    Confirmed { token: String },
-    Active { device_id: DeviceId, last_seen: Instant },
-    Revoked,
-}
-
-impl PairingState {
-    /// 尝试用提供的 PIN 确认配对。
-    pub fn confirm(self, pin: &str) -> Result<Self, PairingError> {
-        match self {
-            Self::Pending { pin: expected, expires_at } => {
-                if Instant::now() > expires_at {
-                    Err(PairingError::Expired)
-                } else if pin != expected {
-                    Err(PairingError::InvalidPin)
-                } else {
-                    Ok(Self::Confirmed { token: generate_token() })
-                }
-            }
-            _ => Err(PairingError::InvalidState),
-        }
-    }
-}
+// 不可信输入必须走 try_request：它先校验设备元数据与待处理请求数上限。
+let request = manager.try_request(device_id, device_name)?;
+// 确认时同时核对 device_id，避免别的设备消耗本请求的 PIN 尝试次数。
+let result = manager.confirm_for_device(request.request_id, device_id, pin)?;
 ```
+
+`PairingManager` 刻意不 `derive(Debug)`，手写实现只输出 `pending` 条数——请求里带着 PIN，
+`Debug` 输出会把 PIN 打进日志。
 
 ### 2.3 `qinglink-storage` — 持久化
 
@@ -154,7 +140,7 @@ impl PairingState {
 **包含：**
 - 路由处理器（`/api/v2/*`）
 - WebSocket 生命周期管理
-- 认证中间件
+- 令牌校验与设备授权（`server/auth.rs`，**不是**中间件）
 - 请求分发到服务层
 - 连接注册表
 - 游戏启动显示模式协调：持久化主显示器快照，跟踪新进程与子进程并在退出后恢复
@@ -165,18 +151,26 @@ impl PairingState {
 - 禁止直接数据库查询（使用 repository）
 - 每个 WS handler 必须有超时
 - `SetThreadExecutionState` 是 per-thread 状态，不得在 WS handler 或 `spawn_blocking` 工作线程上调用；保持唤醒统一走常驻线程
-- 错误响应遵循 protocol 中的 `ErrorResponse` 格式
+- 错误响应统一走 `WsServerResponse::error(code, message)`：线格式是
+  `{"type":"error","data":{"code":...,"message":...}}`，**没有**顶层 `code` / `message`，
+  也没有独立的 `ErrorResponse` 类型
 - 所有中间件使用 `tower::Service` 模式
 
 ```rust
-pub fn router(state: Arc<ServerState>) -> Router {
-    Router::new()
-        .route("/api/v2/pairing", post(handle_pairing))
-        .route("/api/v2/events", get(ws_handler))
-        .layer(Extension(state))
-        .layer(middleware::from_fn(auth_middleware))
-}
+// crates/qinglink-server/src/server/lifecycle.rs
+Router::new()
+    .route("/api/v2/health", axum::routing::get(pairing::health))
+    .route("/api/v2/pairing/requests", axum::routing::post(pairing::create_request))
+    .route("/api/v2/pairing/confirm", axum::routing::post(pairing::confirm_request))
+    .route("/api/v2/pairing/requests/:request_id", axum::routing::delete(pairing::cancel_request))
+    .route("/api/v2/events", axum::routing::get(ws_handler::ws_handler))
+    .route("/api/v2/input", axum::routing::get(input_ws_handler::input_ws_handler))
+    .layer(Extension(state))
 ```
+
+鉴权不是中间件：除 `/api/v2/health` 与配对的三个端点外，`WS /api/v2/events` 上的
+`authenticate` 是唯一无需预先认证的指令，其余请求在路由表之前先过
+`handle_client_request_in_generation`。
 
 ### 2.5 `qinglink-windows` — 平台层
 
@@ -184,7 +178,7 @@ pub fn router(state: Arc<ServerState>) -> Router {
 
 **包含：**
 - 音频控制（音量、静音）
-- 显示管理（亮度、分辨率）
+- 显示管理（枚举显示模式、切换分辨率与刷新率）
 - 输入注入（键盘、鼠标 via SendInput）
 - 进程管理（列表、终止、启动）
 - 防火墙规则（添加/删除应用例外）
@@ -200,11 +194,19 @@ pub fn router(state: Arc<ServerState>) -> Router {
 
 ### 2.6 `qinglink-discovery` — 服务发现
 
-**目的：** mDNS 服务广播和浏览。
+**目的：** 应答移动端的 UDP 广播探测，让手机在没有配置的情况下找到 PC。
+
+**实现：** 自定义 UDP 协议，**不是 mDNS**——本项目没有任何 mDNS 依赖。
+监听 `3723`（`qinglink_protocol::DISCOVERY_PORT`），收包后与
+`DISCOVERY_MAGIC`（`qinglink-discover-v1`）逐字节比较，不等于该字符串的包直接丢弃；
+命中的包回一个 JSON：`{"id","name","port","version":2,"mac"}`。
 
 **规则：**
-- 服务类型：`_qinglink._tcp.local.`
-- TXT 记录包含：version、platform、capabilities
+- 保持"无状态、无认证、只读"：发现应答不携带令牌，也不授予任何权限
+- 只在 TCP `3721` 绑定成功之后启动应答器（`network.rs` 在
+  `RemoteServer::run_with_shutdown` 返回后才 `UdpDiscoveryResponder::start`）
+- 后台线程 + 500ms 读超时轮询 `AtomicBool`，不要在这里引入 async 运行时依赖
+- 协议语义见 [`protocol/v2.md`](../../protocol/v2.md)「UDP 发现」
 
 ### 2.7 `qinglink-version` — 产品版本号
 
@@ -223,149 +225,37 @@ pub fn router(state: Arc<ServerState>) -> Router {
 
 ## 3. WebSocket 协议契约
 
-### 3.1 消息信封
+**本节不复述契约内容**——完整契约只有两份，改协议先读它们：
+[`protocol/v2.md`](../../protocol/v2.md)（按主题讲语义）与
+[`protocol/requests.md`](../../protocol/requests.md)（上行变体索引、载荷字段、错误码）。
 
-每个 WebSocket 消息必须遵循此信封格式：
+只记四条判据：
 
-```json
-{
-  "type": "message_type",
-  "request_id": "uuid-v4",
-  "payload": { ... }
-}
-```
-
-| 字段 | 必填 | 类型 | 说明 |
-|------|------|------|------|
-| `type` | 是 | String | 消息类型标识 |
-| `request_id` | 是（请求） | String | 客户端生成的 UUID，响应中回显 |
-| `payload` | 否 | Object | 消息特定数据 |
-
-### 3.2 请求/响应关联
-
-```
-客户端                              服务端
-  │                                    │
-  │─── { type: "mouse_move",           │
-  │      request_id: "req-42",         │
-  │      payload: { dx: 10, dy: -5 } } │
-  │                                    │
-  │◄── { type: "ack",                  │
-  │      request_id: "req-42" }        │
-  │                                    │
-```
-
-**规则：**
-- 客户端生成 `request_id`（UUID v4）
-- 服务端必须在所有响应中回显 `request_id`
-- 客户端跟踪待处理请求并设置超时（默认 10 秒）
-- 超时无响应则重试或报告失败
-
-### 3.3 错误响应格式
-
-所有错误响应必须使用此结构：
-
-```rust
-#[derive(Serialize)]
-pub struct ErrorResponse {
-    #[serde(rename = "type")]
-    pub type_: &'static str,    // 始终为 "error"
-    pub request_id: String,
-    pub ok: bool,               // 始终为 false
-    pub code: String,           // 机器可读的错误码
-    pub message: String,        // 人类可读的描述
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<serde_json::Value>,
-}
-```
-
-### 3.4 错误码注册表
-
-| 错误码 | HTTP 状态 | 含义 | 客户端行为 |
-|--------|----------|------|-----------|
-| `INVALID_TOKEN` | 401 | Token 缺失或格式错误 | 重新认证 |
-| `TOKEN_EXPIRED` | 401 | Token 超过 TTL | 刷新 token |
-| `PAIRING_REQUIRED` | 403 | 无活动配对 | 启动配对流程 |
-| `RATE_LIMITED` | 429 | 请求过多 | 退避重试 |
-| `INVALID_PARAMS` | 400 | 请求验证失败 | 修正请求 |
-| `NOT_FOUND` | 404 | 资源未找到 | 检查标识符 |
-| `INTERNAL_ERROR` | 500 | 意外服务端错误 | 报告/记录 |
-
-### 3.5 消息类型注册表
-
-| 类型 | 方向 | 说明 |
-|------|------|------|
-| `pairing_request` | C→S | 请求配对（带 PIN） |
-| `pairing_confirm` | S→C | 配对已接受 |
-| `pairing_reject` | S→C | 配对被拒绝 |
-| `health_ping` | C→S | 客户端健康检查 |
-| `health_pong` | S→C | 服务端健康响应 |
-| `mouse_move` | C→S | 鼠标移动增量 |
-| `mouse_click` | C→S | 鼠标按键按下/释放 |
-| `key_press` | C→S | 键盘按键按下 |
-| `app_launch` | C→S | 启动应用 |
-| `system_info` | C→S | 请求系统信息 |
-| `system_info_response` | S→C | 系统信息数据 |
-| `disconnect` | 双向 | 优雅断开 |
-| `error` | S→C | 错误响应 |
+- **信封**：`{"type": ..., "request_id": ..., "data": ...}`。`request_id` 由客户端放在
+  **顶层**，服务端 `serialize_ws_message` 回写到顶层；服务端主动推送的事件帧没有它。
+- **类型标签**：由 `#[serde(tag = "type", content = "data")]` 决定，请求字段**平铺在
+  `type` 同级**，没有 `payload` 容器。
+- **错误帧**：`{"type":"error","data":{"code":...,"message":...}}`——没有 `ok`，没有顶层
+  `code`/`message`，错误码在 `data.code`。HTTP 端是另一套（`{"ok":false,"error":{...}}`），
+  两者字段名不可互换。
+- **错误码与消息类型**：唯一注册表是 `protocol/requests.md`。本文件**不再维护第二份**。
 
 ---
 
 ## 4. 通信流程
 
-### 4.1 服务发现流程
+**拓扑**：`Flutter App` ↔ `QingLinkService`（TCP `3721` 的 HTTP/WS、UDP `3723` 发现）；
+桌面端 `QingLink.exe` 是同一服务的**另一个客户端**，走命名管道 `\\.\pipe\QingLinkControlV2`。
+手机与桌面端**不直接通信**。
 
-```
-┌──────────────┐                    ┌──────────────────────────┐
-│ Flutter App  │                    │ Rust Desktop             │
-│              │                    │                          │
-│  multicast   │─── mDNS 查询 ─────▶│  mdns-sd 广播            │
-│  dns-sd      │◀── 服务信息 ───────│  (_qinglink._tcp.local.) │
-│              │                    │                          │
-│  解析 TXT    │  { version, platform, host, port }            │
-│  记录        │                    │                          │
-└──────────────┘                    └──────────────────────────┘
-```
-
-### 4.2 配对流程
-
-```
-┌──────────────┐                    ┌──────────────────────────┐
-│ Flutter App  │                    │ Rust Desktop             │
-│              │                    │                          │
-│              │── POST /pairing ──▶│                          │
-│              │   { device_name }  │                          │
-│              │                    │── 显示 PIN 弹窗 ──▶ Web UI │
-│              │◀── { pin, exp ───│                          │
-│              │                    │                          │
-│  用户输入    │                    │                          │
-│  PIN         │── POST /confirm ──▶│                          │
-│              │   { pin }          │                          │
-│              │                    │── 验证 PIN               │
-│              │◀── { token } ─────│                          │
-│              │                    │                          │
-└──────────────┘                    └──────────────────────────┘
-```
-
-### 4.3 控制流程（WebSocket）
-
-```
-┌──────────────┐                    ┌──────────────────────────┐
-│ Flutter App  │                    │ Rust Desktop             │
-│  WsClient    │                    │  WS Handler              │
-│              │                    │                          │
-│              │── WS /events ─────▶│                          │
-│              │   auth: token      │── validate_token()       │
-│              │◀── connected ─────│                          │
-│              │                    │                          │
-│              │── mouse_move ─────▶│                          │
-│              │                    │──▶ 服务层                │
-│              │                    │──▶ qinglink-service      │
-│              │                    │    (named pipe)           │
-│              │◀── ack ──────────│                          │
-│              │                    │                          │
-└──────────────┘                    └──────────────────────────┘
-```
+- **发现**（见 [`protocol/v2.md`](../../protocol/v2.md)「UDP 发现」）：手机广播
+  `qinglink-discover-v1`，服务在 TCP `3721` 就绪后回 JSON，手机按 `id` 去重。
+- **配对**（见「配对」）：`POST /api/v2/pairing/requests` 建请求 → PC 弹窗显示 6 位 PIN →
+  `POST /api/v2/pairing/confirm` 换长期令牌。请求本身不授予权限，响应里没有 `token`。
+- **控制**：带令牌在 `WS /api/v2/events` 发 `authenticate`，之后按
+  `protocol/requests.md` 的类型收发；高频指针走 `WS /api/v2/input`。
+- **会话关闭**（见「会话关闭」）：服务端先下发
+  `{"type":"session_closed","data":{"code":...}}` 再断连，客户端按 `code` 决定是否清令牌。
 
 ---
 
@@ -375,56 +265,78 @@ pub struct ErrorResponse {
 
 | 逻辑 | 唯一授权位置 |
 |------|-------------|
-| 重连逻辑 | 仅 `ws_client.dart` |
-| 健康检查 | 仅 `ws_client.dart` |
-| 退避计算 | `ws_client.dart`（共享方法） |
-| Token 刷新 | 仅 `auth_provider.dart` |
-| 配对状态 | 仅 `qinglink-domain/pairing.rs` |
+| WS 心跳（发 `health`、超时判定） | `apps/mobile/lib/src/services/ws_client.dart`（`_startHealthChecks`，默认 10 s 间隔 / 5 s 超时，间隔可由会话层经 `setHealthInterval` 透传） |
+| 会话级重连调度与退避曲线 | `apps/mobile/lib/src/services/remote_session_connection.dart`（`scheduleReconnect`：首次 500 ms，之后 1 s、2 s、4 s…上限 30 s，离线期可切固定 3 s） |
+| 传输层自动重连 | `ws_client.dart` 保留该能力，但会话层建连时传 `autoReconnect: false`（`apps/mobile/lib/src/services/remote_session_types.dart`）把它关掉；两套定时器同时跑会互相抖动，新增重连逻辑一律挂在会话层 |
+| 令牌持久化 | `apps/mobile/lib/src/providers/settings_notifier.dart`（`saveToken` / `clearToken`，经 `SecureTokenStore`）；令牌失效后的降级由 `session_connector.dart` 处理 |
+| 配对请求状态机 | `crates/qinglink-domain/src/pairing.rs`（`PairingManager`）；桌面端设备 PIN 的生成与校验在 `crates/qinglink-server/src/service/mod.rs` |
 
 ### 5.2 禁止跨层访问
 
-```rust
-// ❌ 错误 — handler 直接访问存储
-async fn list_apps(State(db): State<AppDb>) -> Json<Vec<App>> {
-    Json(db.get_apps())
-}
+handler 只做三件事：解析入参、调用下层、把失败映射成错误码。禁止在 handler 里持有
+数据库连接、命名管道句柄，或直接调 Win32 API。
 
-// ✅ 正确 — handler 委托给服务
-async fn list_apps(State(svc): State<AppService>) -> Json<Vec<App>> {
-    Json(svc.list_apps().await.unwrap_or_default())
+```rust
+// ✅ 真实写法（apps/desktop/src/web/api/service.rs）：Web handler 只把命令交给
+// ServiceClient，命名管道、请求号与重连都由它负责
+pub async fn pause(
+    State(state): State<Arc<WebState>>,
+    Json(request): Json<PauseRequest>,
+) -> Result<Json<Value>, ApiError> {
+    state
+        .service
+        .call(DesktopCommand::SetPaused { paused: request.paused })
+        .await?;
+    Ok(ok(&json!({ "accepted": true, "paused": request.paused })))
 }
 ```
+
+反例（**示意**，不对应任何真实文件）：handler 里 `rusqlite::Connection::open(&db)?`
+然后自己拼 `UPDATE settings ...`，或者直接 `CreateNamedPipeW` + 手写帧。这类写法一旦
+出现，schema 变更与鉴权就散落在路由层，无法统一收口。
 
 ### 5.3 禁止在传输层写业务逻辑
 
 ```rust
-// ❌ 错误 — handler 中有鼠标限幅逻辑
-async fn mouse_move(Json(req): Json<MouseMove>) -> impl IntoResponse {
-    let dx = req.dx.clamp(-1000, 1000);
-    let dy = req.dy.clamp(-1000, 1000);
-    send_input(dx, dy).await;
-}
-
-// ✅ 正确 — 验证在协议边界，逻辑在服务层
-async fn mouse_move(Json(req): Json<MouseMove>) -> impl IntoResponse {
-    let validated = req.validate().map_err(|e| (400, e.to_string()))?;
-    mouse_service::handle_move(validated).await
-        .map_err(|e| (500, e.to_string()))
+// ✅ 真实写法（crates/qinglink-server/src/server/ws_handler_display_input.rs）：
+// 阈值来自协议层，输入注入来自平台层，handler 只钳制 + 映射错误码
+fn handle_mouse_move(dx: i32, dy: i32) -> WsServerMessage {
+    let dx = dx.clamp(
+        -crate::protocol::requests::MAX_MOUSE_MOVE_DELTA,
+        crate::protocol::requests::MAX_MOUSE_MOVE_DELTA,
+    );
+    let dy = dy.clamp(
+        -crate::protocol::requests::MAX_MOUSE_MOVE_DELTA,
+        crate::protocol::requests::MAX_MOUSE_MOVE_DELTA,
+    );
+    match crate::platform::mouse_move(dx, dy) {
+        Ok(()) => WsServerMessage::Response(WsServerResponse::success()),
+        Err(error) => {
+            tracing::warn!(dx, dy, %error, "mouse move failed");
+            mouse_input_error(&error)
+        }
+    }
 }
 ```
+
+反例（**示意**，不对应任何真实文件）：同一个函数里内联 `SendInput` / `SetCursorPos`、
+自己算 DPI 缩放，或把 `clamp(-1000, 1000)` 这类魔法数字抄进 handler。阈值必须来自
+`crate::protocol::requests`，平台调用必须来自 `crate::platform`。
 
 ### 5.4 禁止无类型数据流
 
 ```dart
-// ❌ 错误 — 数据以无类型 Map 流经应用
-Future<Map<String, dynamic>> getSystemInfo() async { ... }
-
-// ✅ 正确 — 从 wire 到 UI 全程类型化
-Future<SystemInfo> getSystemInfo() async {
-  final raw = await transport.request(SystemInfoRequest());
-  return SystemInfo.fromJson(raw);
+// ✅ 真实写法（apps/mobile/lib/src/providers/system_controller.dart）：
+// 回包一离开传输层就解析成类型，上层只见到 SystemStatus
+Future<void> refreshStatus() async {
+  final response = await _bus.request({'type': 'get_system_status'});
+  final value = WsEventAdapter.parseSystemStatus(response);
+  if (value != null) state = state.copyWith(status: value, error: null);
 }
 ```
+
+请求体用 `{'type': '...'}` 这种 Map 是本仓库的既有写法；被禁止的是把**响应体**的
+`Map<String, dynamic>` 继续往上抛，让 widget 里出现 `raw['cpu'] as num` 这类取值。
 
 ### 5.5 禁止超大文件
 
@@ -456,25 +368,59 @@ crate/模块边界名存实亡。
 
 ### 6.1 环境变量
 
-| 变量 | 用途 | 层级 |
-|------|------|------|
-| `QINGLINK_LOG_LEVEL` | 覆盖日志级别 | 所有 |
-| `QINGLINK_CONFIG_DIR` | 自定义配置目录 | desktop |
-| `QINGLINK_TEST_MODE` | 启用测试辅助 | desktop（仅开发） |
-| `QINGLINK_SERVICE_PIPE` | 自定义管道名 | service |
+下表是**全部**生效的变量（逐个在源码里核对过）；新增变量必须同步本表，否则等于没有出处。
+
+| 变量 | 用途 | 读取位置 |
+|------|------|---------|
+| `QINGLINK_DATA_DIR` | 覆盖数据目录，`AppPaths::resolve` 与 `resolve_system` 都优先用它（后者同时不再收紧 ACL） | desktop / service 运行时 |
+| `QINGLINK_LOG_LEVEL` | 覆盖日志级别，优先于 `RUST_LOG` | desktop / service 运行时 |
+| `RUST_LOG` | 同上；`QINGLINK_LOG_LEVEL` 未设时生效。裸级别名会展开成应用的两个 target | desktop 运行时 |
+| `QINGLINK_STARTUP_TRACE` | 设任意值即把启动面包屑（`[qinglink-startup] +xx.xxxs`）逐条写 stderr | desktop 运行时 |
+| `QINGLINK_REQUIRE_SIGNED_INPUT` | 设任意值即要求内嵌服务资源与桌面端自身签名均有效，否则提权助手拒绝安装 | desktop 运行时 |
+| `QINGLINK_REQUIRE_INPUT_ASSETS` | 置 `1` 时内嵌服务资源缺失让**构建失败**；不设只打 `cargo:warning` | desktop `build.rs` |
+| `QINGLINK_INPUT_SERVICE_PATH` | 指定内嵌服务二进制的来源目录（默认按 `assets/input/` → `target/{debug,release}/` 查找） | desktop `build.rs` |
+| `QINGLINK_CI_BUILD_NUMBER` | 由 CI 从 tag 注入构建号，跳过源码指纹自增与状态写回 | `qinglink-version/build.rs` |
+| `QINGLINK_BUILD_WEB` / `QINGLINK_SKIP_WEB_BUILD` | 强制重建前端 / 跳过前端构建直接内嵌现有 `dist` | desktop `build.rs` |
 
 ### 6.2 文件位置
 
-| 平台 | 配置路径 | 数据路径 |
-|------|---------|---------|
-| Windows | `%APPDATA%/QingLink/` | `%LOCALAPPDATA%/QingLink/` |
-| 未来 Linux | `~/.config/qinglink/` | `~/.local/share/qinglink/` |
+只有两个数据根，没有"配置目录"这一层；两者都由 `AppPaths` 解析
+（`crates/qinglink-storage/src/paths.rs`）：
+
+| 所有者 | 路径 | 内容 | ACL |
+|--------|------|------|-----|
+| 桌面端（当前用户） | `%LOCALAPPDATA%\QingLink\`（`dirs::data_local_dir()`） | `qinglink.db`（桌面端偏好）、`logs\`、`updates\<版本>\`（更新包下载，见 `apps/desktop/src/updater/install.rs`） | 当前用户 |
+| 服务（LocalSystem） | `%ProgramData%\QingLink\`（`ProgramData` 环境变量） | `qinglink.db`（业务表 `scanner_apps`、`scanner_scan_state`、`steam_games`、`launcher_usage`、`paired_devices`、`settings`、`tokens_v2`）、`config\pc-id`、`config\qinglink-pairing-pin`、`logs\` | `icacls /reset` + `/inheritance:r` 后只授 SYSTEM 与内置管理员完全控制；`logs\` 额外给 `BUILTIN\Users` 只读+执行 |
+
+- `QINGLINK_DATA_DIR` 可整体覆盖（见 §6.1）；被覆盖时服务不再收紧 ACL，测试与便携部署才用它。
+- `paths.rs` 里还有 `#[cfg(not(target_os = "windows"))]` 分支，退回用户 `data_local_dir()`；
+  该分支下 ACL 收紧是空实现，服务日志的 `%ProgramData%` 解析同样只存在于 Windows 分支。
 
 ### 6.3 密钥管理
 
-- Token：移动端用 `flutter_secure_storage`，桌面端用加密 SQLite
-- PIN：永不持久化，仅在配对期间存于内存
-- 管道密码：每会话随机生成，通过 stdin 传输（非 env）
+- **移动端令牌**：手机侧存平台安全存储（`flutter_secure_storage`，见
+  `apps/mobile/lib/src/services/secure_token_store.dart`，写入入口是
+  `apps/mobile/lib/src/providers/settings_notifier.dart` 的 `saveToken`）；服务端只存
+  SHA-256（`tokens_v2.token_hash` 为主键，见 `crates/qinglink-server/src/server/auth.rs`），
+  库被读走也拿不到可用令牌。
+- **桌面端设备 PIN**：`RemoteControlService::generate_pin`
+  （`crates/qinglink-server/src/service/mod.rs`）生成 6 位数字，内存持有并持久化到
+  `%ProgramData%\QingLink\config\qinglink-pairing-pin`，服务重启后沿用；配对成功调
+  `consume_pin` 删除该文件。连续 5 次校验失败后锁定 30 秒（`PIN_MAX_ATTEMPTS` /
+  `PIN_LOCKOUT_SECS`），锁定期间正确 PIN 同样被拒。
+- **单次配对请求的 PIN**：`PairingRequest.pin` 只活在 `PairingManager` 的内存里，60 秒
+  TTL、最多 128 条待确认请求，不落盘；该管理器刻意不 `derive(Debug)`，手写 `Debug` 只输出
+  `pending` 数量，PIN 不进日志。
+- **桌面端身份**：没有共享密码。命名管道 DACL 为 `D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)`
+  并带 `PIPE_REJECT_REMOTE_CLIENTS`（`services/qinglink-service/src/windows_service_impl/pipe.rs`）；
+  会话驱动的 agent 管道进一步收紧到 `D:(A;;GA;;;SY)`。服务侧再用
+  `GetNamedPipeClientProcessId` / `GetNamedPipeClientSessionId` 取对端 PID 与会话，要求
+  处于交互式会话、且进程令牌 SID 与该会话用户一致，最后把进程映像路径与 SHA-256 同安装
+  目录下的 `trusted-desktop.json`（`apps/desktop/src/input_install.rs` 写入）比对
+  （`windows_service_impl/authorization.rs`）。桌面端被重建后哈希变化即判定未授权，需
+  "修复服务"重新登记。
+- **不要引入"管道密码"这类方案**：DACL 与可执行映像身份两道约束已经覆盖，再加一个每会话
+  密钥只会多一个需要在进程间传输和轮换的秘密。
 
 ---
 
@@ -489,7 +435,14 @@ Web 管理面跑在独立线程的 Axum 上，两者通过 `HostCommand` 通信�
 
 ## 8. 版本策略
 
-- 协议版本在 `qinglink-protocol/Cargo.toml` 和 schema `protocol/qinglink-v2.schema.json` 中定义
-- 破坏性协议变更需要 schema 版本升级
-- 移动端和桌面端必须在 WS 握手时协商协议版本
-- 向后兼容：支持 N 和 N-1 协议版本
+- **产品版本**（`0.1.0+<构建号>`）是另一件事，见 §2.7，不要与协议版本混用。
+- 移动端↔服务端：协议版本由 URL 前缀 `/api/v2/` 与 `GET /api/v2/health` 的 `version`
+  表达，当前**恒为 `2`**，没有多版本并存，也不做 N-1 兼容。破坏性变更就升 v3，
+  旧客户端直接连不上——这是有意的取舍（协议共享半径只有手机端一个实现）。
+- 桌面端↔服务端管道：`SERVICE_IPC_VERSION`（`service_ipc/envelope.rs`）是**唯一真正协商**
+  的版本号。桌面端拿 `expected_version` 与服务回报的 `service_version` 比对，不等即进入
+  `protocol_mismatch`，界面引导"修复服务（升级）"。
+- 能力位（`Capabilities`）承担向前兼容：旧服务缺字段即为 `false`，桌面端据此返回
+  `UNSUPPORTED`，而不是报协议错误。**新增命令优先加能力位，不要靠升版本号。**
+- JSON Schema（`protocol/qinglink-v2*.schema.json`）的版本体现在 `$id` 的 `/v2` 段；
+  改 schema 必须同批改 `fixtures/` 与 `apps/mobile/test/qinglink_contract_test.dart`。

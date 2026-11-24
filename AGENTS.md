@@ -31,15 +31,17 @@
 | 单文件 Vue 组件（`.vue`） | ≤ 300 行 | **400 行** | 逻辑抽到 composable / store |
 | 单个函数 / 方法 | ≤ 80 行 | **120 行** | 提取子函数，禁止用折叠注释掩盖 |
 | 单个 struct / class / Widget 类 | ≤ 300 行 | 400 行 | 按职责拆分类型 |
-| 文档单篇（`docs/*.md`、`.opencode/rules/*.md`） | ≤ 800 行 | 1200 行 | 按主题拆分成多篇并更新文档索引 |
+| 文档单篇（`docs/*.md`、`.opencode/rules/*.md`） | ≤ 800 行 | 1200 行 | 按主题拆分成多篇并更新 `README.md` 的「文档」表 |
 
-- "行数"指文件的**物理总行数**：含空行与注释，等于文件中换行符的个数加一。
+- "行数"指文件的**物理总行数**：含空行与注释。口径以 `wc -l` / `(Get-Content <file>).Count`
+  为准，文件末尾的换行符不额外算一行（本文件 §2.3 表内的数字就是按此口径统计的）。
 - 上限值就是上表。本仓库**没有行数校验脚本**，构建与校验一律用语言原生命令（见 §7）；
   改上限必须同时改上表、两份编码规范的 §11 与 [`agent.md`](agent.md) 的审查清单。
 - 测试目录（`tests/`、`test/`、`*_test.*`）与生成目录不纳入统计（本仓库不新增测试代码，见 §4）。
-- 现有 `docs/web-api.md`（1197 行）超出建议值、未超硬上限。**按主题拆分已被评估并推迟**：
+- 现有 `docs/web-api.md`（1195 行）超出建议值、未超硬上限。**按主题拆分已被评估并推迟**：
   该文档的 `§4.x` 编号被前端 `apps/desktop/web-ui/src/api/*.ts` 的注释与文档内部大量互引依赖，
-  拆分需同时重编所有引用；要做就单独一个改动完成编号迁移，不要顺手拆。
+  拆分需同时重编所有引用；要做就单独一个改动完成编号迁移，不要顺手拆。行数只能靠
+  "删掉与 `protocol/v2.md` 重复的整节"来降，不要再往里加内容。
 
 ### 2.2 拆分要求
 
@@ -62,7 +64,7 @@
 | --- | --- | --- |
 | `apps/mobile/lib/src/screens/scan_folder_screen.dart` | 659 | 500 |
 | `apps/mobile/lib/src/screens/pairing_screen.dart` | 650 | 500 |
-| `crates/qinglink-server/src/protocol/requests_ws.rs` | 533 | 500 |
+| `crates/qinglink-server/src/protocol/requests_ws.rs` | 535 | 500 |
 
 行数按 §2.1 的口径统计：`tests/`、`*_test.*` 与生成目录不计入。
 
@@ -121,8 +123,8 @@
 | `apps/desktop/build.rs` 的前端 / 资源嵌入逻辑 | [`docs/development.md`](docs/development.md) §2.1、本文件 §7 |
 | `crates/qinglink-version/**`、版本号构成与递增规则 | [`docs/development.md`](docs/development.md) §2.4、[`protocol/README.md`](protocol/README.md) |
 | 移动端行为、配对流程 | [`apps/mobile/README.md`](apps/mobile/README.md)、[`docs/architecture.md`](docs/architecture.md) 相关时序 |
-| Rust / Dart 编码约定本身 | [`.opencode/rules/rust-coding.md`](.opencode/rules/rust-coding.md)、[`.opencode/rules/dart-coding.md`](.opencode/rules/dart-coding.md)、[`agent.md`](agent.md) |
-| 新增 / 删除 / 重命名文档 | [`README.md`](README.md) 的「文档索引」表 |
+| Rust / Dart 编码约定本身 | [`.opencode/rules/rust-coding.md`](.opencode/rules/rust-coding.md)、[`.opencode/rules/dart-coding.md`](.opencode/rules/dart-coding.md)（评审口径见 [`agent.md`](agent.md)） |
+| 新增 / 删除 / 重命名文档 | [`README.md`](README.md) 的「文档」表 |
 | 本文件规定的内容 | `AGENTS.md`（本文件）自身 |
 
 ### 3.2 什么才算"同步"
@@ -169,7 +171,7 @@
 | [`.opencode/rules/architecture.md`](.opencode/rules/architecture.md) | crate 依赖图、模块职责、协议契约、桌面端线程模型、禁止模式 |
 | [`.opencode/rules/rust-coding.md`](.opencode/rules/rust-coding.md) | Rust 命名、Import、类型、错误处理、unsafe、异步、文档 |
 | [`.opencode/rules/dart-coding.md`](.opencode/rules/dart-coding.md) | Dart 命名、类型安全、Riverpod、Widget 模式、常量 |
-| [`agent.md`](agent.md) | 代码审查代理的清单与输出格式（含大文件与文档同步检查项） |
+| [`agent.md`](agent.md) | 代码审查口径：判定项、严重级别定级表、输出格式与升级条件（语言级细则不重复） |
 | [`docs/architecture.md`](docs/architecture.md) | 仓库级结构与设计取舍 |
 | [`docs/web-api.md`](docs/web-api.md) | 桌面管理接口契约 |
 | [`docs/development.md`](docs/development.md) | 构建、运行、自检、排障、改动约定 |

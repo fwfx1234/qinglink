@@ -9,20 +9,18 @@
 ```
 docs/design/
 ├── DESIGN-SPEC.md          ← 本文件。token、尺寸、屏清单、代码映射
-├── AGENT-PROMPT.md         ← 可直接粘给开发 agent 的启动指令
-├── mobile-dark-light.pdf   ← 移动端 28 页（S1~S14 × 暗/亮），按顺序翻
 ├── sheets-dark-light.pdf   ← 弹层 24 页（第 1~12 页暗色、13~24 页亮色，每页 2 组）
-├── admin.pdf               ← 管理端 4 页（A1~A4）
 └── screens/
     ├── S01-home-dark.png   ← 单屏 2x 导出，文件名规则：S{两位序号}-{页面}-{dark|light}.png
     ├── S01-home-light.png
-    └── ... 共 32 张（14 屏 × 2 主题 + 4 管理端）
+    └── ... 共 28 张（14 屏 × 2 主题）
 ```
 
-**推荐工作方式**：改哪一屏，就先打开对应的那张 PNG（2x，尺寸 780×1688），再对照本文第 3、4 节的 token 和映射表，去改对应的 Dart 文件。不要凭记忆写色值。
+**推荐工作方式**：改哪一屏，就先打开对应的那张 PNG（2x，尺寸 780×1688），再对照本文第 2 节的 token 和第 5 节的映射表，去改对应的 Dart 文件。不要凭记忆写色值。
 
 **设计源文件（需要看层级/量间距时）**：`https://ardot.tencent.com/file/742668064059515`
-画布分区：`(0,0)` 双主题规范 · `(1836,0)` 组件库 · `(0,2400)` 管理端 · `(0,3720)` 暗色 S1~S14 · `(0,5700)` 次级页暗色 · `(0,6900)` 亮色 · `(0,8950)` 次级页亮色 · `(3400,0)` 弹层暗色 · `(3400,4700)` 弹层亮色。
+画布分区：`(0,0)` 双主题规范 · `(1836,0)` 组件库 · `(0,3720)` 暗色 S1~S14 · `(0,5700)` 次级页暗色 · `(0,6900)` 亮色 · `(0,8950)` 次级页亮色 · `(3400,0)` 弹层暗色 · `(3400,4700)` 弹层亮色。
+桌面管理界面的视觉基线就是代码本身（`apps/desktop/web-ui`），本文只保留 token 与尺寸约定。
 
 ---
 
@@ -71,24 +69,14 @@ docs/design/
 | `danger.tint` | `#2E1113` | `#FDECEC` | 危险按钮底座 |
 | `scrim` | `rgba(0,0,0,.62)` | `rgba(13,23,18,.32)` | 弹层遮罩 |
 
-### 与现有 `AppPalette` 的差异（重要）
+### 代码落点
 
-`apps/mobile/lib/src/theme/app_theme.dart` 里的 `AppPalette.dark/light` 是**上一版**的绿色系，与新稿不一致，需要按下表替换：
+上表已全部落在 `apps/mobile/lib/src/theme/app_palette.dart` 的 `AppPalette.dark` / `.light`，
+`AppColors.primary` 等门面值由 `app_theme.dart` 按实际亮度注入。改色值时两处同步：
+本表与 `app_palette.dart`——这是唯一的替换口径，不存在"旧值待迁移"。
 
-| 字段 | 旧-暗 | 新-暗 | 旧-亮 | 新-亮 |
-|---|---|---|---|---|
-| `background` | `#101311` | **`#0A0D0D`** | `#F4F7F4` | **`#F5F7F7`** |
-| `surface` | `#171C19` | **`#121414`** | `#FFFFFF` | `#FFFFFF` |
-| `surface2` | `#1E2521` | **`#1A1C1C`** | `#EDF2EE` | **`#EFF3F1`** |
-| `surface3` | `#26302A` | **`#212626`** | `#E2EAE4` | **`#E7ECEA`** |
-| `line` | `#303B34` | **`#212626`** | `#DBE3DC` | **`#E7ECEA`** |
-| `textPrimary` | `#F0F4EF` | **`#EDF2F0`** | `#17211B` | **`#0D1212`** |
-| `textMuted` | `#9AA69D` | **`#8F9996`** | `#647168` | **`#5C6963`** |
-| `textSubtle` | `#6E7B72` | **`#5E6B66`** | `#8B978E` | **`#8C9694`** |
-
-`AppColors.primary` 由 `#54D6A6` 改为暗 `#36D9A1` / 亮 `#12A87A`（需拆成随主题变化，不能再放常量）；`info` → `#59C7E8`/`#0D94B8`；`violet` → `#A88CF5`/`#7D5CE0`；`warning` → `#F2B557`/`#B87503`；`error` → `#FF6B6E`/`#D93B3D`。
-
-> 触控板渐变仍需单独两值（不属于 token 体系）：暗 `#1E3A2E → #101A16`，亮 `#D3EFE2 → #EAF8F1`，描边 暗 `#2A4F3E` / 亮 `#B1D9C8`。
+> 触控板渐变不在 token 体系内，同样在 `AppPalette`（`touchpadStart` / `touchpadEnd` / `touchpadBorder`）：
+> 暗 `#1E3A2E → #101A16`、描边 `#2A4F3E`；亮 `#D3EFE2 → #EAF8F1`、描边 `#B1D9C8`。
 
 ### 桌面管理界面（桌面端 web-ui，1440×900）
 
@@ -147,31 +135,28 @@ docs/design/
 
 ### 移动端（14 屏 × 2 主题）
 
-| 屏 | 设计稿名称 | 图片文件 | 对应代码（`apps/mobile/lib/src/`） |
+| 屏 | 设计稿名称 | 图片文件 | 对应代码（相对 `apps/mobile/lib/src/`） |
 |---|---|---|---|
-| S1 | 首页 | `S01-home-{dark,light}.png` | `screens/home_tab.dart`、`home_status_card.dart`、`home_quick_actions.dart`、`home_common_apps.dart`、`widgets/app_remote_controls.dart`、`widgets/active_window.dart` |
-| S2 | 库 | `S02-library-{dark,light}.png` | `screens/library_tab.dart`、`library_tiles.dart`、`library_sheets.dart`、`library_dialogs.dart` |
-| S3 | 控制中心 | `S03-control-center-{dark,light}.png` | `screens/control_center_screen.dart`、`control_center/display_section.dart` |
-| S4 | 控制（触控板） | `S04-touchpad-{dark,light}.png` | `screens/mouse_keyboard_screen.dart`、`mouse_keyboard/touchpad_surface.dart`、`clipboard_action_buttons.dart`、`keyboard_entry_button.dart` |
+| S1 | 首页 | `S01-home-{dark,light}.png` | `screens/home_tab.dart`、`screens/home_status_card.dart`、`screens/home_quick_actions.dart`、`screens/home_common_apps.dart`、`widgets/app_remote_controls.dart`、`widgets/active_window.dart` |
+| S2 | 库 | `S02-library-{dark,light}.png` | `screens/library_tab.dart`、`screens/library_tiles.dart`、`screens/library_sheets.dart`、`screens/library_dialogs.dart` |
+| S3 | 控制中心 | `S03-control-center-{dark,light}.png` | `screens/control_center_screen.dart`、`screens/control_center/display_section.dart` |
+| S4 | 控制（触控板） | `S04-touchpad-{dark,light}.png` | `screens/mouse_keyboard_screen.dart`、`screens/mouse_keyboard/touchpad_surface.dart`、`screens/mouse_keyboard/clipboard_action_buttons.dart`、`screens/mouse_keyboard/keyboard_entry_button.dart` |
 | S5 | 更多 | `S05-more-{dark,light}.png` | `screens/more_tab.dart` |
 | S6 | 进程管理 | `S06-processes-{dark,light}.png` | `screens/processes_tab.dart`、`widgets/process_icon.dart` |
-| S7 | 配对与连接 | `S07-pairing-{dark,light}.png` | `screens/home_connection.dart`、`widgets/pairing_dialog.dart` |
-| S8 | 设置 | `S08-settings-{dark,light}.png` | `screens/settings_tab.dart` |
-| S9 | 快捷键方案 | `S09-shortcuts-{dark,light}.png` | `screens/shortcuts_screen.dart`、`shortcut_preset_sheet.dart` |
-| S10 | 电视遥控 | `S10-tv-remote-{dark,light}.png` | `screens/ir/tv_remote_screen.dart`、`ir/tv_quick_panel.dart` |
+| S7 | 配对与连接 | `S07-pairing-{dark,light}.png` | `screens/pairing_screen.dart`、`screens/home_connection.dart` |
+| S8 | 设置 | `S08-settings-{dark,light}.png` | `screens/settings_tab.dart`、`screens/settings_input_section.dart` |
+| S9 | 快捷键方案 | `S09-shortcuts-{dark,light}.png` | `screens/shortcuts_screen.dart`、`screens/shortcut_preset_sheet.dart` |
+| S10 | 电视遥控 | `S10-tv-remote-{dark,light}.png` | `screens/ir/tv_remote_screen.dart`、`screens/ir/tv_quick_panel.dart` |
 | S11 | 遥控器管理 | `S11-remote-manage-{dark,light}.png` | `screens/ir/ir_remote_manage_screen.dart` |
 | S12 | 扫描结果 | `S12-scan-result-{dark,light}.png` | `screens/scan_folder_screen.dart` |
 | S13 | 按键与信号 | `S13-keys-signals-{dark,light}.png` | `screens/ir/ir_command_screen.dart` |
 | S14 | 控制流程 | `S14-flows-{dark,light}.png` | `screens/ir/ir_macro_screen.dart` |
 
-### 管理端（4 屏，暂无代码，按图新建）
+### 管理端（桌面端 web-ui，1440 × 900）
 
-| 屏 | 名称 | 图片 | 说明 |
-|---|---|---|---|
-| A1 | 概览 Overview | `A1-overview.png` | 设备在线数、最近命令、运行时长 |
-| A2 | 应用目录 Apps | `A2-apps.png` | 应用列表、启动参数、图标 |
-| A3 | 运行日志 Logs | `A3-logs.png` | 命令流水、过滤、时间戳 |
-| A4 | 设置 Settings | `A4-settings.png` | 服务端与配对策略 |
+管理界面不做设计稿交付，**视觉基线就是代码本身**：`apps/desktop/web-ui` 的 6 个路由页
+（概览 / 应用 / 进程 / 日志 / 设置 / 配对），token 见上一节。侧栏 232、最小点按区 44、
+主按钮高 52 这三条与移动端共用。
 
 ### 关键结构：S1 首页（自上而下）
 
@@ -189,27 +174,27 @@ docs/design/
 
 查看位置：`sheets-dark-light.pdf`（第 1~12 页暗色、13~24 页亮色，每页 2 组），或设计稿 `(3400,0)` / `(3400,4700)`。
 
-| 弹层 | 对应代码 |
+| 弹层 | 对应代码（相对 `apps/mobile/lib/src/`） |
 |---|---|
-| 显示模式 | `control_center/display_mode_sheet.dart` |
-| 音频输出 | `control_center/display_section.dart` |
-| 结束进程 | `processes_tab.dart` |
-| 快捷键方案表单 | `shortcut_preset_sheet.dart` |
-| 启动参数 | `library_sheets.dart` |
-| 删除程序 | `library_dialogs.dart` |
-| 启动分辨率 | `library_launch_mode_sheet.dart` |
+| 显示模式 | `screens/control_center/display_mode_sheet.dart` |
+| 音频输出 | `screens/control_center/display_section.dart` |
+| 结束进程 | `screens/processes_tab.dart` |
+| 快捷键方案表单 | `screens/shortcut_preset_sheet.dart` |
+| 启动参数 | `screens/library_sheets.dart` |
+| 删除程序 | `screens/library_dialogs.dart` |
+| 启动分辨率 | `screens/library_launch_mode_sheet.dart` |
 | 选择程序（文件浏览器） | `widgets/file_picker_sheet.dart` |
-| 添加按键 | `ir/ir_command_dialog.dart` |
-| 新增控制流程 | `ir/ir_macro_dialog.dart` |
-| 电视快速面板 | `ir/tv_quick_panel.dart` |
+| 添加按键 | `screens/ir/ir_command_dialog.dart` |
+| 新增控制流程 | `screens/ir/ir_macro_dialog.dart` |
+| 电视快速面板 | `screens/ir/tv_quick_panel.dart` |
 | 窗口列表 | `utils/remote_actions.dart` |
-| 鼠标设置 | `mouse_keyboard/mouse_settings_sheet.dart` |
-| Windows 登录密码 | `settings_tab.dart` |
-| 新增遥控器 / 删除遥控器 | `ir/ir_remote_manage_screen.dart` |
-| 从常用移除 / 添加到库 / 重命名 | `library_dialogs.dart` |
+| 鼠标设置 | `screens/settings_input_section.dart`（从控制页 `ConnectionStatusBar.onOpenSettings` 跳设置页） |
+| Windows 登录密码 | `screens/settings_tab.dart` |
+| 新增遥控器 / 删除遥控器 | `screens/ir/ir_remote_manage_screen.dart` |
+| 从常用移除 / 添加到库 / 重命名 | `screens/library_dialogs.dart` |
 | 图标选择 | `widgets/icon_picker_sheet.dart` |
-| 键盘输入 | `mouse_keyboard/keyboard_input_sheet.dart` |
-| 解锁 PIN | 配对流程 |
+| 键盘输入 | `screens/mouse_keyboard/keyboard_input_sheet.dart` |
+| 解锁 PIN | `screens/pairing_screen.dart`（配对流程内联，无独立弹层） |
 
 **弹层通用规格**：把手 36×4 → 标题 14 SemiBold + 说明 12 → 选项行 56 → 危险项置底 → 安全区 +16。关闭方式：下拉 / 点遮罩 / 系统返回。破坏性操作必须二次确认，默认焦点在「取消」。
 
@@ -248,7 +233,7 @@ docs/design/
 ## 9. 验收清单
 
 - [ ] 亮暗两套都实现，切换不重载、不闪白
-- [ ] 所有色值取自第 2 节（含 `AppPalette` 替换）
+- [ ] 所有色值取自第 2 节，且与 `app_palette.dart` 一致
 - [ ] 每个屏幕的图片逐张对照过，无遗漏区块
 - [ ] 弹层全部实现，含空态与危险确认
 - [ ] 程序/进程/文件图标为真实图形，无字母占位

@@ -1,23 +1,31 @@
 # QingLink 协议 v2
 
 `qinglink-protocol` 是 Rust 线型 DTO 的唯一真相来源。本目录中的 JSON Schema
-是跨语言验证契约。对应的纯传输层 Dart DTO 位于
+是跨语言字段形状的说明文档（不是可执行的验证器，见下）。对应的纯传输层 Dart DTO 位于
 `apps/mobile/lib/src/protocol/qinglink_protocol.dart`；两种实现都按 `protocol/fixtures/`
-里的同一组夹具、在 `apps/mobile/test` 的契约测试中做检查。
+里的同一组夹具做往返检查。
 
 协议共享有意仅限于传输 DTO。领域对象和 Flutter 视图模型保持平台原生，而
-HTTP/WS 载荷由 `protocol/fixtures/` 的夹具与同目录的 JSON Schema 互相校核。
-**本仓库目前没有 CI 流水线**：这些校核靠 `apps/mobile/test/qinglink_contract_test.dart`
-与手工执行 `cargo fmt --check` / `cargo check` / `flutter test` 完成，改动协议时
-必须自己跑，不要假定有流水线兜底。协议共享使移动应用独立于 Rust 运行时，
-并使 IP 变更和重连可观测。
+HTTP/WS 载荷由 `protocol/fixtures/` 的夹具两侧对齐：Rust 侧是
+`crates/qinglink-protocol/tests/fixtures.rs`（serde 往返），Dart 侧是
+`apps/mobile/test/qinglink_contract_test.dart`。
+
+**CI 不校验协议，JSON Schema 也没有任何自动校验。** `.github/workflows/` 下只有
+`desktop-release.yml` 与 `mobile-release.yml` 两条**发布**流水线，两者既不跑 schema 校验也不跑
+fixture 测试；仓库里也没有 `jsonschema` 依赖——`qinglink-v2*.schema.json` 目前只是给人看的
+跨语言文档。因此改协议时必须自己跑上面两个测试文件，并至少执行
+`cargo fmt --all --check` 与 `cargo check --workspace --all-targets`；
+schema 与 fixtures 的一致性靠人工同步，不要假定有工具兜底。
+（本仓库不把测试套件当交付门槛，见 [`AGENTS.md`](../AGENTS.md) §4。）
+协议共享使移动应用独立于 Rust 运行时，并使 IP 变更和重连可观测。
 
 移动端游戏目录的 `launch_mode` 是可选的显示模式对象，包含 `width`、`height` 与
 `refresh_millihz`。配置由 `update_scanner_app` 保存，清除时使用
 `clear_launch_mode: true`；启动和恢复策略见 [`v2.md`](v2.md)「游戏启动显示模式」。
 
 显示设置是本协议的另一组消息：`get_displays` 返回每台显示器的**常用模式候选**
-（≤4K 的 6 档分辨率 × 60/90/120/144Hz，外加当前模式兜底，服务端不返回冷门档位），
+（只保留**真实枚举到**的 1080p 及以上模式，不设分辨率上限；同分辨率下按整 Hz 归档刷新率、
+最多 4 条；当前模式不在范围内时原样附上），
 `set_display_mode` 用扁平的 `display_id` / `width` / `height` / `refresh_millihz` 四字段切换。
 形状见 `qinglink-v2-ws.schema.json` 的 `displayInfo` / `displaysResponse`，语义与错误码见
 [`v2.md`](v2.md)「显示设置」。

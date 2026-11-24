@@ -242,7 +242,7 @@ Android 只允许同包名 + 同签名的 APK 覆盖安装，而 runner 每次�
 - **只打真机 ABI**（`--target-platform android-arm,android-arm64`）。universal 包默认
   还带 x86_64 引擎（约 20 MB），只有模拟器会用；去掉后包体从 ~58 MB 降到 ~36 MB，
   慢链路下被截断的概率显著下降。
-- **应用内安装走 `PackageInstaller`**（`apps/mobile/android/.../InstallChannel.kt`），
+- **应用内安装走 `PackageInstaller`**（`apps/mobile/android/app/src/main/kotlin/com/qinglink/mobile/InstallChannel.kt`），
   不再用 `open_filex` 的 `ACTION_VIEW`：只有前者能把系统的真实失败原因
   （`INSTALL_PARSE_FAILED_NO_CERTIFICATES` 等）带回来。安装前客户端还会核对
   字节数 → SHA-256 → 包名 → versionCode → 签名者，坏包不会交给安装器。
@@ -661,15 +661,6 @@ target\debug\QingLink.exe
 cargo fmt --all --check
 cargo check --workspace --all-targets
 
-# 文件规模（大文件禁令见 AGENTS.md §2）：没有校验脚本，用原生命令现算
-Get-ChildItem -Recurse -Include *.rs,*.dart,*.ts,*.vue |
-  Where-Object { $_.FullName -notmatch 'node_modules|\\target\\|\\build\\|\\dist\\|\\test\\' } |
-  ForEach-Object {
-    $limit = if ($_.Extension -eq '.vue') { 400 } else { 500 }
-    $lines = (Get-Content $_).Count
-    if ($lines -gt $limit) { [pscustomobject]@{ Lines = $lines; Limit = $limit; Path = $_.FullName } }
-  } | Sort-Object Lines -Descending
-
 # 前端 / 移动端静态检查
 cd apps\desktop\web-ui; npm run typecheck
 cd apps\mobile; flutter analyze
@@ -679,12 +670,8 @@ cd apps\mobile; flutter analyze
 既有测试文件保留，需要时自行运行。日常验证一律走上面的静态检查，`cargo test` 不在交付
 门槛内，因此本文档不再固化通过/失败数字（它会随环境漂移）。
 
-前端：
-
-```powershell
-cd apps\desktop\web-ui
-npm run typecheck
-```
+文件规模不在上表：本仓库**没有行数校验脚本**，自查命令只维护一份，见
+[`AGENTS.md`](../AGENTS.md) §2.4——本文不复述，避免两处脚本各改一半。
 
 `cargo clippy --workspace --all-targets` 当前是**干净**的（0 告警、0 错误）。工作区把
 `unwrap_used` / `dbg_macro` / `todo` 设为 deny，把 `missing_docs`、
@@ -711,14 +698,8 @@ npm run typecheck
 9. **不要移除 `tray/icon.rs` 里的颜色处理**（见第 5 节）。
 10. **不要给管理接口加认证**，也不要把它绑到非回环地址；安全性来自"本机可访问"
     加上服务的管道授权。
-11. **代码不得存在大文件。** 单文件硬上限 500 行（`.vue` 400 行，函数 120 行），
-    完整规则见 [`AGENTS.md`](../AGENTS.md) §2。既有超限文件列在 §2.3 的表格里，
-    **只许减少、不许增加**；新增文件没有豁免。本仓库**没有行数校验脚本**（§7），
-    改完用 §2.4 的原生命令自查，并在同一次改动里同步 §2.3 表格的数字。
-12. **文档必须跟随项目同步。** 改代码的同一次改动里把对应文档一起改掉，映射表见
-    [`AGENTS.md`](../AGENTS.md) §3.1；接口契约类文档未同步按阻断项处理（第 8 条是它在
-    管理接口上的一个特例）。
-13. **不新增测试代码、不运行测试套件。** 细节与替代的静态检查见
-    [`AGENTS.md`](../AGENTS.md) §4；既有测试文件保留。
-14. **提交时带上 `crates/qinglink-version/build-number.txt`。** 它记录当前构建号与源码
+11. **代码不得存在大文件、文档必须同步、不新增测试**——这三条是硬约束，完整判据分别见
+    [`AGENTS.md`](../AGENTS.md) §2（含 §2.3 的棘轮清单与 §2.4 的自查命令）、§3.1（同步映射表）、
+    §4。此处不重复，避免与权威表分叉。
+12. **提交时带上 `crates/qinglink-version/build-number.txt`。** 它记录当前构建号与源码
     指纹；漏提交会让另一台机器从旧号继续，版本号出现回退（见 §2.4）。

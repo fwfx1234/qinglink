@@ -52,9 +52,13 @@ QingLink 是"一个数据源 + 多个控制端"的结构。
 
 | 接口 | 端口 | 使用者 | 能否修改业务数据 |
 | --- | --- | --- | --- |
-| `/api/v2/*` + `WS /api/v2/events` | 3721 | 移动端 App | 有限（可启动应用、管理进程） |
-| `/api/admin/v1/*` + `WS /api/admin/v1/events` | 3722 | 本机 Web 管理界面 | 是（重命名 / 隐藏 / 删除 / 撤销设备） |
+| `/api/v2/*` + `WS /api/v2/events` | 3721 | 移动端 App | 是（目录新增 / 重命名 / 删除 / 隐藏 / 常用 / 置顶、图标、自定义扫描目录；另有启动应用、管理进程、键鼠输入与系统动作） |
+| `/api/admin/v1/*` + `WS /api/admin/v1/events` | 3722 | 本机 Web 管理界面 | 是（重命名 / 隐藏 / 删除 / 常用 / 置顶 / 新增 / 图标 / 撤销设备） |
 | UDP `3723` | 3723 | 移动端发现 | 否 |
+
+两侧写的是**同一份**服务端目录数据（`scanner_apps`），差别只在界面与各自暴露的字段，
+不在权限：手机端能改的东西和本机管理界面基本重合，完整清单见
+[`protocol/requests.md`](../protocol/requests.md) 的 6、7、14 节。
 
 ---
 
@@ -127,15 +131,9 @@ QingLink 是"一个数据源 + 多个控制端"的结构。
 ### 2.4 为什么用 POST + JSON body 而不是 RESTful 路径参数
 
 应用条目与设备条目的 `id` **可能包含 Windows 路径**（例如 `C:\Program Files\App\a.exe`），
-把这类值放进 URL 路径会引入百分号编码歧义。因此所有"针对某个对象"的写操作都是：
-
-```text
-POST /api/admin/v1/<资源>/<动作>
-Content-Type: application/json
-{ "id": "...", ... }
-```
-
-请在前端使用 `encodeURIComponent` 处理查询参数（`GET` 接口的 `id` 走 query string）。
+把这类值放进 URL 路径会引入百分号编码歧义。因此"针对某个对象"的写操作统一是
+`POST /api/admin/v1/<资源>/<动作>` + JSON body（`{"id": "...", ...}`）；`GET` 接口的 `id`
+走 query string，前端必须用 `encodeURIComponent` 处理。
 
 ---
 
@@ -235,7 +233,8 @@ Content-Type: application/json
     "capabilities": {
       "management": true, "pairing": true, "pause": true,
       "devices": true, "catalog": true, "catalog_management": true,
-      "app_add": true, "app_launch": true, "app_icon_manage": true
+      "app_add": true, "app_launch": true, "app_icon_manage": true,
+      "keep_awake": true
     }
   },
   "settings": { "autostart": true, "keep_awake": false, "debug_log": false },
@@ -274,29 +273,17 @@ Content-Type: application/json
 - `service.address` 在服务未就绪时为 `null`；`service.capabilities` 在 `connected=false` 时为 `null`。
 - `tray` 在托盘尚未创建时为 `null`（不能假设它总是对象）。
 
-`install_state.network_ready` 单独报告"服务的回环健康协议是否应答"，因此
-`service_running=true` 但 `network_ready=false` 可以精确定位到"服务在跑，但健康端口
-不可达"（绑定失败、防火墙，或受限执行环境），而不是笼统地"服务不可用"。
+`install_state` 的 `network_ready` / `service_protocol_ok` 语义、三态判定，以及
+"两个同名 `network_ready` 含义不同"这一点，**与 4.8 完全一致**（含那张组合表），
+这里不再重复；`/overview` 里 `service_protocol_ok` 恒存在，不要当可选字段跳过。
 
-`install_state.service_protocol_ok` 在 `/overview` 里**恒存在**，且是三态：
-`true` 已握手、`false` 已知不可用、`null` 未知（未安装、未运行或仍在连接）。
-判定方式与 4.8 一致，不要把它当作可选字段跳过。
+`stats.logs` / `stats.errors` 统计的是**内存缓冲**（最近 5000 条）内的条数，更早的记录在
+磁盘文本文件里；依赖服务的计数（`apps`/`hidden_apps`/`devices`）在服务不可用时为 `0`，
+此时 `service.connected` 为 `false`，界面应显示引导态而不是"0 个应用"。
 
-> 注意两个同名字段含义不同：`install_state.network_ready` 是**回环健康探测**的结果；
-> `service.network_ready` 是**服务自己的判断**（服务进程在运行且未被暂停），
-> 也就是"移动端此刻能否连上"。两者不一致是正常的（例如服务在跑但尚未绑定端口）。
-
-`stats.logs` / `stats.errors` 统计的是**内存缓冲**（最近 5000 条）内的条数，
-更早的记录在磁盘文本文件里。
-
-`tray` 是托盘注册的诊断结果。`visible` 只反映单次
-`Shell_NotifyIcon(NIM_ADD)` 的返回值；`rect` 保留用于兼容现有响应，目前不参与注册判定。
-详细判读见 [`architecture.md` 第 6 节](architecture.md#6-托盘子系统含历史缺陷)。
-
-`stats` 中依赖服务的计数（`apps`/`hidden_apps`/`devices`）在服务不可用时为 `0`；
-此时 `service.connected` 为 `false`，界面应据此显示引导态而不是"0 个应用"。
-
-`tray` 的判读：
+`tray` 的判读（`visible` 只反映单次 `Shell_NotifyIcon(NIM_ADD)` 的返回值；`rect` 保留用于
+兼容现有响应、目前不参与注册判定；详细排障见
+[`architecture.md` 第 6 节](architecture.md#6-托盘子系统含历史缺陷)）：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -355,7 +342,8 @@ Content-Type: application/json
   "address": "0.0.0.0:3721", "last_error": null,
   "capabilities": { "management": true, "pairing": true, "pause": true,
                     "devices": true, "catalog": true, "catalog_management": true,
-                    "app_add": true, "app_launch": true, "app_icon_manage": true }
+                    "app_add": true, "app_launch": true, "app_icon_manage": true,
+                    "keep_awake": true }
 } }
 ```
 
@@ -941,9 +929,7 @@ Steam 条目落库时的 `exe_path` 是**猜**出来的（清单里没有这项�
 > 服务端把它规范化为同样的 128×128 PNG，并把 `icon_source` 记成 `manual`；这种图标没有
 > 对应的磁盘文件，同一次写入会清空 `icon_path`，图标回填时按"没有原文件就不动"处理。
 
-`GET /apps` 的每一项**可选**带 `icon_source` 与 `icon_updated_at`（二者可缺失或为
-`null`，见 4.14）：前者用于解释图标来源，后者用于图标 URL 的缓存版本
-（`GET /apps/icon?id=…&v=<icon_updated_at>`），否则浏览器会继续用 24 小时缓存的旧图。
+`GET /apps` 的每一项**可选**带 `icon_source` 与 `icon_updated_at`（语义与 `v=` 缓存用法见 4.14）。
 
 ---
 
@@ -977,43 +963,19 @@ Steam 条目落库时的 `exe_path` 是**猜**出来的（清单里没有这项�
 
 ### 4.35 移动端游戏启动显示模式
 
-该能力通过移动端 `WS /api/v2/events` 使用，不新增桌面管理 HTTP 接口。游戏目录摘要可返回
-可选的 `launch_mode`（`width`、`height`、`refresh_millihz`）。客户端用已有的 `get_displays`
-读取显示器模式——该命令返回每台显示器的**1080p 及以上可选模式**（枚举到的真实分辨率 ×
-每档最多 4 个刷新率，外加当前模式兜底），同屏可用
-`set_display_mode`（扁平 `display_id` / `width` / `height` / `refresh_millihz`）直接切换，
-两者契约见 [`protocol/v2.md`](../protocol/v2.md)「显示设置」——并在 `update_scanner_app`
-请求中发送 `launch_mode` 保存，或发送 `clear_launch_mode: true` 清除；省略两个字段表示保持原配置。
-服务端拒绝主显示器枚举不到的模式，返回 `INVALID_DISPLAY_MODE`；候选集合是上面那份 1080p 及以上模式
-（低于 1080p 的旧配置仍会切换与恢复，但手机端无法重新保存）。
-
-启动时服务端先持久化主显示器原模式，再尝试切换并启动游戏。显示切换失败时仍启动游戏；手机端
-`launch_scanner_app` 与本机 `POST /apps/launch` 共用同一协调器。进程监视器按启动前后的 PID 差异
-识别游戏可执行文件，并跟踪子进程；最后一个已配置游戏进程退出后恢复快照。
-并行运行的已配置游戏采用首个游戏的模式。服务重启时会用已保存的游戏路径重新接管进程监视；
-若 180 秒内未发现游戏进程则恢复模式。快照保存在服务数据库的 `settings.launch_display.snapshot`，
-恢复失败时保留以供下次启动重试。
+该能力**只走移动端 `WS /api/v2/events`，不新增桌面管理 HTTP 接口**：`launch_mode`
+（`width` / `height` / `refresh_millihz`）是游戏目录摘要上的可选字段，由 `update_scanner_app`
+保存、`clear_launch_mode: true` 清除。候选模式集合、`INVALID_DISPLAY_MODE` 的判定、启动时的
+切换与恢复策略（含 PID 差异识别、180 秒兜底、快照位置）见
+[`protocol/v2.md`](../protocol/v2.md)「显示设置」与「游戏启动显示模式」。
 
 ### 4.36 移动端保持唤醒
 
-该能力通过移动端 `WS /api/v2/events` 使用，不新增桌面管理 HTTP 接口；桌面端托盘与
-设置页经桌面管理 IPC 的 `set_keep_awake` 命令读写**同一个**开关。请求/响应契约见
-[`protocol/v2.md`](../protocol/v2.md)「保持唤醒」：
-
-| 命令 | 说明 |
-| --- | --- |
-| `get_keep_awake` | 读取服务进程当前的保持唤醒开关，返回 `keep_awake_status` |
-| `set_keep_awake` | 带 `enabled`（bool，必填）开关，返回 `keep_awake_status`；失败返回 `KEEP_AWAKE_FAILED` |
-
-`SetThreadExecutionState` 是 **per-thread** 状态，服务端用一条专用常驻线程
-（`qinglink-keep-awake`）串行执行所有开关，避免在 `spawn_blocking` 工作线程上调用导致
-状态随线程回收丢失、或开与关落在不同线程上互相抵消。开关持久化在服务库
-`settings.power.keep_awake`，服务启动时恢复；桌面端按管理快照的 `keep_awake` 字段
-显示，快照变化（含手机端切换）由 `ServiceEvent::KeepAwake` 推给设置页与托盘。
-
-> 桌面端旧偏好 `power.keep_awake` 已不再使用；旧服务不支持 `keep_awake` 能力位时，
-> 桌面端开关报"不支持"，移动端命令回 `INVALID_REQUEST`。前端
-> `apps/desktop/web-ui/src/api/types.ts` 的 `POST /settings` 字段形状不变。
+同样**不新增桌面管理 HTTP 接口**：手机用 `get_keep_awake` / `set_keep_awake` 读写开关，
+桌面端托盘与设置页经管理 IPC 的 `set_keep_awake` 命令操作**同一个**开关（`keep_awake`
+能力位为 `false` 时判为不支持）。per-thread 语义、`KEEP_AWAKE_FAILED` 与持久化位置见
+[`protocol/v2.md`](../protocol/v2.md)「保持唤醒」；`POST /settings` 的 `keep_awake` 字段
+形状不变（`apps/desktop/web-ui/src/api/types.ts`）。
 
 ### 4.37 `GET /update`
 
@@ -1132,7 +1094,7 @@ ws://127.0.0.1:3722/api/admin/v1/events
 `hidden`（4.18 与 `batch` 的 `hide`/`show`）、`delete`（4.19 与 `batch` 的 `delete`）、
 `favorite`（4.18b，以及 4.18c 的置顶写入——置顶会连带改常用）、`icon`（4.33 的
 `icon/refresh`、`icon/set` 与 `batch` 的 `refresh_icon`）、`add`（4.29）、
-`scan_finished`（服务端扫描完成，见 6.3）、`resync`（连接握手与丢帧重同步）。
+`scan_finished`（服务端扫描完成，广播机制见本节末）、`resync`（连接握手与丢帧重同步）。
 未知 `reason` 必须按"目录可能变了"处理，不要因为没见过就忽略整帧。
 
 除上表外，`POST /devices/revoke`（4.11）还会额外推送一条 `notice/toast`
@@ -1142,6 +1104,11 @@ ws://127.0.0.1:3722/api/admin/v1/events
 `resync` 是服务端**主动的自愈帧**：能派发到浏览器的事件都是"变化才有"的，一旦某个
 订阅者落后（慢标签页、日志洪峰），漏掉的帧无法靠增量补齐，服务端会重发上面的状态帧并
 同时补一条 `logs/dropped`。客户端遇到 `resync` 只需当作"可能什么都变了"重新拉取。
+
+`scan_finished` 的到达方式与众不同：扫描跑在服务端进程里，而命名管道是严格请求/响应、
+没有服务→桌面端的推送通道，所以**桌面端**在它本来就有的 500 ms `GetSnapshot` 轮询里带上
+每类的扫描完成时间戳，发现变化才向所有浏览器广播。浏览器侧不需要轮询，长扫描也不会漏掉
+完成事件。
 
 ### 5.4 日志推送的合并与背压
 
@@ -1164,29 +1131,8 @@ ws://127.0.0.1:3722/api/admin/v1/events
 3. GET  /api/admin/v1/logs?limit=200    → 仅当日志页可见时才请求
 ```
 
-### 6.2 重命名一个应用
-
-```text
-1. POST /api/admin/v1/apps/rename  {"id": "C:\\...\\a.exe", "name": "新名字"}
-2. 服务端写入 scanner_apps.display_name 并刷新可见目录缓存
-3. WS 推送 {"channel":"apps","event":"catalog_changed","data":{"reason":"rename"}}
-4. 前端重新拉取当前页 GET /api/admin/v1/apps?...
-```
-
-### 6.3 触发扫描
-
-```text
-1. POST /api/admin/v1/apps/scan  {"kind":"app"}      → {"accepted": true}
-2. WS   {"channel":"apps","event":"scan_started"}
-3. （服务端后台扫描，可能数十秒）
-4. WS   {"channel":"apps","event":"catalog_changed","data":{"reason":"scan_finished"}}
-5. 前端重新拉取列表与 /apps/stats
-```
-
-第 4 步的完成信号来自桌面端：扫描在服务端进程里跑，而管道是严格请求/响应、没有
-服务→桌面端的推送通道，所以桌面端在它本来就有的 500ms `GetSnapshot` 轮询里附带
-每类的扫描完成时间戳，发现变化就向所有浏览器广播 `scan_finished`。
-**浏览器侧不需要轮询**，长扫描也不会漏掉完成事件。
+其余动作都是同一个形状：**一次写 + 一次事件驱动的重拉**。写接口见 §4.17（重命名）与
+§4.20（触发扫描），随后到达的事件（`catalog_changed` 的 `reason`、`scan_started`）见 §5.3。
 
 ---
 
@@ -1204,13 +1150,12 @@ ws://127.0.0.1:3722/api/admin/v1/events
 7. **每次连接建立只补拉一次状态**。事件客户端的连接快照会随握手时间、延迟等字段变化
    反复通知，用它当"重连信号"会导致重复拉取；应按"连接代次"（generation）判断。
 8. **`/overview` 是聚合接口**，同一窗口内到达的多个事件应合并成一次刷新。
-9. 结构化状态帧是"变化才有"的，所以**收到 `resync` 必须无条件重新拉取**当前视图。
-10. **长文本不进列表行**。`exe_path` 与令牌 `id` 动辄上百字符，行里只显示末两段
-    （`…\Folder\App.exe`）或"前缀 + 尾部"，完整值放进 `title` 与详情面板，并提供复制按钮。
-    目录行的详情入口是 `AppDetailDrawer`（右侧抽屉，保留列表上下文），行本身也可点击打开。
-11. **低频动作收进行内「⋯」菜单**（`RowMenu`）。行上只保留启动、常用、详情这类高频动作，
+9. **长文本不进列表行**。`exe_path` 与令牌 `id` 动辄上百字符，行里只显示末两段
+   （`…\Folder\App.exe`）或"前缀 + 尾部"，完整值放进 `title` 与详情面板，并提供复制按钮。
+   目录行的详情入口是 `AppDetailDrawer`（右侧抽屉，保留列表上下文），行本身也可点击打开。
+10. **低频动作收进行内「⋯」菜单**（`RowMenu`）。行上只保留启动、常用、详情这类高频动作，
     否则每行六七个按钮会把界面撑成一片按钮墙。
-12. **诊断页用 4.27 的两个只读接口**：`GET /diagnostics` 走普通 JSON 信封；`GET
+11. **诊断页用 4.27 的两个只读接口**：`GET /diagnostics` 走普通 JSON 信封；`GET
     /diagnostics/bundle`（4.28）是 `text/plain` 的**附件下载**，必须按 Blob 取回并触发
     下载，不能对它调 `response.json()`，也不要把它当普通 JSON 接口去断言 `ok`。
 
@@ -1220,9 +1165,10 @@ ws://127.0.0.1:3722/api/admin/v1/events
 服务端仍然实现了 history 模式的回退（未知非 `/api/` 路径返回 SPA 外壳），
 所以将来切换到 history 路由不需要改后端。
 
-当前 5 个目标页：`#/`（概览，含已配对设备）、`#/apps`（目录）、`#/logs`（桌面端与
+当前 6 个目标页：`#/`（概览，含已配对设备）、`#/apps`（目录）、`#/logs`（桌面端与
 服务端日志）、`#/diagnostics`（服务诊断：4.27 的链路状态 / 协议版本 / 自检报告与
-4.28 的诊断包导出）、`#/settings`；`#/devices` 保留为重定向到 `#/`。
+4.28 的诊断包导出）、`#/settings`、`#/update`（更新：4.37 的状态快照与 4.38–4.40 的
+检查 / 下载 / 安装动作）；`#/devices` 保留为重定向到 `#/`。
 
 ### 7.2 静态资源
 
